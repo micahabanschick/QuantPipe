@@ -9,6 +9,11 @@ Exit codes: 0 = all symbols succeeded, 1 = partial failures, 2 = all failed.
 
 import logging
 import sys
+
+# Ensure UTF-8 output on Windows (avoids UnicodeEncodeError in log handlers)
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 from datetime import date, timedelta
 
 from config.settings import INGESTION_LOOKBACK_DAYS, LOGS_DIR

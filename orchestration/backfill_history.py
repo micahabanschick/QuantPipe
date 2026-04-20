@@ -12,6 +12,11 @@ Usage (from project root):
 import argparse
 import logging
 import sys
+
+# Ensure UTF-8 output on Windows (avoids UnicodeEncodeError in log handlers)
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 from datetime import date
 
 from config.settings import HISTORICAL_BACKFILL_DAYS, LOGS_DIR
@@ -66,7 +71,7 @@ def main() -> None:
     start = args.start or (args.end - timedelta(days=HISTORICAL_BACKFILL_DAYS))
     end = args.end
 
-    log.info(f"=== Backfill | {start} → {end} | asset-class={args.asset_class} ===")
+    log.info(f"=== Backfill | {start} to {end} | asset-class={args.asset_class} ===")
 
     if args.asset_class in ("equity", "all"):
         backfill_equities(start, end)

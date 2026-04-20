@@ -48,7 +48,7 @@ CRYPTO_UNIVERSE: list[str] = [
     "LINK/USDT",
     "ADA/USDT",
     "DOT/USDT",
-    "MATIC/USDT",
+    "POL/USDT",
     "BNB/USDT",
     "XRP/USDT",
 ]
