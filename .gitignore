@@ -1,0 +1,60 @@
+# Data (never commit raw market data)
+data/
+*.parquet
+*.arrow
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+.env.*
+*.env
+secrets.toml
+# But always track the example template
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+.eggs/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# uv
+.uv/
+uv.lock
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Secrets / keys (extra safety)
+*_key.txt
+*_secret.txt
+credentials*.json
