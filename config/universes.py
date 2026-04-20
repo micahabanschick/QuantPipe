@@ -48,7 +48,7 @@ CRYPTO_UNIVERSE: list[str] = [
     "LINK/USDT",
     "ADA/USDT",
     "DOT/USDT",
-    "POL/USDT",
+    "MATIC/USDT",   # Polygon — Kraken still uses MATIC ticker
     "BNB/USDT",
     "XRP/USDT",
 ]

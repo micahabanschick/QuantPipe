@@ -113,7 +113,11 @@ def run_canary(
     final_weights_df = weights.filter(pl.col("rebalance_date") == final_rebal)
     final_weights = dict(zip(final_weights_df["symbol"].to_list(), final_weights_df["weight"].to_list()))
     stress = run_all_scenarios(final_weights)
-    risk_report = generate_risk_report(final_weights, prices, as_of=end, stress_results=stress)
+    # top-5 concentration limit is meaningless for a 5-position portfolio (always 100%)
+    from risk import RiskLimits
+    canary_limits = RiskLimits(max_top5_concentration=1.0)
+    risk_report = generate_risk_report(final_weights, prices, as_of=end,
+                                       limits=canary_limits, stress_results=stress)
     print_risk_report(risk_report)
 
     # --- 6. Sanity check ---
