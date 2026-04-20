@@ -2,7 +2,9 @@
 
 An end-to-end quantitative finance pipeline for systematic equity and crypto trading. Built around a **Sector × Size × Style ETF rotation** framework, with a clear path from free data and paper trading to live deployment.
 
-**Stack:** Python 3.12 · Polars · DuckDB · Parquet · VectorBT · Streamlit · IBKR · CCXT · `uv`
+**Stack:** Python 3.13 · Polars · DuckDB · Parquet · VectorBT · cvxpy · PyPortfolioOpt · Streamlit · IBKR · CCXT · `uv`
+
+**Status:** Phases 0–6 complete. Paper trading loop is live. 145 tests passing.
 
 ---
 
@@ -44,7 +46,7 @@ Data flows in one direction through clearly separated layers. No module reaches 
     ▼
 [data_adapters]   ← unified DataAdapter protocol
     ▼
-[storage]         ← Parquet on disk, DuckDB queries, bronze/silver/gold layers
+[storage]         ← Parquet on disk, DuckDB queries, bronze/gold layers
     ▼
 [features]        ← pure functions, point-in-time safe, snapshot-tested
     ▼
@@ -56,18 +58,19 @@ Data flows in one direction through clearly separated layers. No module reaches 
     ▼
 [risk]            ← pre-trade checks, VaR, exposure limits (hard blocks)
     ▼
-[execution]       ← BrokerAdapter protocol → IBKR paper/live, CCXT, PaperBroker
+[execution]       ← BrokerAdapter protocol → IBKR, CCXT, PaperBroker
     ▼
-[reports]         ← Streamlit dashboards (ops health + P&L)
+[reports]         ← Streamlit dashboards (ops health + P&L performance)
     │
-[orchestration]   ← cron-driven scheduler, alerting via Pushover/ntfy
+[orchestration]   ← cron-driven pipeline, alerting via Pushover/ntfy
 ```
 
 **Key invariants:**
 - The data layer never talks to execution.
 - Every feature is a pure function of data available on or before date T — no lookahead.
 - `DataAdapter` and `BrokerAdapter` are protocols; swapping providers requires no downstream changes.
-- Paper and live trading share 100% of the strategy/execution code path.
+- Paper and live trading share 100% of the strategy and execution code path.
+- Pre-trade checks are hard blocks, never advisory warnings.
 
 ---
 
@@ -76,44 +79,76 @@ Data flows in one direction through clearly separated layers. No module reaches 
 ```
 QuantPipe/
 │
-├── config/                     Universe definitions and environment settings
+├── config/
 │   ├── universes.py            9-box ETFs, GICS sectors, crypto universe
 │   └── settings.py             Paths, API keys, pipeline defaults (loaded from .env)
 │
-├── data_adapters/              Market data provider adapters
+├── data_adapters/
 │   ├── base.py                 DataAdapter protocol + OHLCV schema
 │   ├── yfinance_adapter.py     Yahoo Finance (equities, ETFs) — free
 │   └── ccxt_adapter.py         CCXT unified interface (crypto, any exchange)
 │
-├── storage/                    Parquet-on-disk persistence layer
+├── storage/
 │   ├── parquet_store.py        write_bars(), load_bars(), list_symbols()
-│   └── validators.py           Post-ingestion data quality checks
+│   ├── validators.py           Post-ingestion data quality checks
+│   ├── adjustments.py          Corporate actions (splits, dividends) storage
+│   └── universe.py             universe_as_of_date() — survivorship-bias-safe lookups
 │
-├── features/                   Point-in-time feature library
-│   └── canonical.py            5 canonical factors (see below)
+├── features/
+│   ├── canonical.py            5 pure factor functions (momentum, vol, reversal, …)
+│   └── compute.py              compute_and_store(), load_features() with gold-layer cache
 │
-├── signals/                    [Phase 3] Cross-sectional signal generation
-├── backtest/                   [Phase 3] VectorBT integration and strategy wrappers
-├── portfolio/                  [Phase 4] Signal → target weights (cvxpy / PyPortfolioOpt)
-├── risk/                       [Phase 4] Pre-trade checks, VaR, exposure monitoring
+├── signals/
+│   └── momentum.py             cross_sectional_momentum(), momentum_weights(),
+│                               get_monthly_rebalance_dates()
 │
-├── execution/                  Broker adapters and order management
+├── backtest/
+│   ├── engine.py               run_backtest() — VectorBT wrapper, cost model
+│   ├── tearsheet.py            print_tearsheet(), tearsheet_dict()
+│   ├── walk_forward.py         walk_forward() — expanding-window OOS validation
+│   └── canary.py               Canary strategy: 12-1 momentum top-5, monthly rebalance
+│
+├── portfolio/
+│   ├── covariance.py           ledoit_wolf_cov(), sample_cov(), compute_returns()
+│   └── optimizer.py            construct_portfolio() — 5 methods (equal, vol_scaled,
+│                               mean_variance, min_variance, max_sharpe)
+│
+├── risk/
+│   ├── engine.py               compute_exposures(), historical_var(), pre_trade_check(),
+│   │                           generate_risk_report(), print_risk_report()
+│   └── scenarios.py            4 stress scenarios (2008 GFC, 2020 COVID, 2022 rates,
+│                               2000 dot-com) + run_all_scenarios()
+│
+├── execution/
 │   ├── base.py                 BrokerAdapter protocol, Order, Fill, Position types
-│   └── paper_broker.py         In-memory paper broker for local testing
+│   ├── paper_broker.py         In-memory paper broker — fills at mark price
+│   ├── ibkr_adapter.py         IBKRAdapter via ib_insync (paper port 7497)
+│   ├── ccxt_broker.py          CCXTBroker — live + paper crypto execution
+│   ├── trader.py               compute_orders() — pure, idempotent weight → order calc
+│   └── reconciler.py           reconcile(), has_material_drift(), write_reconcile_log()
 │
-├── orchestration/              Job scheduling and pipeline coordination
-│   ├── ingest_daily.py         Nightly incremental ingestion (run by cron)
-│   └── backfill_history.py     One-shot historical backfill (run once to seed data)
+├── orchestration/
+│   ├── backfill_history.py     One-shot historical seed (run once)
+│   ├── ingest_daily.py         Nightly incremental ingestion
+│   ├── generate_signals.py     Daily signal generation + risk snapshot persistence
+│   ├── rebalance.py            Daily rebalance: load weights → check → orders → reconcile
+│   └── run_pipeline.py         Master cron chain: ingest → signals → alert on failure
 │
-├── reports/                    Streamlit dashboards
-│   └── health_dashboard.py     Ops dashboard: ingestion status, row counts, log tail
+├── reports/
+│   ├── health_dashboard.py     Dashboard #1: ops health, ingestion status, log viewer
+│   └── performance_dashboard.py Dashboard #2: equity curve, drawdown, Sharpe, exposures
 │
 ├── research/                   Jupyter notebooks (exploration only, never production)
 │
-├── tests/                      Pytest test suite
-│   ├── test_adapters.py        Adapter schema and behaviour tests
-│   ├── test_storage.py         Parquet store roundtrip and idempotency tests
-│   └── test_features.py        Feature snapshot and correctness tests
+├── tests/
+│   ├── test_adapters.py        Adapter schema + date range (hits network)
+│   ├── test_storage.py         Parquet roundtrip, idempotency, list_symbols
+│   ├── test_features.py        Per-feature correctness + snapshot tests
+│   ├── test_signals.py         Momentum signal ranking, weights, rebalance dates
+│   ├── test_portfolio.py       Covariance estimation + all 5 optimizer methods
+│   ├── test_risk.py            Exposures, VaR, pre-trade checks, stress scenarios
+│   ├── test_orchestration.py   Signal generation helpers, pipeline step sequencing
+│   └── test_execution.py       Trader, PaperBroker, reconciler
 │
 ├── .env.example                All required environment variables documented
 ├── pyproject.toml              Dependencies and tool config (uv-compatible)
@@ -133,8 +168,8 @@ QuantPipe/
 | `STYLE_SIZE_9BOX` | 9 iShares Russell ETFs — Large/Mid/Small × Growth/Blend/Value |
 | `SECTOR_SPDRS` | 11 GICS sector SPDR ETFs (XLK, XLV, XLF, …) |
 | `BENCHMARKS` | SPY, QQQ, AGG, TLT, GLD, DIA |
-| `EQUITY_UNIVERSE` | Union of all above, sorted |
-| `CRYPTO_UNIVERSE` | BTC, ETH, SOL, AVAX, LINK, ADA, DOT, MATIC, BNB, XRP (USDT pairs) |
+| `EQUITY_UNIVERSE` | Union of all above — 26 ETFs total |
+| `CRYPTO_UNIVERSE` | BTC, ETH, SOL, AVAX, LINK, ADA, DOT, POL, BNB, XRP (USDT pairs) |
 
 **`settings.py`** — loads all configuration from `.env`. Copy `.env.example` to `.env` and fill in your keys. Never commit `.env`.
 
@@ -150,16 +185,15 @@ from datetime import date
 
 adapter = YFinanceAdapter()
 df = adapter.get_bars("SPY", date(2020, 1, 1), date(2024, 12, 31))
-# Returns Polars DataFrame with: date, symbol, open, high, low, close, volume, adj_close
+# Returns Polars DataFrame: date, symbol, open, high, low, close, volume, adj_close
 ```
-
-Every adapter returns the same canonical OHLCV schema (`OHLCV_SCHEMA` in `base.py`). This is the contract all downstream code depends on.
 
 | Adapter | Asset class | Cost | Notes |
 |---|---|---|---|
-| `YFinanceAdapter` | Equities, ETFs | Free | Auto-adjusted + raw close stored. Phase 1. |
-| `CCXTAdapter` | Crypto | Free | Any CCXT exchange; defaults to Kraken. Pagination handled. |
-| `IBKRAdapter` | All | Requires account | Phase 6 — not yet implemented. |
+| `YFinanceAdapter` | Equities, ETFs | Free | Auto-adjusted + raw close stored |
+| `CCXTAdapter` (data) | Crypto OHLCV | Free | Kraken default, pagination handled |
+| `IBKRAdapter` | All | Requires account | Phase 6 — live/paper execution |
+| `CCXTBroker` | Crypto | Free / keys | Phase 6 — order routing via CCXT |
 
 ---
 
@@ -170,192 +204,259 @@ Parquet files on disk, queryable via DuckDB. No server required.
 **Layout:**
 ```
 data/
-└── bronze/
-    ├── equity/daily/symbol=SPY/year=2024/data.parquet
-    ├── equity/daily/symbol=QQQ/year=2024/data.parquet
-    └── crypto/daily/symbol=BTC_USDT/year=2024/data.parquet
+├── bronze/
+│   ├── equity/daily/symbol=SPY/year=2024/data.parquet
+│   └── crypto/daily/symbol=BTC_USDT/year=2024/data.parquet
+└── gold/
+    ├── equity/features/                 Pre-computed feature Parquet
+    ├── equity/target_weights.parquet    Latest rebalance weights (upserted daily)
+    ├── equity/portfolio_log.parquet     Daily risk snapshots (VaR, exposures)
+    └── equity/reconcile_log.parquet     Broker reconciliation history
 ```
-
-**Key functions:**
 
 ```python
 from storage import write_bars, load_bars, list_symbols
 
-# Write (idempotent — re-writing the same rows produces no duplicates)
-write_bars(df, asset_class="equity", symbol="SPY")
-
-# Read via DuckDB hive scan — fast multi-symbol time-range queries
+write_bars(df, asset_class="equity", symbol="SPY")  # idempotent upsert
 df = load_bars(["SPY", "QQQ"], start=date(2020,1,1), end=date(2024,12,31))
-
-# List all symbols present in storage
-symbols = list_symbols("equity")  # ["AGG", "BTC_USDT", "GLD", ...]
+symbols = list_symbols("equity")
 ```
 
-**Bronze → Silver → Gold convention:**
-- `bronze` — raw vendor data, write-once, never overwritten
-- `silver` — normalized, adjustments applied *(Phase 2)*
-- `gold` — analysis-ready features *(Phase 2)*
+**Validators** (`storage/validators.py`):
 
-**Validators** (`storage/validators.py`) run after every ingestion:
-
-| Check | What it catches |
+| Check | Catches |
 |---|---|
 | `check_row_counts` | Missing trading days |
-| `check_null_rate` | Null rates above 1% in price columns |
-| `check_price_jumps` | Daily moves > 8σ — flags for manual review |
+| `check_null_rate` | Null rate > 1% in price columns |
+| `check_price_jumps` | Daily moves > 8σ |
 | `check_staleness` | Last bar older than 3 trading days |
 
 ---
 
 ### `features`
 
-Five canonical factors implemented as pure functions in `features/canonical.py`. All are backward-looking only — no lookahead bias possible by construction.
+Five canonical factors in `features/canonical.py`. All backward-looking — no lookahead possible by construction.
 
 | Function | Description |
 |---|---|
 | `log_return(prices, periods=1)` | Log return over N periods |
-| `realized_vol(prices, window=21)` | Rolling annualized volatility (sqrt-252 scaled) |
-| `momentum_12m_1m(prices)` | 12-month return excluding most recent month (Jegadeesh & Titman) |
-| `dollar_volume(close, volume, window=63)` | Rolling average dollar volume — used as liquidity filter |
-| `reversal_5d(prices)` | Negative 5-day return (positive value = recent loser expected to revert) |
+| `realized_vol(prices, window=21)` | Rolling annualised volatility |
+| `momentum_12m_1m(prices)` | 12-month return skipping most recent month (Jegadeesh & Titman) |
+| `dollar_volume(close, volume, window=63)` | Rolling average dollar volume — liquidity filter |
+| `reversal_5d(prices)` | Negative 5-day return — short-term mean reversion signal |
 
-**Batch compute:**
-
-```python
-from features import compute_features
-
-# Compute all 5 features for a multi-symbol DataFrame
-result = compute_features(bars_df)
-
-# Compute a subset
-result = compute_features(bars_df, feature_list=["log_return_1d", "momentum_12m_1m"])
-```
-
-Snapshot tests in `tests/test_features.py` pin output to a fixed input so any accidental lookahead contamination fails the test suite immediately.
+Snapshot tests in `tests/test_features.py` pin output to a fixed fixture. Any accidental lookahead contamination fails immediately.
 
 ---
 
 ### `signals`
 
-*Phase 3 — stub.* Will contain cross-sectional ranking signals that combine features into a `[date, symbol, signal_value]` DataFrame.
+Cross-sectional momentum signal pipeline in `signals/momentum.py`.
 
-Planned signals:
-1. 12-1 cross-sectional momentum
-2. Risk-adjusted momentum (momentum / realized vol)
-3. Trend + mean-reversion overlay
-4. Sector carry (relative yield approximation)
-5. Regime overlay (market trend → net exposure)
+```python
+from signals.momentum import cross_sectional_momentum, momentum_weights, get_monthly_rebalance_dates
+
+# Rank universe by 12-1 momentum at each rebalance date, select top 5
+signal = cross_sectional_momentum(features_df, rebalance_dates, top_n=5)
+
+# Convert signal to equal-weight or vol-scaled weights
+weights = momentum_weights(signal, weight_scheme="equal")
+weights = momentum_weights(signal, weight_scheme="vol_scaled", vol_series=vol_df)
+```
 
 ---
 
 ### `backtest`
 
-*Phase 3 — stub.* Will integrate VectorBT with the strategy interface:
+VectorBT integration with a shared cash, group-by portfolio simulation.
 
 ```python
-run_backtest(features, params, cost_model) -> BacktestResult
+from backtest.engine import run_backtest
+from backtest.tearsheet import print_tearsheet
+
+result = run_backtest(prices, weights, cost_bps=5.0, initial_cash=100_000)
+print_tearsheet(result, title="Canary Strategy")
+# result.sharpe, result.cagr, result.max_drawdown, result.equity_curve
 ```
 
-**Canary validation target:** equal-weight top-decile 12-1 momentum on the equity universe, monthly rebalance, 5bps round-trip cost model — should reproduce ~0.7–1.0 Sharpe over 2010–2024. If it doesn't, there's a bug in the pipeline.
+**Canary validation:** `uv run python backtest/canary.py` runs the full 12-1 momentum pipeline and prints a tearsheet + risk report. Expected Sharpe: 0.5–1.5. Anything outside that range indicates a pipeline bug.
+
+**Walk-forward validation:**
+
+```python
+from backtest.walk_forward import walk_forward
+
+result = walk_forward(prices, features, signal_fn, weight_fn, train_years=3, test_months=12)
+print(result.combined_sharpe)   # stitched OOS Sharpe
+```
 
 ---
 
 ### `portfolio`
 
-*Phase 4 — stub.* Pure function interface:
+Pure function interface — no I/O, no state.
 
 ```python
-construct_portfolio(signals, cov_matrix, constraints) -> weights_df
+from portfolio import ledoit_wolf_cov, construct_portfolio, PortfolioConstraints
+
+cov, symbols = ledoit_wolf_cov(prices_df, lookback_days=252)
+weights = construct_portfolio(
+    signals,
+    cov_matrix=cov,
+    symbols=symbols,
+    method="vol_scaled",          # or "equal", "mean_variance", "min_variance", "max_sharpe"
+    constraints=PortfolioConstraints(max_position=0.40),
+)
 ```
 
-Will implement vol-scaled equal weighting (baseline), then Ledoit-Wolf shrinkage + mean-variance optimization via `cvxpy` / `PyPortfolioOpt`.
+| Method | Description | Requires |
+|---|---|---|
+| `equal` | 1/N equal weight | — |
+| `vol_scaled` | Inverse-volatility weight (1/σᵢ normalised) | cov matrix |
+| `mean_variance` | Max μᵀw − (λ/2)wᵀΣw via cvxpy | cov + expected returns |
+| `min_variance` | Minimum variance via PyPortfolioOpt | cov matrix |
+| `max_sharpe` | Maximum Sharpe ratio via PyPortfolioOpt | cov + expected returns |
 
 ---
 
 ### `risk`
 
-*Phase 4 — stub.* Pre-trade checks are **hard blocks**, not advisory warnings.
+Pre-trade checks are **hard blocks** — `CheckResult(passed=False)` must prevent order submission. Never downgrade to a warning.
 
-Planned:
-- Historical VaR (1-day, 95%, last 252 days)
-- Gross/net/sector exposure limits
-- Top-10 concentration cap
-- Stress scenarios: 2008 Sep, 2020 Mar, 2022 rate shock
+```python
+from risk import pre_trade_check, generate_risk_report, print_risk_report, RiskLimits, run_all_scenarios
+
+check = pre_trade_check(proposed_weights, RiskLimits(max_position=0.40, var_limit_pct=0.025))
+if not check.passed:
+    raise RuntimeError(f"Pre-trade check failed: {check.violations}")
+
+report = generate_risk_report(weights, prices_df, stress_results=run_all_scenarios(weights))
+print_risk_report(report)
+```
+
+**Default `RiskLimits`:**
+
+| Limit | Default |
+|---|---|
+| `max_position` | 40% in any single name |
+| `max_sector` | 60% in any one sector |
+| `max_gross` | 100% gross exposure |
+| `max_net` | 100% net exposure |
+| `max_top5_concentration` | 80% in top-5 names |
+| `var_limit_pct` | None (uncapped by default) |
+
+**Stress scenarios** in `risk/scenarios.py`: `2008_GFC`, `2020_COVID`, `2022_RATES`, `2000_DOTCOM`.
 
 ---
 
 ### `execution`
 
-**`base.py`** — `BrokerAdapter` protocol that all broker implementations must satisfy:
+All broker adapters implement `BrokerAdapter` from `execution/base.py` — swap providers without touching downstream code.
+
+**Order computation (pure function):**
 
 ```python
-class BrokerAdapter(Protocol):
-    def get_positions(self) -> list[Position]: ...
-    def get_cash(self) -> float: ...
-    def place_order(self, order: Order) -> str: ...       # returns order_id
-    def cancel_order(self, order_id: str) -> bool: ...
-    def get_fills(self, since: datetime | None) -> list[Fill]: ...
+from execution import compute_orders, nav_from_positions
+
+nav = nav_from_positions(positions, cash, prices)
+orders = compute_orders(target_weights, positions, prices, nav, min_trade_pct=0.005)
+# Idempotent: same inputs always produce the same orders
+# Returns integer share quantities, skips dust trades
 ```
 
-**`paper_broker.py`** — in-memory paper broker for smoke-testing order flow locally without any broker connection. Fills instantly at provided mark prices.
+**Paper broker:**
 
 ```python
-from execution.paper_broker import PaperBroker
-from execution.base import Order
+from execution import PaperBroker, Order
 
 broker = PaperBroker(initial_cash=100_000)
 broker.set_prices({"SPY": 520.0, "QQQ": 445.0})
-broker.place_order(Order(symbol="SPY", qty=10))
-print(broker.get_positions())
+order_id = broker.place_order(Order(symbol="SPY", qty=10))
 ```
 
-*Phase 6:* `IBKRAdapter` (via `ib-async`) and live `CCXTAdapter` will be added. Paper and live share the same code path — only the adapter changes.
+**IBKR (paper/live):**
+
+```python
+from execution.ibkr_adapter import IBKRAdapter
+
+with IBKRAdapter(host="127.0.0.1", port=7497, is_paper=True) as broker:
+    positions = broker.get_positions()
+    orders = compute_orders(target_weights, positions, prices, nav)
+    for order in orders:
+        broker.place_order(order)
+```
+
+**Reconciler:**
+
+```python
+from execution import reconcile, has_material_drift, format_reconcile_report
+
+report = reconcile(internal_positions, broker.get_positions(), prices, nav)
+print(format_reconcile_report(report))
+if has_material_drift(report, threshold_pct=5.0):
+    raise RuntimeError("Material drift detected — investigate before next rebalance")
+```
 
 ---
 
 ### `orchestration`
 
-**`ingest_daily.py`** — nightly incremental ingestion script.
+**Full daily pipeline:**
 
 ```bash
-# Run manually
-uv run python orchestration/ingest_daily.py
+# Master chain: ingest → validate → features → signals → alert on failure
+uv run python orchestration/run_pipeline.py
 
-# Cron entry (10pm ET, weekdays) — add via: crontab -e
-0 22 * * 1-5 cd ~/quantpipe && uv run python orchestration/ingest_daily.py >> logs/ingest.log 2>&1
+# Skip ingestion and regenerate signals only
+uv run python orchestration/run_pipeline.py --skip-ingest
+
+# Execute rebalance against paper broker
+uv run python orchestration/rebalance.py --broker paper
+
+# Dry-run: compute orders without placing them
+uv run python orchestration/rebalance.py --broker paper --dry-run
+
+# Live IBKR rebalance (requires TWS/Gateway running)
+uv run python orchestration/rebalance.py --broker ibkr
 ```
 
-Fetches a 30-day overlap window per symbol (to catch vendor revisions), writes to Parquet, validates every batch, and sends a Pushover/ntfy alert on any failure. Exits with code 0 (all ok), 1 (partial failures), or 2 (all failed).
+**Cron setup (runs at 6am ET weekdays):**
 
-**`backfill_history.py`** — one-shot historical seed. Run once after cloning.
+```cron
+0 6 * * 1-5 cd /path/to/QuantPipe && .venv/Scripts/python.exe orchestration/run_pipeline.py >> logs/pipeline.log 2>&1
+30 16 * * 1-5 cd /path/to/QuantPipe && .venv/Scripts/python.exe orchestration/rebalance.py --broker paper >> logs/rebalance.log 2>&1
+```
+
+**Individual steps:**
 
 ```bash
-# Full 7-year backfill for all asset classes
-uv run python orchestration/backfill_history.py
-
-# Equities only, custom date range
-uv run python orchestration/backfill_history.py --asset-class equity --start 2018-01-01
+uv run python orchestration/backfill_history.py          # one-shot historical seed
+uv run python orchestration/ingest_daily.py              # incremental ingest
+uv run python orchestration/generate_signals.py          # signal generation + risk snapshot
+uv run python features/compute.py                        # recompute gold-layer features
 ```
+
+Exit codes: `0` = success, `1` = partial failure, `2` = total failure. Pushover/ntfy alert sent on any non-zero exit.
 
 ---
 
 ### `reports`
 
-**`health_dashboard.py`** — Streamlit ops dashboard.
+**Dashboard #1 — Pipeline Health:**
 
 ```bash
 streamlit run reports/health_dashboard.py
-# Opens at http://localhost:8501
 ```
 
-Shows:
-- Last successful ingestion timestamp per asset class
-- Symbol counts in storage
-- Row counts per symbol for the last 30 days
-- Recent validation failures highlighted in red
-- Full ingestion log tail
+Shows: last ingestion time per asset class, signal freshness, universe sizes, per-symbol row counts with staleness flags, portfolio snapshot metrics (VaR, gross exposure, pre-trade status), tabbed log viewers for pipeline/ingest/signals logs.
 
-*Phase 5:* A second dashboard (`performance_dashboard.py`) will show daily P&L, drawdown, rolling Sharpe, and exposures.
+**Dashboard #2 — Performance:**
+
+```bash
+streamlit run reports/performance_dashboard.py
+```
+
+Shows: equity curve with drawdown, rolling Sharpe, monthly returns heatmap, current portfolio positions + sector breakdown, VaR trend, stress scenario table.
 
 ---
 
@@ -364,32 +465,30 @@ Shows:
 Jupyter notebooks for exploratory work. Naming convention: `YYYY-MM-DD_short-description.ipynb`.
 
 Rules:
-- Notebooks are for exploration only — logic that matters migrates to a module and gets imported.
-- Never use `data.shift(-1)` shortcuts or any future-looking operation.
+- Notebooks are exploration only — logic that matters migrates to a module.
+- Never use `data.shift(-1)` or any future-looking operation.
 - Track every hypothesis in the notebook header: what you expected, what you found.
-
-First notebook to create: `research/01_universe_exploration.ipynb` — load 5 years of bars, plot cumulative returns, compute rolling correlations, confirm the pipeline works end-to-end.
 
 ---
 
 ### `tests`
 
 ```bash
-# Run all tests
-uv run pytest
-
-# Run a specific file
-uv run pytest tests/test_features.py -v
-
-# Skip network tests (adapter tests hit Yahoo Finance)
-uv run pytest tests/test_storage.py tests/test_features.py -v
+uv run pytest                                # all 145 tests
+uv run pytest --ignore=tests/test_adapters.py   # skip network tests
+uv run pytest tests/test_risk.py -v         # single file, verbose
 ```
 
-| File | What it covers |
+| File | Covers |
 |---|---|
-| `test_adapters.py` | YFinance schema, date range, null checks, batch fetch (hits network) |
-| `test_storage.py` | Write/read roundtrip, idempotency, empty writes, list_symbols |
-| `test_features.py` | Per-feature correctness, no-lookahead snapshots, compute_features orchestrator |
+| `test_adapters.py` | YFinance schema, date range, null checks (hits network) |
+| `test_storage.py` | Parquet roundtrip, idempotency, list_symbols |
+| `test_features.py` | Per-feature correctness, no-lookahead snapshot tests |
+| `test_signals.py` | Momentum ranking, weight schemes, rebalance dates |
+| `test_portfolio.py` | Ledoit-Wolf covariance, all 5 optimizer methods, position cap |
+| `test_risk.py` | Exposures, VaR, pre-trade hard blocks, stress scenarios |
+| `test_orchestration.py` | Upsert helpers, pipeline step sequencing |
+| `test_execution.py` | Trader idempotency, PaperBroker fills, reconciler drift detection |
 
 ---
 
@@ -397,8 +496,8 @@ uv run pytest tests/test_storage.py tests/test_features.py -v
 
 ### Prerequisites
 
-- Windows with WSL2 Ubuntu (recommended) or macOS/Linux
-- Python 3.12 via `uv`
+- Python 3.13 via `uv`
+- Windows, macOS, or Linux
 
 ### Install `uv`
 
@@ -412,85 +511,89 @@ source $HOME/.local/bin/env
 ```bash
 git clone git@github.com:micahabanschick/QuantPipe.git
 cd QuantPipe
-uv sync                          # installs core dependencies
-uv sync --extra dev              # adds pytest, ruff, black, pre-commit
-uv sync --extra backtest         # adds VectorBT (Phase 3)
-uv sync --extra portfolio        # adds cvxpy, PyPortfolioOpt (Phase 4)
-uv sync --extra execution        # adds ib-async (Phase 6)
+uv sync                           # core dependencies
+uv sync --extra dev               # pytest, ruff, black
+uv sync --extra backtest          # VectorBT
+uv sync --extra portfolio         # cvxpy, PyPortfolioOpt
+uv sync --extra execution         # ib_insync
+# Install everything at once:
+uv sync --extra dev --extra backtest --extra portfolio --extra execution
 ```
 
 ### Configure environment
 
 ```bash
 cp .env.example .env
-# Edit .env and fill in your API keys (see .env.example for all variables)
+# Edit .env — fill in API keys (see .env.example for all variables)
 ```
 
 ### Seed historical data
 
 ```bash
 uv run python orchestration/backfill_history.py
-# Takes ~5–15 minutes depending on rate limits
+# Takes 5–15 minutes. Required before running signals or backtests.
+```
+
+### Compute gold-layer features
+
+```bash
+uv run python features/compute.py
+# Writes pre-computed features to data/gold/equity/features/
 ```
 
 ---
 
 ## Running the Pipeline
 
-### One-off ingestion
+### Validate the full pipeline end-to-end
 
 ```bash
-uv run python orchestration/ingest_daily.py
+uv run python backtest/canary.py
+# Expected: Sharpe 0.5–1.5. Prints tearsheet + risk report.
 ```
 
-### Historical backfill
+### Daily operations
 
 ```bash
-uv run python orchestration/backfill_history.py --asset-class equity --start 2018-01-01
-```
+# 1. Ingest + features + signals (run at market open or overnight)
+uv run python orchestration/run_pipeline.py
 
-### Health dashboard
+# 2. Rebalance at market close (paper mode — no real orders)
+uv run python orchestration/rebalance.py --broker paper
 
-```bash
+# 3. Check health dashboard
 streamlit run reports/health_dashboard.py
+
+# 4. Review performance
+streamlit run reports/performance_dashboard.py
 ```
 
-### Tests
+### Run tests
 
 ```bash
-uv run pytest
-```
-
-### Cron setup (WSL2)
-
-```bash
-crontab -e
-# Add:
-0 22 * * 1-5 cd ~/QuantPipe && /home/$USER/.local/bin/uv run python orchestration/ingest_daily.py >> logs/ingest.log 2>&1
+uv run pytest --ignore=tests/test_adapters.py   # fast, no network
 ```
 
 ---
 
 ## Build Phases
 
-The pipeline is built incrementally — each phase produces something usable before moving to the next.
+| Phase | Deliverable | Status |
+|---|---|---|
+| **0 — Setup** | Repo, dependencies, accounts | Complete |
+| **1 — Data layer** | Daily bars for 26 ETFs + 10 crypto, queryable in <1s | Complete |
+| **2 — Data quality + features** | Adjustments, universe-as-of-date, 5 factors, snapshot tests | Complete |
+| **3 — Backtest + first signal** | Canary strategy: Sharpe ~1.0, walk-forward validated | Complete |
+| **4 — Portfolio + risk** | Ledoit-Wolf, 5 optimizer methods, VaR, pre-trade checks, stress scenarios | Complete |
+| **5 — Reporting + orchestration** | Two Streamlit dashboards, cron chain, Pushover alerts | Complete |
+| **6 — Paper trading** | Trader, IBKRAdapter, CCXTBroker, reconciler, rebalance script | Complete |
+| **7 — Go live** | Gate: 4 weeks green paper trading, implementation gap < 25% of Sharpe | Pending |
+| **8 — Expand** | Paid data, additional strategies, scale capital | Future |
 
-| Phase | Weeks | Apps | Deliverable |
-|---|---|---|---|
-| **0 — Setup** | 0 | — | Repo, dependencies, accounts open |
-| **1 — Data layer** | 1–3 | Ingestion + Storage | 90 days of daily bars for full universe, queryable in <1s |
-| **2 — Data quality + features** | 4–5 | Data Quality + Feature Library | Adjustments, universe-as-of-date, 5 factors with snapshot tests |
-| **3 — Backtest + first signal** | 6–8 | Research + Backtest | Canary momentum strategy reproducing known ~0.7–1.0 Sharpe |
-| **4 — Portfolio + risk** | 9–10 | Portfolio + Risk | Every backtest run produces a risk report; pre-trade checks block violations |
-| **5 — Reporting + orchestration** | 11 | Reporting + Orchestration | Green dashboard every morning, Pushover alert on failures |
-| **6 — Paper trading** | 12–15 | Execution | 4-week paper trading gate: reconciler green, implementation gap < 25% of Sharpe |
-| **7 — Go live** | 16+ | — | $1000 live across 3–5 equity positions + 2 crypto |
-| **8 — Expand** | 6 months+ | — | Paid data (EODHD / Norgate), additional strategies, scale up capital |
-
-**Gate criteria before going live** (all must be true):
-- Paper trading green for 4+ consecutive weeks
-- Implementation gap understood and within bounds
-- Risk pre-trade checks tested and blocking violations
+**Gate criteria before Phase 7** (all must be true):
+- Paper trading reconciler green for 4+ consecutive weeks
+- Implementation gap understood and within acceptable bounds
+- Pre-trade checks tested — attempting to violate limits must produce a block
 - Written kill-switch procedure exists
 - Dashboard checked daily
 
@@ -498,21 +601,20 @@ The pipeline is built incrementally — each phase produces something usable bef
 
 ## Design Principles
 
-1. **Separation of concerns.** Each module does one thing and exposes a clean interface.
-2. **Point-in-time correctness.** No lookahead bias. Features use only data available on or before date T.
-3. **Research-to-production parity.** The code that generates a signal in research is the same code that runs live — no rewrite gap.
-4. **Honest performance evaluation.** Cost models (5bps round-trip minimum), slippage, and walk-forward validation are non-negotiable.
-5. **Incremental deployability.** The data layer alone is useful. Each phase ships something real.
-6. **Reproducibility.** Every backtest run is re-runnable from a git SHA + config. No notebooks as production.
+1. **Separation of concerns.** Each module does one thing and exposes a clean interface. The data layer never talks to execution.
+2. **Point-in-time correctness.** No lookahead bias. Features use only data available on or before date T. Snapshot tests enforce this.
+3. **Research-to-production parity.** The same code generates signals in research and runs live — no rewrite gap.
+4. **Honest evaluation.** Cost models (5bps round-trip), slippage, and walk-forward validation are non-negotiable.
+5. **Hard risk gates.** Pre-trade checks block orders — they are never downgraded to warnings.
+6. **Incremental deployability.** Each phase delivers something real and usable before the next begins.
+7. **Idempotency everywhere.** Writes upsert by key, order computation is pure, reruns produce no duplicates.
 
 ---
 
 ## Reference Documents
 
-The three design documents in this repo capture the full reasoning behind every architecture decision:
-
 | Document | Contents |
 |---|---|
-| [`quantfinance_pipeline_outline.md`](quantfinance_pipeline_outline.md) | Full description of all 11 apps, feasibility notes, difficulty ratings, and recommended build order |
-| [`quantfinance_build_plan.md`](quantfinance_build_plan.md) | Constrained build plan: tooling choices, budget allocation, per-phase milestones, per-app difficulty adjusted for solo/multi-asset/daily constraints |
-| [`quantfinance_kickoff_week1.md`](quantfinance_kickoff_week1.md) | Day-by-day Week 1 plan, Windows/WSL2 setup, account opening checklist, strategy decisions (ETF 9-box rotation, crypto sidecar, options as live overlay only) |
+| [`quantfinance_pipeline_outline.md`](quantfinance_pipeline_outline.md) | All 11 apps, feasibility notes, difficulty ratings, recommended build order |
+| [`quantfinance_build_plan.md`](quantfinance_build_plan.md) | Constrained build plan: tooling, budget, per-phase milestones, per-app difficulty |
+| [`quantfinance_kickoff_week1.md`](quantfinance_kickoff_week1.md) | Day-by-day Week 1 plan, setup checklist, strategy decisions (ETF 9-box rotation, crypto sidecar, options as live overlay) |
