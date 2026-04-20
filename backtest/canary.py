@@ -26,6 +26,7 @@ from signals.momentum import (
     get_monthly_rebalance_dates,
     momentum_weights,
 )
+from risk import generate_risk_report, print_risk_report, run_all_scenarios
 from storage.parquet_store import load_bars
 from storage.universe import universe_as_of_date
 
@@ -106,6 +107,14 @@ def run_canary(
 
     # --- 5. Tearsheet ---
     print_tearsheet(result, title=f"Canary: 12-1 Momentum Top-{TOP_N} ETF (equal weight)")
+
+    # --- 5b. Risk report on final rebalance weights ---
+    final_rebal = weights["rebalance_date"].max()
+    final_weights_df = weights.filter(pl.col("rebalance_date") == final_rebal)
+    final_weights = dict(zip(final_weights_df["symbol"].to_list(), final_weights_df["weight"].to_list()))
+    stress = run_all_scenarios(final_weights)
+    risk_report = generate_risk_report(final_weights, prices, as_of=end, stress_results=stress)
+    print_risk_report(risk_report)
 
     # --- 6. Sanity check ---
     metrics = tearsheet_dict(result)

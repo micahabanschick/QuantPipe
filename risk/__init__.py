@@ -1,9 +1,21 @@
-"""Risk management module — Phase 4.
+from .engine import (
+    RiskLimits,
+    ExposureReport,
+    CheckResult,
+    RiskReport,
+    EQUITY_SECTOR_MAP,
+    compute_exposures,
+    historical_var,
+    pre_trade_check,
+    generate_risk_report,
+    print_risk_report,
+)
+from .scenarios import SCENARIOS, apply_scenario, run_all_scenarios
 
-Core functions:
-    compute_exposures(positions, prices) -> ExposureReport
-    historical_var(returns, weights, confidence=0.95, lookback=252) -> float
-    pre_trade_check(proposed_orders, current_positions, limits) -> CheckResult
-
-Pre-trade checks are hard blocks — they reject orders, not advisory warnings.
-"""
+__all__ = [
+    "RiskLimits", "ExposureReport", "CheckResult", "RiskReport",
+    "EQUITY_SECTOR_MAP",
+    "compute_exposures", "historical_var", "pre_trade_check",
+    "generate_risk_report", "print_risk_report",
+    "SCENARIOS", "apply_scenario", "run_all_scenarios",
+]
