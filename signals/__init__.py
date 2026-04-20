@@ -1,7 +1,3 @@
-"""Signals module — combines features into cross-sectional ranking signals.
+from .momentum import cross_sectional_momentum, momentum_weights
 
-Phase 3+ work. Each signal is a pure function:
-    (features_df: pl.DataFrame, params: dict) -> pl.DataFrame
-
-The output DataFrame must have columns: [date, symbol, signal_value].
-"""
+__all__ = ["cross_sectional_momentum", "momentum_weights"]
