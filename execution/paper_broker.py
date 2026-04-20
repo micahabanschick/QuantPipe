@@ -5,7 +5,7 @@ partial fills — use this for smoke-testing order flow, not realistic simulatio
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import polars as pl
 
@@ -72,7 +72,7 @@ class PaperBroker:
             filled_qty=order.qty,
             avg_price=price,
             commission=commission,
-            filled_at=datetime.utcnow(),
+            filled_at=datetime.now(timezone.utc),
             asset_class=order.asset_class,
         )
         self._fills.append(fill)
