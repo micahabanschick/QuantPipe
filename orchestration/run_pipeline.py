@@ -1,0 +1,137 @@
+"""Master pipeline orchestrator — chains all daily steps.
+
+Chain: ingest_daily -> generate_signals -> alert on any failure.
+
+Each step exits non-zero on failure. This script collects exit codes,
+sends a single alert summarising any failures, and exits non-zero if
+any step failed so the cron daemon records the failure.
+
+Cron example (runs at 06:00 every weekday):
+    0 6 * * 1-5 cd /path/to/QuantPipe && .venv/Scripts/python.exe orchestration/run_pipeline.py >> logs/pipeline.log 2>&1
+
+Usage:
+    uv run python orchestration/run_pipeline.py
+    uv run python orchestration/run_pipeline.py --skip-ingest   # signals-only rerun
+"""
+
+import argparse
+import logging
+import sys
+import time
+from datetime import date
+
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+from config.settings import LOGS_DIR
+from orchestration.generate_signals import run_generate_signals
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(LOGS_DIR / "pipeline.log"),
+    ],
+)
+log = logging.getLogger(__name__)
+
+
+def _send_alert(message: str) -> None:
+    from config.settings import NTFY_TOPIC, PUSHOVER_TOKEN, PUSHOVER_USER
+    if PUSHOVER_TOKEN and PUSHOVER_USER:
+        try:
+            import requests
+            requests.post("https://api.pushover.net/1/messages.json", data={
+                "token": PUSHOVER_TOKEN,
+                "user": PUSHOVER_USER,
+                "message": message,
+                "title": "QuantPipe Pipeline",
+            }, timeout=10)
+        except Exception as exc:
+            log.warning(f"Pushover alert failed: {exc}")
+    elif NTFY_TOPIC:
+        try:
+            import requests
+            requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=message.encode(), timeout=10)
+        except Exception as exc:
+            log.warning(f"ntfy alert failed: {exc}")
+    log.info(f"ALERT sent: {message}")
+
+
+def _run_step(name: str, fn, *args, **kwargs) -> tuple[int, float]:
+    """Run one pipeline step, return (exit_code, elapsed_seconds)."""
+    log.info(f"--- Step: {name} ---")
+    t0 = time.monotonic()
+    try:
+        code = fn(*args, **kwargs)
+        elapsed = time.monotonic() - t0
+        status = "OK" if code == 0 else f"FAILED (code={code})"
+        log.info(f"--- {name}: {status} in {elapsed:.1f}s ---")
+        return code, elapsed
+    except Exception as exc:
+        elapsed = time.monotonic() - t0
+        log.error(f"--- {name}: EXCEPTION in {elapsed:.1f}s: {exc} ---")
+        return 2, elapsed
+
+
+def run_pipeline(skip_ingest: bool = False, as_of: date | None = None) -> int:
+    today = as_of or date.today()
+    t_start = time.monotonic()
+    failures: list[str] = []
+
+    log.info(f"======== QuantPipe pipeline | {today} ========")
+
+    # Step 1 — ingest
+    if not skip_ingest:
+        from orchestration.ingest_daily import main as ingest_main
+        code, elapsed = _run_step("ingest_daily", ingest_main)
+        if code != 0:
+            failures.append(f"ingest_daily (code={code})")
+            if code == 2:
+                _send_alert(f"[{today}] Pipeline aborted: ingest_daily total failure.")
+                log.error("Aborting pipeline — ingest totally failed.")
+                return 2
+    else:
+        log.info("--- Step: ingest_daily SKIPPED ---")
+
+    # Step 2 — generate signals
+    code, elapsed = _run_step("generate_signals", run_generate_signals, today)
+    if code != 0:
+        failures.append(f"generate_signals (code={code})")
+
+    # Summary
+    total_elapsed = time.monotonic() - t_start
+    log.info(f"======== Pipeline complete in {total_elapsed:.1f}s | "
+             f"{len(failures)} failure(s) ========")
+
+    if failures:
+        summary = ", ".join(failures)
+        _send_alert(f"[{today}] Pipeline finished with failures: {summary}. Check logs.")
+        return 1
+
+    _send_alert_success(today, total_elapsed)
+    return 0
+
+
+def _send_alert_success(today: date, elapsed: float) -> None:
+    """Send a success notification (only if alerting is configured)."""
+    from config.settings import NTFY_TOPIC, PUSHOVER_TOKEN, PUSHOVER_USER
+    if not (PUSHOVER_TOKEN or NTFY_TOPIC):
+        return
+    _send_alert(f"[{today}] Pipeline OK in {elapsed:.0f}s. Signals updated.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the full QuantPipe daily pipeline")
+    parser.add_argument("--skip-ingest", action="store_true",
+                        help="Skip ingestion and run signals only")
+    parser.add_argument("--date", type=date.fromisoformat, default=None,
+                        help="Override today's date (for backfill/testing)")
+    args = parser.parse_args()
+    sys.exit(run_pipeline(skip_ingest=args.skip_ingest, as_of=args.date))
+
+
+if __name__ == "__main__":
+    main()
