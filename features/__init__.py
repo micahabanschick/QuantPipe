@@ -6,6 +6,7 @@ from .canonical import (
     reversal_5d,
     compute_features,
 )
+from .compute import compute_and_store, load_features
 
 __all__ = [
     "log_return",
@@ -14,4 +15,6 @@ __all__ = [
     "dollar_volume",
     "reversal_5d",
     "compute_features",
+    "compute_and_store",
+    "load_features",
 ]

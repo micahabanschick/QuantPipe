@@ -55,6 +55,9 @@ target-version = ["py312"]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
 
+# Run tests via: .venv/Scripts/python.exe -m pytest
+# (uv run pytest may resolve to system Python on Windows if VIRTUAL_ENV is set externally)
+
 [tool.hatch.build.targets.wheel]
 packages = [
     "config",
