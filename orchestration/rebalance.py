@@ -201,7 +201,11 @@ def run_rebalance(
             return 2
 
         # 4. Pre-trade risk check (hard gate)
-        check = pre_trade_check(target_weights, RiskLimits())
+        # top-5 concentration is 100% by definition for any portfolio with ≤5 positions;
+        # only enforce it when there are enough positions for it to be meaningful.
+        n_pos = len(target_weights)
+        top5_cap = 1.0 if n_pos <= 5 else 0.80
+        check = pre_trade_check(target_weights, RiskLimits(max_top5_concentration=top5_cap))
         if not check.passed:
             msg = f"Pre-trade check FAILED: {check.violations}"
             log.error(msg)
