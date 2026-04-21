@@ -1,6 +1,8 @@
-"""Strategy Lab — in-browser code editor + backtest runner."""
+"""Strategy Lab — code editor, strategy selector, and backtest runner."""
 
+import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -20,33 +22,146 @@ from reports._theme import (
     status_banner,
 )
 
-# ── File catalogue ─────────────────────────────────────────────────────────────
+_ROOT       = Path(__file__).parent.parent
+_STRAT_DIR  = _ROOT / "strategies"
+_ACE_THEME  = "tomorrow_night"
 
-_ROOT = Path(__file__).parent.parent
+# ── Strategy template ─────────────────────────────────────────────────────────
 
-_STRATEGY_FILES = {
-    "Strategy — Momentum Signal": "signals/momentum.py",
-    "Strategy — Canary Backtest":  "backtest/canary.py",
-    "Config — Universe":           "config/universes.py",
-    "Risk — Scenarios":            "risk/scenarios.py",
-    "Pipeline — Generate Signals": "orchestration/generate_signals.py",
-}
+_TEMPLATE = '''\
+"""{name} — {description}
 
-_ENGINE_FILES = {
-    "Engine — Backtest Core":  "backtest/engine.py",
-    "Engine — Optimizer":      "portfolio/optimizer.py",
-    "Engine — Risk Engine":    "risk/engine.py",
-}
+Strategy interface (required by tools/backtest_runner.py):
+  NAME          : displayed in the Strategy Lab selector
+  DESCRIPTION   : one-line summary
+  DEFAULT_PARAMS: fallback values used when the UI does not override them
+  get_signal()  : (features, rebal_dates, **params) -> signal DataFrame
+  get_weights() : (signal, **params) -> weights DataFrame
+"""
 
-_SEP = "─── Engine files (caution) ───"
-_FILE_OPTIONS = list(_STRATEGY_FILES.keys()) + [_SEP] + list(_ENGINE_FILES.keys())
-_ALL_FILES = {**_STRATEGY_FILES, **_ENGINE_FILES}
+import polars as pl
 
-_ACE_THEME = "tomorrow_night"
-_ACE_FONT_SIZE = 14
+from signals.momentum import cross_sectional_momentum, momentum_weights
+
+NAME = "{name}"
+DESCRIPTION = "{description}"
+DEFAULT_PARAMS = {{
+    "lookback_years": 6,
+    "top_n": 5,
+    "cost_bps": 5.0,
+    "weight_scheme": "equal",
+}}
 
 
-# ── Helper — render backtest results ──────────────────────────────────────────
+def get_signal(
+    features: pl.DataFrame,
+    rebal_dates: list,
+    top_n: int = DEFAULT_PARAMS["top_n"],
+    **kwargs,
+) -> pl.DataFrame:
+    """Rank symbols by 12-1 momentum and select the top_n on each rebalance date."""
+    return cross_sectional_momentum(features, rebal_dates, top_n=top_n)
+
+
+def get_weights(
+    signal: pl.DataFrame,
+    weight_scheme: str = DEFAULT_PARAMS["weight_scheme"],
+    **kwargs,
+) -> pl.DataFrame:
+    """Convert ranked signal to target weights."""
+    return momentum_weights(signal, weight_scheme=weight_scheme)
+'''
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _list_strategies() -> list[Path]:
+    """Return all .py files in strategies/ except __init__.py, sorted by name."""
+    _STRAT_DIR.mkdir(exist_ok=True)
+    return sorted(
+        p for p in _STRAT_DIR.glob("*.py")
+        if p.name != "__init__.py"
+    )
+
+
+def _strategy_display_name(path: Path) -> str:
+    """Try to read NAME from the file; fall back to the stem."""
+    try:
+        spec = importlib.util.spec_from_file_location("_tmp", path)
+        mod  = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return getattr(mod, "NAME", path.stem)
+    except Exception:
+        return path.stem
+
+
+def _strategy_options(paths: list[Path]) -> dict[str, Path]:
+    """Map display label → Path for the selectbox."""
+    out = {}
+    for p in paths:
+        label = _strategy_display_name(p)
+        if label in out:
+            label = f"{label} ({p.stem})"
+        out[label] = p
+    return out
+
+
+def _name_to_filename(name: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
+    return f"{slug or 'strategy'}.py"
+
+
+def _load_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return f"# File not found: {path}\n"
+
+
+# ── New-strategy dialog ───────────────────────────────────────────────────────
+
+@st.dialog("New Strategy")
+def _new_strategy_dialog() -> None:
+    st.markdown(
+        f'<div style="color:{COLORS["neutral"]};font-size:0.82rem;margin-bottom:12px;">'
+        "A new strategy file will be created from the momentum template. "
+        "You can customise it in the editor after creation."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    name = st.text_input("Strategy name", placeholder="e.g. Momentum Vol-Scaled")
+    desc = st.text_input("Description",   placeholder="One-line summary of the strategy")
+
+    filename = _name_to_filename(name) if name else "strategy.py"
+    st.markdown(
+        f'<div style="color:{COLORS["text_muted"]};font-size:0.75rem;margin:4px 0 12px;">'
+        f'Will be saved as <code>strategies/{filename}</code></div>',
+        unsafe_allow_html=True,
+    )
+
+    col_create, col_cancel = st.columns(2)
+    with col_create:
+        create = st.button("Create", type="primary", use_container_width=True, disabled=not name)
+    with col_cancel:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+
+    if create and name:
+        target = _STRAT_DIR / filename
+        if target.exists():
+            st.error(f"{filename} already exists. Choose a different name.")
+        else:
+            content = _TEMPLATE.format(
+                name=name,
+                description=desc or "No description provided.",
+            )
+            target.write_text(content, encoding="utf-8")
+            st.session_state["selected_strategy"] = str(target)
+            st.rerun()
+
+
+# ── Results renderer ──────────────────────────────────────────────────────────
 
 def _show_results(results_ph, console_ph, data: dict) -> None:
     console_lines = data.get("_console", [])
@@ -55,7 +170,7 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
         with results_ph.container():
             err = data.get("error", "Unknown error")
             st.markdown(
-                status_banner(f"Backtest failed — {err[:120]}", COLORS["negative"]),
+                status_banner(f"Backtest failed — {err[:140]}", COLORS["negative"]),
                 unsafe_allow_html=True,
             )
         with console_ph.container():
@@ -64,40 +179,42 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
                     st.code("\n".join(console_lines), language="text")
         return
 
-    metrics = data.get("metrics", {})
-    params  = data.get("params", {})
-    equity  = data.get("equity", {})
-    bench   = data.get("benchmark", {})
-    sharpe  = metrics.get("sharpe", 0.0) or 0.0
+    metrics  = data.get("metrics", {})
+    params   = data.get("params", {})
+    equity   = data.get("equity", {})
+    bench    = data.get("benchmark", {})
+    strat_nm = data.get("strategy_name", "Strategy")
+    sharpe   = float(metrics.get("sharpe") or 0)
 
     with results_ph.container():
-        # Status banner
+        # Banner
         if sharpe >= 0.8:
             bc, bt = COLORS["positive"], f"Backtest complete — Sharpe {sharpe:.2f}"
         elif sharpe >= 0.4:
-            bc, bt = COLORS["warning"], f"Backtest complete — Sharpe {sharpe:.2f} (below target)"
+            bc, bt = COLORS["warning"],  f"Backtest complete — Sharpe {sharpe:.2f} (below target)"
         else:
             bc, bt = COLORS["negative"], f"Backtest complete — Sharpe {sharpe:.2f} (low)"
         st.markdown(status_banner(bt, bc), unsafe_allow_html=True)
 
-        # Params summary
+        # Params row
         p_period = f"{metrics.get('start','?')} → {metrics.get('end','?')} ({metrics.get('years','?')}y)"
         p_cfg    = (
             f"Top-{params.get('top_n','?')} · "
             f"{params.get('weight_scheme','?')} weight · "
-            f"{params.get('cost_bps','?')} bps cost"
+            f"{params.get('cost_bps','?')} bps"
         )
         st.markdown(
-            f'<div style="color:{COLORS["neutral"]};font-size:0.78rem;margin-bottom:12px;">'
-            f'{p_period} &nbsp;|&nbsp; {p_cfg}</div>',
+            f'<div style="color:{COLORS["neutral"]};font-size:0.76rem;margin-bottom:12px;">'
+            f'<b style="color:{COLORS["text"]}">{strat_nm}</b> &nbsp;·&nbsp; '
+            f'{p_period} &nbsp;·&nbsp; {p_cfg}</div>',
             unsafe_allow_html=True,
         )
 
-        # KPI grid
-        def _pct(v): return f"{v:+.1%}" if isinstance(v, float) else "—"
-        def _f(v):   return f"{v:.3f}"  if isinstance(v, float) else "—"
+        # KPI cards
+        def _pct(v):  return f"{v:+.1%}" if isinstance(v, float) else "—"
+        def _f(v):    return f"{v:.3f}"  if isinstance(v, float) else "—"
         def _cost(v): return f"${v:,.0f}" if isinstance(v, (int, float)) else "—"
-        def _n(v):   return str(int(v)) if isinstance(v, (int, float)) else "—"
+        def _n(v):    return str(int(v)) if isinstance(v, (int, float)) else "—"
 
         kpis = [
             ("Total Return",     _pct(metrics.get("total_return")), None),
@@ -109,14 +226,13 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
             ("Transaction Cost", _cost(metrics.get("total_cost")),  None),
             ("Trades",           _n(metrics.get("n_trades")),       None),
         ]
-
-        for row_start in range(0, len(kpis), 2):
-            cols = st.columns(2)
-            for col, (label, val, accent) in zip(cols, kpis[row_start:row_start + 2]):
+        for i in range(0, len(kpis), 2):
+            c1, c2 = st.columns(2)
+            for col, (label, val, accent) in zip([c1, c2], kpis[i:i + 2]):
                 with col:
                     st.markdown(kpi_card(label, val, accent=accent), unsafe_allow_html=True)
 
-        # Equity curve
+        # Equity chart
         if equity.get("dates"):
             eq_dates = pd.to_datetime(equity["dates"])
             eq_vals  = equity["values"]
@@ -124,24 +240,21 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
             fig = go.Figure()
             fig.add_trace(go.Scatter(
                 x=eq_dates, y=eq_vals,
-                mode="lines", name="Strategy",
+                mode="lines", name=strat_nm,
                 line=dict(color=COLORS["positive"], width=2),
                 fill="tozeroy", fillcolor="rgba(0,212,170,0.06)",
                 hovertemplate="%{x|%b %d %Y}<br>$%{y:,.0f}<extra></extra>",
             ))
-
             if bench.get("dates") and eq_vals:
-                b_dates = pd.to_datetime(bench["dates"])
-                b_vals  = bench["values"]
-                scale   = eq_vals[0] / b_vals[0] if b_vals and b_vals[0] else 1
-                b_scaled = [v * scale for v in b_vals]
+                b_dates  = pd.to_datetime(bench["dates"])
+                b_vals   = bench["values"]
+                scale    = eq_vals[0] / b_vals[0] if b_vals and b_vals[0] else 1
                 fig.add_trace(go.Scatter(
-                    x=b_dates, y=b_scaled,
+                    x=b_dates, y=[v * scale for v in b_vals],
                     mode="lines", name="SPY (benchmark)",
                     line=dict(color=COLORS["neutral"], width=1.5, dash="dot"),
                     hovertemplate="%{x|%b %d %Y}<br>$%{y:,.0f}<extra></extra>",
                 ))
-
             apply_theme(fig, title="Equity Curve vs. Benchmark", height=280)
             st.plotly_chart(fig, config=PLOTLY_CONFIG, width="stretch")
 
@@ -151,14 +264,62 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
                 st.code("\n".join(console_lines), language="text")
 
 
-# ── Page header ────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE
+# ══════════════════════════════════════════════════════════════════════════════
 
 st.markdown(page_header(
     "Strategy Lab",
-    "Edit strategy code and run backtests directly from the dashboard",
+    "Edit strategies, configure parameters, and run backtests",
 ), unsafe_allow_html=True)
 
-# ── Layout ────────────────────────────────────────────────────────────────────
+# ── Strategy selector bar ─────────────────────────────────────────────────────
+
+st.markdown(section_label("Strategy"), unsafe_allow_html=True)
+
+strategy_paths   = _list_strategies()
+strategy_options = _strategy_options(strategy_paths)  # label -> Path
+
+sel_col, new_col = st.columns([5, 1])
+
+with new_col:
+    if st.button("➕ New", use_container_width=True, help="Create a new strategy from template"):
+        _new_strategy_dialog()
+
+if not strategy_options:
+    st.info("No strategies found in `strategies/`. Click **➕ New** to create your first one.")
+    st.stop()
+
+# Resolve which strategy is selected
+_saved_path = st.session_state.get("selected_strategy")
+default_idx = 0
+labels      = list(strategy_options.keys())
+if _saved_path:
+    for i, p in enumerate(strategy_options.values()):
+        if str(p) == _saved_path:
+            default_idx = i
+            break
+
+with sel_col:
+    selected_label = st.selectbox(
+        "Strategy",
+        options=labels,
+        index=default_idx,
+        label_visibility="collapsed",
+    )
+
+selected_path = strategy_options[selected_label]
+st.session_state["selected_strategy"] = str(selected_path)
+
+st.markdown(
+    f'<div style="color:{COLORS["text_muted"]};font-size:0.72rem;margin:-4px 0 12px;">'
+    f'strategies/{selected_path.name}</div>',
+    unsafe_allow_html=True,
+)
+
+st.divider()
+
+# ── Main layout ────────────────────────────────────────────────────────────────
 
 left, right = st.columns([3, 2], gap="large")
 
@@ -169,51 +330,21 @@ left, right = st.columns([3, 2], gap="large")
 with left:
     st.markdown(section_label("Code Editor"), unsafe_allow_html=True)
 
-    selected_label = st.selectbox(
-        "File",
-        options=_FILE_OPTIONS,
-        index=0,
-        label_visibility="collapsed",
-    )
-
-    if selected_label == _SEP:
-        st.info("Select a file from the list above to begin editing.")
-        st.stop()
-
-    is_engine = selected_label in _ENGINE_FILES
-    rel_path  = _ALL_FILES[selected_label]
-    abs_path  = _ROOT / rel_path
-
-    if is_engine:
-        st.markdown(
-            status_banner(
-                "Engine file — changes affect all backtests. Edit carefully.",
-                COLORS["warning"],
-            ),
-            unsafe_allow_html=True,
-        )
-
-    # Session-state keys per file
-    disk_key  = f"disk__{rel_path}"
-    edit_key  = f"edit__{rel_path}"
-    dirty_key = f"dirty_{rel_path}"
-
-    def _load_from_disk() -> str:
-        try:
-            return abs_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return f"# File not found: {rel_path}\n"
+    disk_key  = f"disk__{selected_path}"
+    edit_key  = f"edit__{selected_path}"
+    dirty_key = f"dirty_{selected_path}"
 
     if disk_key not in st.session_state:
-        st.session_state[disk_key]  = _load_from_disk()
-        st.session_state[edit_key]  = st.session_state[disk_key]
+        content = _load_file(selected_path)
+        st.session_state[disk_key]  = content
+        st.session_state[edit_key]  = content
         st.session_state[dirty_key] = False
 
     new_content = st_ace(
         value=st.session_state[edit_key],
         language="python",
         theme=_ACE_THEME,
-        font_size=_ACE_FONT_SIZE,
+        font_size=14,
         tab_size=4,
         show_gutter=True,
         show_print_margin=False,
@@ -221,7 +352,7 @@ with left:
         auto_update=True,
         min_lines=30,
         max_lines=55,
-        key=f"ace_{rel_path}",
+        key=f"ace_{selected_path}",
     )
 
     if new_content is not None:
@@ -241,8 +372,7 @@ with left:
         )
     with ab2:
         discard_clicked = st.button(
-            "↩ Discard", use_container_width=True,
-            disabled=not dirty,
+            "↩ Discard", use_container_width=True, disabled=not dirty,
         )
     with ab3:
         reload_clicked = st.button(
@@ -258,17 +388,17 @@ with left:
             )
         else:
             st.markdown(
-                f'<div style="padding:8px 0;color:{COLORS["positive"]};'
-                f'font-size:0.80rem;">✓ Saved</div>',
+                f'<div style="padding:8px 0;color:{COLORS["positive"]};font-size:0.80rem;">'
+                f'✓ Saved</div>',
                 unsafe_allow_html=True,
             )
 
     if save_clicked:
         try:
-            abs_path.write_text(st.session_state[edit_key], encoding="utf-8")
+            selected_path.write_text(st.session_state[edit_key], encoding="utf-8")
             st.session_state[disk_key]  = st.session_state[edit_key]
             st.session_state[dirty_key] = False
-            st.success(f"Saved → {rel_path}")
+            st.success(f"Saved → strategies/{selected_path.name}")
             st.rerun()
         except Exception as exc:
             st.error(f"Save failed: {exc}")
@@ -279,7 +409,7 @@ with left:
         st.rerun()
 
     if reload_clicked:
-        fresh = _load_from_disk()
+        fresh = _load_file(selected_path)
         st.session_state[disk_key]  = fresh
         st.session_state[edit_key]  = fresh
         st.session_state[dirty_key] = False
@@ -292,30 +422,43 @@ with left:
 with right:
     st.markdown(section_label("Backtest Configuration"), unsafe_allow_html=True)
 
+    # Load strategy defaults to pre-fill UI
+    try:
+        _spec = importlib.util.spec_from_file_location("_strat_tmp", selected_path)
+        _mod  = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _defaults = getattr(_mod, "DEFAULT_PARAMS", {})
+    except Exception:
+        _defaults = {}
+
     cfg1, cfg2 = st.columns(2)
     with cfg1:
         lookback_years = st.number_input(
-            "Lookback (years)", min_value=1, max_value=20, value=6, step=1,
+            "Lookback (years)", min_value=1, max_value=20,
+            value=int(_defaults.get("lookback_years", 6)), step=1,
         )
         cost_bps = st.number_input(
             "Cost (bps)", min_value=0.0, max_value=100.0,
-            value=5.0, step=0.5, format="%.1f",
+            value=float(_defaults.get("cost_bps", 5.0)), step=0.5, format="%.1f",
         )
     with cfg2:
         top_n = st.number_input(
-            "Top-N positions", min_value=1, max_value=20, value=5, step=1,
+            "Top-N positions", min_value=1, max_value=20,
+            value=int(_defaults.get("top_n", 5)), step=1,
         )
+        scheme_opts = ["equal", "vol_scaled"]
+        scheme_def  = _defaults.get("weight_scheme", "equal")
         weight_scheme = st.selectbox(
             "Weighting",
-            options=["equal", "vol_scaled"],
-            index=0,
+            options=scheme_opts,
+            index=scheme_opts.index(scheme_def) if scheme_def in scheme_opts else 0,
         )
 
     run_btn = st.button(
         "▶  Run Backtest",
         type="primary",
         use_container_width=True,
-        help="Executes tools/backtest_runner.py as a subprocess",
+        help=f"Backtest strategies/{selected_path.name}",
     )
 
     st.divider()
@@ -323,15 +466,16 @@ with right:
     results_ph = st.empty()
     console_ph = st.empty()
 
-    # Restore prior results from session state on page reload
-    if "lab_result" in st.session_state and not run_btn:
-        _show_results(results_ph, console_ph, st.session_state["lab_result"])
+    result_key = f"lab_result_{selected_path.name}"
+
+    if result_key in st.session_state and not run_btn:
+        _show_results(results_ph, console_ph, st.session_state[result_key])
 
     if run_btn:
-        python_exe = sys.executable
-        runner     = str(_ROOT / "tools" / "backtest_runner.py")
+        runner = str(_ROOT / "tools" / "backtest_runner.py")
         cmd = [
-            python_exe, runner,
+            sys.executable, runner,
+            "--strategy",       str(selected_path),
             "--lookback-years", str(int(lookback_years)),
             "--top-n",          str(int(top_n)),
             "--cost-bps",       str(float(cost_bps)),
@@ -344,9 +488,8 @@ with right:
                 unsafe_allow_html=True,
             )
 
-        stdout_buf = ""
+        stdout_buf   = ""
         stderr_lines: list[str] = []
-
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -357,7 +500,7 @@ with right:
                 cwd=str(_ROOT),
             )
             stdout_buf, stderr_raw = proc.communicate(timeout=300)
-            stderr_lines = [l for l in stderr_raw.splitlines() if l.strip()]
+            stderr_lines = [ln for ln in stderr_raw.splitlines() if ln.strip()]
         except subprocess.TimeoutExpired:
             proc.kill()
             stdout_buf, _ = proc.communicate()
@@ -371,5 +514,5 @@ with right:
             result_data = {"ok": False, "error": f"Could not parse output:\n{stdout_buf[:400]}"}
 
         result_data["_console"] = stderr_lines
-        st.session_state["lab_result"] = result_data
+        st.session_state[result_key] = result_data
         _show_results(results_ph, console_ph, result_data)
