@@ -34,7 +34,7 @@ COINBASE_SECRET: str = os.getenv("COINBASE_SECRET", "")
 
 # ── IBKR ───────────────────────────────────────────────────────────────────────
 IBKR_HOST: str = os.getenv("IBKR_HOST", "127.0.0.1")
-IBKR_PORT: int = int(os.getenv("IBKR_PORT", "4002"))   # Gateway paper=4002, live=4001; TWS paper=7497, live=7496
+IBKR_PORT: int = int(os.getenv("IBKR_PORT", "7497"))   # TWS paper=7497, live=7496; Gateway paper=4002, live=4001
 IBKR_CLIENT_ID: int = int(os.getenv("IBKR_CLIENT_ID", "1"))
 IBKR_PAPER: bool = os.getenv("IBKR_PAPER", "true").lower() in ("1", "true", "yes")
 

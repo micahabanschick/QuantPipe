@@ -590,26 +590,64 @@ def _tab_blended(config, results: dict):
 # TAB 6 — Trade (IB paper / live execution)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _check_ibkr_connection(host: str, port: int) -> tuple[bool, str]:
-    """Try a raw TCP connect to see if TWS/Gateway is reachable."""
+def _show_connection_help(host: str, port: int | None) -> None:
+    """Render a clear setup guide when IB can't be reached."""
+    port_str = f":{port}" if port else ""
+    st.error(f"Nothing found at **{host}{port_str}**")
+    st.markdown(f"""
+<div style="background:{COLORS['card_bg']};border:1px solid {COLORS['warning']};
+     border-radius:8px;padding:16px 20px;margin-top:8px;line-height:1.9;">
+  <div style="color:{COLORS['warning']};font-weight:700;font-size:0.9rem;margin-bottom:10px;">
+    Setup checklist
+  </div>
+  <ol style="color:{COLORS['text']};font-size:0.85rem;margin:0;padding-left:20px;">
+    <li>Open <strong>TWS</strong> or <strong>IB Gateway</strong> and log in to your account.</li>
+    <li>In TWS: <em>Edit → Global Configuration → API → Settings</em><br>
+        In Gateway: <em>Configure → Settings → API → Settings</em></li>
+    <li>Check <strong>"Enable ActiveX and Socket Clients"</strong>.</li>
+    <li>Set <em>Socket port</em>:
+      <ul style="margin:4px 0;">
+        <li>TWS paper&nbsp;&nbsp; → <code>7497</code></li>
+        <li>TWS live&nbsp;&nbsp;&nbsp; → <code>7496</code></li>
+        <li>Gateway paper → <code>4002</code></li>
+        <li>Gateway live&nbsp; → <code>4001</code></li>
+      </ul>
+    </li>
+    <li>Uncheck <strong>"Read-Only API"</strong> (required to place orders).</li>
+    <li>Make sure <em>Trusted IP Addresses</em> includes <code>127.0.0.1</code>.</li>
+    <li>Click <strong>OK / Apply</strong>, then use <em>Auto-Detect Ports</em> here.</li>
+  </ol>
+</div>""", unsafe_allow_html=True)
+
+
+# Standard IB ports: TWS paper, TWS live, Gateway paper, Gateway live
+_IB_PORTS = {
+    7497: "TWS — paper",
+    7496: "TWS — live",
+    4002: "IB Gateway — paper",
+    4001: "IB Gateway — live",
+}
+
+
+def _tcp_probe(host: str, port: int, timeout: float = 1.5) -> bool:
+    """Return True if something is listening on host:port."""
     import socket
     try:
-        with socket.create_connection((host, port), timeout=2):
-            return True, f"Reachable at {host}:{port}"
-    except (OSError, ConnectionRefusedError) as exc:
-        return False, str(exc)
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _auto_detect_ib(host: str) -> dict[int, str]:
+    """Return {port: label} for every IB port that answers."""
+    return {p: label for p, label in _IB_PORTS.items() if _tcp_probe(host, p)}
 
 
 def _tab_trade():
     from config.settings import IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID
 
     st.markdown("### Interactive Brokers Execution")
-    st.caption(
-        "Execute the current target weights against your IB account. "
-        "Paper trading uses TWS/Gateway paper session (port 4002 / 7497). "
-        "Live trading uses your real money account (port 4001 / 7496). "
-        "Make sure TWS or IB Gateway is running with API access enabled."
-    )
 
     # ── Connection settings ───────────────────────────────────────────────────
     with st.expander("Connection Settings", expanded=True):
@@ -617,7 +655,6 @@ def _tab_trade():
         with col_a:
             host = st.text_input("Host", value=str(IBKR_HOST), key="ib_host")
         with col_b:
-            # Default ports for paper vs live
             port = st.number_input("Port", value=int(IBKR_PORT), min_value=1, max_value=65535,
                                    key="ib_port")
         with col_c:
@@ -625,17 +662,27 @@ def _tab_trade():
                                         max_value=999, key="ib_client_id")
 
         st.caption(
-            "**Port reference:** IB Gateway paper=4002, live=4001 · "
-            "TWS paper=7497, live=7496"
+            "TWS paper **7497** · TWS live **7496** · "
+            "IB Gateway paper **4002** · IB Gateway live **4001**"
         )
 
-        if st.button("Test Connection", key="test_ib_conn"):
-            reachable, msg = _check_ibkr_connection(host, int(port))
-            if reachable:
-                st.success(f"Connected: {msg}")
-            else:
-                st.error(f"Cannot reach IB at {host}:{port} — {msg}\n\n"
-                         "Make sure TWS or IB Gateway is open and API access is enabled.")
+        btn_test, btn_detect = st.columns(2)
+        with btn_test:
+            if st.button("Test Connection", key="test_ib_conn", use_container_width=True):
+                if _tcp_probe(host, int(port)):
+                    st.success(f"Reachable at {host}:{port}")
+                else:
+                    _show_connection_help(host, int(port))
+        with btn_detect:
+            if st.button("Auto-Detect Ports", key="detect_ib", use_container_width=True):
+                with st.spinner(f"Scanning {host}…"):
+                    found = _auto_detect_ib(host)
+                if found:
+                    labels = ", ".join(f"**{p}** ({lbl})" for p, lbl in found.items())
+                    st.success(f"Found IB listening on: {labels}")
+                    st.info("Update the Port field above to one of these values.")
+                else:
+                    _show_connection_help(host, None)
 
     # ── Trading mode ──────────────────────────────────────────────────────────
     st.markdown("### Trading Mode")
