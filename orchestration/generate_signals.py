@@ -60,6 +60,42 @@ COST_BPS = 5.0
 LOOKBACK_YEARS = 6
 
 
+def _load_deployment_config_or_fallback():
+    """Return (strategies list, is_config_driven).
+
+    Each entry: {"slug": ..., "name": ..., "path": ..., "allocation_weight": ..., "params": {...}}
+    Falls back to hardcoded momentum_top5 if no deployment config exists.
+    """
+    try:
+        from portfolio.multi_strategy import read_deployment_config, discover_strategies
+        cfg = read_deployment_config()
+        if cfg is None:
+            return None, False
+        active = [s for s in cfg.strategies if s.active]
+        if not active:
+            return None, False
+        meta_map = {m.slug: m for m in discover_strategies()}
+        result = []
+        for s in active:
+            m = meta_map.get(s.slug)
+            if m is None:
+                log.warning(f"Deployed strategy {s.slug!r} not found in strategies/ — skipping.")
+                continue
+            result.append({
+                "slug": s.slug,
+                "name": s.name,
+                "path": m.path,
+                "allocation_weight": s.allocation_weight,
+                "params": s.backtest_params,
+            })
+        if not result:
+            return None, False
+        return result, True
+    except Exception as exc:
+        log.warning(f"Could not load deployment config: {exc} — using default momentum signal")
+        return None, False
+
+
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -127,25 +163,76 @@ def run_generate_signals(as_of: date | None = None) -> int:
         log.error(f"Data load failed: {exc}")
         return 2
 
-    # 2. Generate signal
+    # 2. Generate signal — config-driven multi-strategy or fallback to default momentum
     try:
         trading_dates = sorted(prices["date"].unique().to_list())
         rebal_dates = get_monthly_rebalance_dates(start, as_of, trading_dates)
 
-        signal = cross_sectional_momentum(features, rebal_dates, top_n=TOP_N)
-        weights_df = momentum_weights(signal, weight_scheme="equal")
+        deployed, is_config = _load_deployment_config_or_fallback()
 
-        if weights_df.is_empty():
-            log.warning("No target weights generated (insufficient history?)")
-            return 2
+        if is_config and deployed:
+            log.info(f"Config-driven mode: {len(deployed)} active strategies")
+            import importlib.util as _ilu
+            from portfolio.multi_strategy import blend_weights as _blend
 
-        # Most recent rebalance
-        latest_rebal = weights_df["rebalance_date"].max()
-        current_weights_df = weights_df.filter(pl.col("rebalance_date") == latest_rebal)
-        current_weights = dict(zip(
-            current_weights_df["symbol"].to_list(),
-            current_weights_df["weight"].to_list(),
-        ))
+            all_sym_weights: dict[str, dict[str, float]] = {}
+            alloc_map: dict[str, float] = {}
+            latest_rebal = None
+
+            for strat in deployed:
+                try:
+                    spec = _ilu.spec_from_file_location("_strat_mod", strat["path"])
+                    mod = _ilu.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    p = strat["params"]
+                    _top_n = int(p.get("top_n", TOP_N))
+                    _wscheme = str(p.get("weight_scheme", "equal"))
+
+                    sig = mod.get_signal(features, rebal_dates, top_n=_top_n, prices_df=prices)
+                    wdf = mod.get_weights(sig, weight_scheme=_wscheme)
+
+                    if wdf.is_empty():
+                        log.warning(f"Strategy {strat['slug']!r} produced no weights — skipping.")
+                        continue
+
+                    date_col = "rebalance_date" if "rebalance_date" in wdf.columns else "date"
+                    rd = wdf[date_col].max()
+                    if latest_rebal is None or rd > latest_rebal:
+                        latest_rebal = rd
+
+                    wdf_latest = wdf.filter(pl.col(date_col) == rd)
+                    all_sym_weights[strat["slug"]] = dict(zip(
+                        wdf_latest["symbol"].to_list(),
+                        wdf_latest["weight"].to_list(),
+                    ))
+                    alloc_map[strat["slug"]] = float(strat["allocation_weight"])
+                    log.info(f"  {strat['name']}: {list(all_sym_weights[strat['slug']].keys())}")
+                except Exception as exc:
+                    log.error(f"Strategy {strat['slug']!r} failed: {exc}")
+
+            if not all_sym_weights:
+                log.error("All config-driven strategies failed — no weights generated.")
+                return 2
+
+            current_weights = _blend(all_sym_weights, alloc_map)
+            # Trim tiny positions (< 0.1%)
+            current_weights = {k: v for k, v in current_weights.items() if v >= 0.001}
+        else:
+            # Default: simple cross-sectional momentum
+            signal = cross_sectional_momentum(features, rebal_dates, top_n=TOP_N)
+            weights_df = momentum_weights(signal, weight_scheme="equal")
+
+            if weights_df.is_empty():
+                log.warning("No target weights generated (insufficient history?)")
+                return 2
+
+            latest_rebal = weights_df["rebalance_date"].max()
+            current_weights_df = weights_df.filter(pl.col("rebalance_date") == latest_rebal)
+            current_weights = dict(zip(
+                current_weights_df["symbol"].to_list(),
+                current_weights_df["weight"].to_list(),
+            ))
+
         log.info(f"Signal generated. Latest rebalance: {latest_rebal}. "
                  f"Positions: {list(current_weights.keys())}")
     except Exception as exc:

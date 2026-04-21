@@ -132,6 +132,10 @@ pg = st.navigation(
             st.Page("reports/research_dashboard.py",
                     title="Research",          icon="🔬"),
         ],
+        "Management": [
+            st.Page("reports/portfolio_dashboard.py",
+                    title="Portfolio",         icon="💼"),
+        ],
         "Reference": [
             st.Page("reports/instructions.py",
                     title="Guide & Glossary",  icon="📖"),
