@@ -757,8 +757,11 @@ with tab_mc:
         mc_result = st.session_state.get(_mc_key)
 
     if mc_result is None:
-        if mc_file is None:
-            st.info("Upload a CSV then click **▶ Run Monte Carlo**.")
+        st.info(
+            "Upload a CSV then click **▶ Run Monte Carlo**."
+            if mc_file is None
+            else "File loaded — click **▶ Run Monte Carlo** to start the analysis."
+        )
         st.stop()
 
     r = mc_result
@@ -778,25 +781,57 @@ with tab_mc:
     # ── Section A: Equity Fan Chart ────────────────────────────────────────────
     st.markdown(section_label("Equity Fan Chart"), unsafe_allow_html=True)
 
+    def _band_polygon(fan_x, y_lower, y_upper, fillcolor, name):
+        """Closed-polygon band — immune to fill='tonexty' ordering issues."""
+        xs = list(fan_x) + list(fan_x[::-1])
+        ys = list(y_upper) + list(y_lower[::-1])
+        return go.Scatter(
+            x=xs, y=ys,
+            fill="toself", fillcolor=fillcolor,
+            line=dict(width=0),
+            mode="lines", name=name,
+            showlegend=True, hoverinfo="skip",
+        )
+
     fig_fan = go.Figure()
-    fig_fan.add_traces([
-        go.Scatter(x=r.fan_x, y=r.fan_p5,  line=dict(width=0), showlegend=False, hoverinfo="skip"),
-        go.Scatter(x=r.fan_x, y=r.fan_p95, fill="tonexty", fillcolor="rgba(38,120,178,0.08)",
-                   line=dict(width=0), name="5th–95th", showlegend=True),
-        go.Scatter(x=r.fan_x, y=r.fan_p10, line=dict(width=0), showlegend=False, hoverinfo="skip"),
-        go.Scatter(x=r.fan_x, y=r.fan_p90, fill="tonexty", fillcolor="rgba(38,120,178,0.12)",
-                   line=dict(width=0), name="10th–90th", showlegend=True),
-        go.Scatter(x=r.fan_x, y=r.fan_p25, line=dict(width=0), showlegend=False, hoverinfo="skip"),
-        go.Scatter(x=r.fan_x, y=r.fan_p75, fill="tonexty", fillcolor="rgba(38,120,178,0.20)",
-                   line=dict(width=0), name="25th–75th", showlegend=True),
-        go.Scatter(x=r.fan_x, y=r.fan_p50, line=dict(color=COLORS["blue"], width=2),
-                   name="Median", hovertemplate="Period %{x}: $%{y:,.0f}<extra>Median</extra>"),
-        go.Scatter(x=r.fan_x, y=r.orig_equity, line=dict(color=COLORS["warning"], width=1.5, dash="dash"),
-                   name="Original", hovertemplate="Period %{x}: $%{y:,.0f}<extra>Original</extra>"),
-    ])
+
+    # Layer 1: all sampled simulation paths in faint gray (single trace via None separators)
+    _px: list = []
+    _py: list = []
+    for _path in r.sample_paths:
+        _px.extend(r.fan_x)
+        _px.append(None)
+        _py.extend(_path)
+        _py.append(None)
+    fig_fan.add_trace(go.Scatter(
+        x=_px, y=_py,
+        mode="lines",
+        line=dict(color="rgba(160,160,160,0.05)", width=0.5),
+        showlegend=False, hoverinfo="skip", name="_sim_paths",
+    ))
+
+    # Layer 2: percentile bands (outermost first so inner bands render on top)
+    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p5,  r.fan_p95, "rgba(65,130,200,0.13)", "5th–95th"))
+    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p10, r.fan_p90, "rgba(55,115,190,0.19)", "10th–90th"))
+    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p25, r.fan_p75, "rgba(45,100,180,0.30)", "25th–75th"))
+
+    # Layer 3: median line + original path on top
+    fig_fan.add_trace(go.Scatter(
+        x=r.fan_x, y=r.fan_p50,
+        mode="lines", line=dict(color=COLORS["blue"], width=2.5),
+        name="Median",
+        hovertemplate="Period %{x}: $%{y:,.0f}<extra>Median</extra>",
+    ))
+    fig_fan.add_trace(go.Scatter(
+        x=r.fan_x, y=r.orig_equity,
+        mode="lines", line=dict(color=COLORS["warning"], width=1.8, dash="dash"),
+        name="Original",
+        hovertemplate="Period %{x}: $%{y:,.0f}<extra>Original</extra>",
+    ))
+
     apply_theme(fig_fan, legend_inside=False)
     fig_fan.update_layout(
-        height=320,
+        height=360,
         yaxis=dict(tickprefix="$", tickformat=",.0f"),
         xaxis=dict(title="Period"),
     )

@@ -44,15 +44,16 @@ class MCResult:
     block_size:    int
 
     # Equity fan chart (period-index → percentile value)
-    fan_x:   list
-    fan_p5:  list
-    fan_p10: list
-    fan_p25: list
-    fan_p50: list
-    fan_p75: list
-    fan_p90: list
-    fan_p95: list
-    orig_equity: list
+    fan_x:        list
+    fan_p5:       list
+    fan_p10:      list
+    fan_p25:      list
+    fan_p50:      list
+    fan_p75:      list
+    fan_p90:      list
+    fan_p95:      list
+    orig_equity:  list
+    sample_paths: list   # ~300 sampled equity paths for background visualization
 
     # Terminal wealth
     terminal_values:       list    # all N_SIM final equity values
@@ -306,9 +307,13 @@ def run(returns: np.ndarray, config: MCConfig) -> MCResult:
         sim_rets[i]     = r
         equity_paths[i] = _build_equity(r, capital)
 
-    # ── Fan chart percentile bands ────────────────────────────────────────────
+    # ── Fan chart percentile bands + sampled paths ───────────────────────────
     pcts  = np.percentile(equity_paths, [5, 10, 25, 50, 75, 90, 95], axis=0)
     fan_x = list(range(n + 1))
+
+    _n_samp      = min(300, n_paths)
+    _samp_idx    = rng.integers(0, n_paths, size=_n_samp)
+    sample_paths = [equity_paths[i].tolist() for i in _samp_idx]
 
     # ── Terminal wealth ───────────────────────────────────────────────────────
     terminal = equity_paths[:, -1]
@@ -422,6 +427,7 @@ def run(returns: np.ndarray, config: MCConfig) -> MCResult:
         fan_p90=pcts[5].tolist(),
         fan_p95=pcts[6].tolist(),
         orig_equity=orig_equity.tolist(),
+        sample_paths=sample_paths,
 
         terminal_values=terminal.tolist(),
         terminal_percentiles=term_pct,
