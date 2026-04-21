@@ -201,6 +201,24 @@ def _load_benchmark(sym: str, start_str: str, end_str: str) -> pd.Series | None:
         return None
 
 
+_FACTOR_PROXY_SYMBOLS = ("SPY", "IWM", "IWB", "IWD", "IWF", "IWS", "IWP")
+
+
+@st.cache_data(ttl=300)
+def _load_factor_proxy_prices(start_str: str, end_str: str) -> pl.DataFrame | None:
+    """Load OHLCV bars for all factor proxy ETFs."""
+    try:
+        prices = load_bars(
+            list(_FACTOR_PROXY_SYMBOLS),
+            date.fromisoformat(start_str),
+            date.fromisoformat(end_str),
+            "equity",
+        )
+        return None if prices.is_empty() else prices
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=300)
 def _load_correlation(symbols: list[str], lookback: int = 252) -> pd.DataFrame | None:
     try:
@@ -254,6 +272,29 @@ if equity_df is not None and not equity_df.is_empty():
     trailing   = _trailing_returns(eq_pd)
     drawdowns  = _top_drawdowns(eq_vals, eq_pd.index, top_n=5)
     daily_rets = pd.Series(stats["daily_rets"], index=eq_pd.index[1:])
+
+# ── Factor model pre-computations ─────────────────────────────────────────────
+_factor_returns = None
+_factor_betas   = None
+_factor_attribution = None
+
+if daily_rets is not None and eq_pd is not None:
+    try:
+        from risk.factor_model import estimate_factor_returns, estimate_factor_betas
+        from risk.attribution import factor_return_attribution
+
+        _fp_start = eq_pd.index[0].date().isoformat()
+        _fp_end   = eq_pd.index[-1].date().isoformat()
+        _fp_prices_pl = _load_factor_proxy_prices(_fp_start, _fp_end)
+
+        if _fp_prices_pl is not None:
+            _factor_returns = estimate_factor_returns(_fp_prices_pl)
+            _factor_betas   = estimate_factor_betas(daily_rets, _factor_returns)
+            _factor_attribution = factor_return_attribution(
+                daily_rets, _factor_returns, _factor_betas
+            )
+    except Exception:
+        pass
 
 # Current portfolio
 current_weights: dict[str, float] = {}
@@ -842,6 +883,98 @@ with tab_risk:
         fig_rv.update_yaxes(tickformat=".1%", row=2, col=1)
         fig_rv.update_layout(hovermode="x unified")
         st.plotly_chart(fig_rv, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Section D: Factor Exposure ─────────────────────────────────────────
+        st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Factor Exposure"), unsafe_allow_html=True)
+
+        if _factor_betas is None or not _factor_betas.betas:
+            st.info("Factor model unavailable — ensure factor proxy ETF prices are loaded.")
+        else:
+            _fb = _factor_betas
+            _factor_names_list = list(_fb.betas.keys())
+            _beta_vals = list(_fb.betas.values())
+
+            # KPI row: one card per factor + R² + alpha
+            _kpi_cols = st.columns(len(_factor_names_list) + 2)
+            for _ci, (_fn, _bv) in enumerate(zip(_factor_names_list, _beta_vals)):
+                _accent = COLORS["teal"] if _bv >= 0 else COLORS["negative"]
+                _kpi_cols[_ci].markdown(
+                    kpi_card(f"β {_fn}", f"{_bv:.3f}", accent=_accent),
+                    unsafe_allow_html=True,
+                )
+            _kpi_cols[-2].markdown(
+                kpi_card("R²", f"{_fb.r_squared:.3f}", accent=COLORS["blue"]),
+                unsafe_allow_html=True,
+            )
+            _alpha_pct = _fb.alpha * 252  # annualise daily alpha
+            _alpha_accent = COLORS["positive"] if _alpha_pct >= 0 else COLORS["negative"]
+            _kpi_cols[-1].markdown(
+                kpi_card("Alpha (ann.)", f"{_alpha_pct:.2%}", accent=_alpha_accent),
+                unsafe_allow_html=True,
+            )
+
+            st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+
+            # Horizontal bar chart of betas
+            _beta_colors = [
+                COLORS["positive"] if v >= 0 else COLORS["negative"]
+                for v in _beta_vals
+            ]
+            fig_betas = go.Figure(go.Bar(
+                x=_beta_vals,
+                y=_factor_names_list,
+                orientation="h",
+                marker=dict(color=_beta_colors, line=dict(width=0)),
+                text=[f"{v:.3f}" for v in _beta_vals],
+                textposition="outside",
+                textfont=dict(size=11, color=COLORS["text"]),
+                hovertemplate="<b>%{y}</b>: β=%{x:.4f}<extra></extra>",
+            ))
+            fig_betas.add_vline(x=0, line=dict(color=COLORS["border"], width=1))
+            apply_theme(fig_betas)
+            fig_betas.update_layout(
+                height=max(180, 45 * len(_factor_names_list)),
+                xaxis=dict(showgrid=False, title="Beta"),
+                yaxis=dict(showgrid=False),
+                showlegend=False,
+            )
+            st.plotly_chart(fig_betas, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Section E: Factor Return Attribution ───────────────────────────────
+        st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Factor Return Attribution"), unsafe_allow_html=True)
+
+        if _factor_attribution is None or _factor_attribution.cumulative.empty:
+            st.info("Factor attribution unavailable — ensure factor model computed successfully.")
+        else:
+            _fa = _factor_attribution
+            _cum = _fa.cumulative.copy()
+
+            fig_attr = go.Figure()
+            _attr_colors = COLORS["series"] + [COLORS["neutral"]]
+            for _i, _col in enumerate(_cum.columns):
+                _color = _attr_colors[_i % len(_attr_colors)]
+                _is_residual = _col == "Residual"
+                fig_attr.add_trace(go.Scatter(
+                    x=_cum.index,
+                    y=_cum[_col].values,
+                    name=_col,
+                    mode="lines",
+                    stackgroup="one",
+                    line=dict(color=_color, width=0 if not _is_residual else 1),
+                    fillcolor=_color.replace(")", ", 0.6)").replace("rgb(", "rgba(")
+                               if _color.startswith("rgb") else _color,
+                    hovertemplate=f"<b>{_col}</b><br>%{{x|%Y-%m-%d}}: %{{y:.4f}}<extra></extra>",
+                ))
+            apply_theme(fig_attr, legend_inside=False)
+            fig_attr.update_layout(
+                height=320,
+                yaxis=dict(tickformat=".2%", title="Cumulative Contribution"),
+                xaxis=dict(rangeselector=range_selector()),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig_attr, width="stretch", config=PLOTLY_CONFIG)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

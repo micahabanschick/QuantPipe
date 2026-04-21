@@ -34,6 +34,9 @@ from research.walk_forward_runner import WFVConfig, fold_summary, oos_equity_nor
 from storage.parquet_store import load_bars
 from storage.universe import universe_as_of_date
 from features.compute import load_features
+from signals.composite import composite_signal
+from signals.analysis import ic_decay, signal_turnover
+from signals.momentum import cross_sectional_momentum, get_monthly_rebalance_dates
 
 st.markdown(CSS, unsafe_allow_html=True)
 
@@ -109,8 +112,8 @@ if _symbols:
     with st.spinner("Loading features…"):
         features_df = _features(_symbols, str(_start), str(_end))
 
-tab_scanner, tab_factor, tab_wfv = st.tabs(
-    ["  Signal Scanner  ", "  Factor Analysis  ", "  Walk-Forward  "]
+tab_scanner, tab_factor, tab_signal_analysis, tab_wfv = st.tabs(
+    ["  Signal Scanner  ", "  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  "]
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -337,7 +340,227 @@ with tab_factor:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — WALK-FORWARD
+# TAB 3 — SIGNAL ANALYSIS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_signal_analysis:
+    if features_df is None:
+        st.warning("No features available. Run: `uv run python features/compute.py`")
+    else:
+        _sa_present = [f for f in ALL_FEATURES if f in features_df.columns]
+        _sa_all_syms = sorted(features_df["symbol"].unique().to_list())
+
+        # ── Section A: IC Decay ───────────────────────────────────────────────
+        st.markdown(section_label("IC Decay Curve"), unsafe_allow_html=True)
+
+        col_a1, col_a2 = st.columns([1, 2])
+        with col_a1:
+            sa_factor = st.selectbox(
+                "Factor", _sa_present,
+                key="sa_factor",
+                format_func=lambda x: FEATURE_LABELS.get(x, x),
+            )
+        with col_a2:
+            sa_syms = st.multiselect(
+                "Symbols", _sa_all_syms, default=_sa_all_syms,
+                key="sa_syms",
+            )
+
+        if sa_syms and sa_factor:
+            _sa_prices_pl = _prices(_symbols, str(_start), str(_end))
+            if _sa_prices_pl is not None:
+                _sa_fac_pivot   = factor_pivot_from_features(features_df, sa_syms, sa_factor)
+                _sa_price_pivot = price_pivot_from_bars(_sa_prices_pl)
+                _sa_decay = ic_decay(_sa_fac_pivot, _sa_price_pivot, horizons=[1, 5, 21, 63, 126])
+
+                _sa_horizons  = [p.horizon_days for p in _sa_decay]
+                _sa_mean_ics  = [p.mean_ic for p in _sa_decay]
+                _sa_icirs     = [p.icir for p in _sa_decay]
+
+                fig_decay = go.Figure()
+                fig_decay.add_trace(go.Scatter(
+                    x=_sa_horizons, y=_sa_mean_ics,
+                    mode="lines+markers",
+                    line=dict(color=COLORS["teal"], width=2.5),
+                    marker=dict(size=8, color=COLORS["teal"]),
+                    name="Mean IC",
+                    hovertemplate="Horizon %{x}d: IC=%{y:.4f}<extra></extra>",
+                ))
+                fig_decay.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+                apply_theme(fig_decay)
+                fig_decay.update_layout(
+                    height=260,
+                    xaxis=dict(title="Horizon (days)", showgrid=False),
+                    yaxis=dict(title="Mean IC (Spearman)"),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_decay, width="stretch", config=PLOTLY_CONFIG)
+
+                # Table
+                _decay_tbl = pd.DataFrame({
+                    "Horizon (days)": _sa_horizons,
+                    "Mean IC":        [f"{v:.4f}" for v in _sa_mean_ics],
+                    "IC IR":          [f"{p.icir:.3f}" for p in _sa_decay],
+                    "N Obs":          [p.n_obs for p in _sa_decay],
+                })
+                st.dataframe(_decay_tbl, width="stretch", hide_index=True)
+            else:
+                st.info("Price data unavailable for IC decay computation.")
+
+        st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
+
+        # ── Section B: Signal Turnover ────────────────────────────────────────
+        st.markdown(section_label("Signal Turnover"), unsafe_allow_html=True)
+
+        _sb_prices_pl = _prices(_symbols, str(_start), str(_end))
+        _sb_sig_df: pl.DataFrame | None = None
+        if _sb_prices_pl is not None:
+            try:
+                _sb_td = sorted(_sb_prices_pl["date"].unique().to_list())
+                _sb_rd = get_monthly_rebalance_dates(_start, _end, _sb_td)
+                _sb_sig_df = cross_sectional_momentum(features_df, _sb_rd, top_n=5)
+            except Exception:
+                _sb_sig_df = None
+
+        if _sb_sig_df is not None and not _sb_sig_df.is_empty():
+            _sb_to = signal_turnover(_sb_sig_df)
+
+            col_to_kpi, col_to_chart = st.columns([1, 3])
+            with col_to_kpi:
+                st.markdown(
+                    kpi_card("Mean Turnover", f"{_sb_to.mean_turnover:.1%}", accent=COLORS["blue"]),
+                    unsafe_allow_html=True,
+                )
+
+            with col_to_chart:
+                _sb_dates_str = [str(d) for d in _sb_to.rebal_dates]
+                _sb_to_vals   = _sb_to.turnover
+                fig_to = go.Figure(go.Bar(
+                    x=_sb_dates_str,
+                    y=_sb_to_vals,
+                    marker=dict(color=COLORS["blue"], line=dict(width=0)),
+                    opacity=0.8,
+                    name="Turnover",
+                    hovertemplate="%{x}: %{y:.1%}<extra>Turnover</extra>",
+                ))
+                fig_to.add_hline(
+                    y=_sb_to.mean_turnover,
+                    line=dict(color=COLORS["warning"], width=2, dash="dot"),
+                    annotation_text=f"Mean {_sb_to.mean_turnover:.1%}",
+                    annotation_font=dict(color=COLORS["warning"], size=10),
+                    annotation_position="top right",
+                )
+                apply_theme(fig_to)
+                fig_to.update_layout(
+                    height=240,
+                    yaxis=dict(tickformat=".0%", title="Turnover"),
+                    xaxis=dict(showgrid=False),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_to, width="stretch", config=PLOTLY_CONFIG)
+        else:
+            st.info("Could not compute signal turnover — price data unavailable.")
+
+        st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
+
+        # ── Section C: Composite Signal Builder ───────────────────────────────
+        st.markdown(section_label("Composite Signal Builder"), unsafe_allow_html=True)
+
+        _FEATURE_DEFAULT_WEIGHTS = {
+            "momentum_12m_1m": 1.0,
+            "realized_vol_21d": 0.0,
+            "log_return_1d": 0.0,
+            "dollar_volume_63d": 0.0,
+            "reversal_5d": 0.0,
+        }
+
+        col_sliders, col_preview = st.columns([1, 2])
+        _factor_weights: dict[str, float] = {}
+        with col_sliders:
+            for feat in _sa_present:
+                default_val = _FEATURE_DEFAULT_WEIGHTS.get(feat, 0.0)
+                fw = st.slider(
+                    FEATURE_LABELS.get(feat, feat),
+                    min_value=-1.0, max_value=1.0,
+                    value=default_val, step=0.1,
+                    key=f"fw_{feat}",
+                )
+                _factor_weights[feat] = fw
+
+            _cs_top_n = st.slider("Top-N", min_value=3, max_value=10, value=5, key="cs_top_n")
+            _preview_btn = st.button("Preview Composite", type="primary", key="cs_preview")
+
+        with col_preview:
+            if _preview_btn:
+                _active_weights = {f: w for f, w in _factor_weights.items() if abs(w) > 1e-9}
+                if not _active_weights:
+                    st.warning("Set at least one factor weight > 0.")
+                else:
+                    _cs_prices_pl = _prices(_symbols, str(_start), str(_end))
+                    if _cs_prices_pl is not None:
+                        _cs_td = sorted(_cs_prices_pl["date"].unique().to_list())
+                        _cs_rd = get_monthly_rebalance_dates(_start, _end, _cs_td)
+                        _cs_sig = composite_signal(
+                            features_df, _cs_rd, _active_weights, top_n=_cs_top_n
+                        )
+
+                        if not _cs_sig.is_empty():
+                            _latest_rd = _cs_sig["rebalance_date"].max()
+                            _latest_day = _cs_sig.filter(
+                                pl.col("rebalance_date") == _latest_rd
+                            ).sort("rank")
+
+                            _cs_syms  = _latest_day["symbol"].to_list()
+                            _cs_scores = _latest_day["composite_score"].to_list()
+                            _cs_sel    = _latest_day["selected"].to_list()
+
+                            bar_colors = [
+                                COLORS["positive"] if s else COLORS["neutral"]
+                                for s in _cs_sel
+                            ]
+                            fig_cs = go.Figure(go.Bar(
+                                x=_cs_scores,
+                                y=_cs_syms,
+                                orientation="h",
+                                marker=dict(color=bar_colors, line=dict(width=0)),
+                                text=[f"{v:.3f}" for v in _cs_scores],
+                                textposition="outside",
+                                textfont=dict(size=10, color=COLORS["text"]),
+                                hovertemplate="<b>%{y}</b>: %{x:.3f}<extra></extra>",
+                            ))
+                            fig_cs.add_vline(x=0, line=dict(color=COLORS["border"], width=1))
+                            apply_theme(fig_cs)
+                            fig_cs.update_layout(
+                                height=max(280, 26 * len(_cs_syms)),
+                                xaxis=dict(showgrid=False, title="Composite Score"),
+                                yaxis=dict(showgrid=False, autorange="reversed"),
+                                showlegend=False,
+                                title=f"Composite Scores — {_latest_rd}",
+                            )
+                            st.plotly_chart(fig_cs, width="stretch", config=PLOTLY_CONFIG)
+
+                            # Selected symbols table
+                            _sel_df = _latest_day.filter(pl.col("selected")).to_pandas()
+                            if not _sel_df.empty:
+                                st.dataframe(
+                                    _sel_df[["symbol", "composite_score", "rank"]].rename(columns={
+                                        "symbol": "Symbol",
+                                        "composite_score": "Composite Score",
+                                        "rank": "Rank",
+                                    }),
+                                    width="stretch",
+                                    hide_index=True,
+                                )
+                        else:
+                            st.info("Composite signal returned no data.")
+                    else:
+                        st.info("Price data unavailable.")
+            else:
+                st.info("Configure factor weights above and click **Preview Composite**.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — WALK-FORWARD
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_wfv:
