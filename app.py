@@ -127,6 +127,8 @@ pg = st.navigation(
                     title="Pipeline Health",   icon="🔧"),
             st.Page("reports/performance_dashboard.py",
                     title="Performance",       icon="📈"),
+            st.Page("reports/strategy_lab.py",
+                    title="Strategy Lab",      icon="⚗️"),
         ],
         "Reference": [
             st.Page("reports/instructions.py",
