@@ -300,60 +300,40 @@ st.markdown(
 
 @st.cache_data(show_spinner=False, ttl=300)
 def _build_pdf(
-    stats_frozen,        # tuple of (k,v) pairs — hashable, daily_rets excluded
+    stats_frozen,
     trailing_frozen,
-    drawdowns_frozen,    # tuple of tuples-of-pairs; each inner → dict inside
+    drawdowns_frozen,
     weights_frozen,
     stress_frozen,
     monthly_csv: str | None,
-    trades_csv: str | None,  # backtest result.trades as CSV string
     lookback_years: int,
     benchmark_sym: str,
     as_of_str: str,
     eq_json: str | None,
+    bench_json: str | None,
+    daily_rets_json: str | None,
 ) -> bytes:
     import json as _json
+    import io as _io
     from datetime import date as _date
 
-    # Reconstruct lightweight objects for PDF
-    # drawdowns_frozen is a tuple of tuples-of-pairs → must convert each to dict
-    _stats    = dict(stats_frozen)             if stats_frozen    else {}
-    _trailing = dict(trailing_frozen)          if trailing_frozen else {}
-    _draws    = [dict(d) for d in drawdowns_frozen] if drawdowns_frozen else []
-    _weights  = dict(weights_frozen)           if weights_frozen  else {}
-    _stress   = dict(stress_frozen)            if stress_frozen   else {}
-    _monthly  = (pd.read_csv(__import__("io").StringIO(monthly_csv))
-                 .set_index("Year") if monthly_csv else None)
-    _trades_pd = (pd.read_csv(__import__("io").StringIO(trades_csv))
-                  if trades_csv else None)
+    _stats    = dict(stats_frozen)                    if stats_frozen    else {}
+    _trailing = dict(trailing_frozen)                 if trailing_frozen else {}
+    _draws    = [dict(d) for d in drawdowns_frozen]   if drawdowns_frozen else []
+    _weights  = dict(weights_frozen)                  if weights_frozen  else {}
+    _stress   = dict(stress_frozen)                   if stress_frozen   else {}
+    _monthly  = (pd.read_csv(_io.StringIO(monthly_csv)).set_index("Year")
+                 if monthly_csv else None)
 
-    # Reconstruct equity figure for chart embedding
-    _fig_eq = None
-    if eq_json:
-        try:
-            import plotly.graph_objects as _go
-            eq_data = _json.loads(eq_json)
-            _fig_eq = _go.Figure()
-            _fig_eq.add_trace(_go.Scatter(
-                x=pd.to_datetime(eq_data["dates"]),
-                y=eq_data["values"],
-                mode="lines",
-                line=dict(color="#00d4aa", width=2),
-                fill="tozeroy",
-                fillcolor="rgba(0,212,170,0.07)",
-            ))
-            _fig_eq.update_layout(
-                paper_bgcolor="white", plot_bgcolor="#f8fafc",
-                font=dict(color="#1e293b"),
-                margin=dict(l=50, r=20, t=20, b=40),
-                xaxis=dict(showgrid=True, gridcolor="#e2e8f0"),
-                yaxis=dict(showgrid=True, gridcolor="#e2e8f0", tickformat="$,.0f"),
-                showlegend=False,
-            )
-        except Exception:
-            _fig_eq = None
+    def _unpack(js):
+        if not js:
+            return None, None
+        d = _json.loads(js)
+        return d["dates"], d["values"]
 
-    _as_of = _date.fromisoformat(as_of_str)
+    eq_dates, eq_vals           = _unpack(eq_json)
+    bench_dates, bench_vals     = _unpack(bench_json)
+    dr_dates, dr_vals           = _unpack(daily_rets_json)
 
     from risk.engine import EQUITY_SECTOR_MAP as _SECTOR_MAP
     return build_performance_pdf(
@@ -361,15 +341,19 @@ def _build_pdf(
         trailing=_trailing,
         drawdowns=_draws,
         current_weights=_weights,
-        exposures=None,           # exposures can't be pickled; computed inline in PDF
+        exposures=None,
         sector_map=_SECTOR_MAP,
         stress=_stress,
         monthly_pivot=_monthly,
-        portfolio_log_pd=_trades_pd,
         lookback_years=lookback_years,
         benchmark_sym=benchmark_sym,
-        as_of=_as_of,
-        fig_equity=_fig_eq,
+        as_of=_date.fromisoformat(as_of_str),
+        eq_dates=eq_dates or [],
+        eq_vals=eq_vals or [],
+        bench_dates=bench_dates,
+        bench_vals=bench_vals,
+        daily_rets_dates=dr_dates,
+        daily_rets_vals=dr_vals,
     )
 
 
@@ -400,13 +384,44 @@ if not backtest_trades.empty:
     except Exception:
         pass
 
+import json as _json_mod
+
 _eq_json: str | None = None
 if eq_pd is not None:
     try:
-        import json as _json_mod
         _eq_json = _json_mod.dumps({
             "dates":  [str(d.date()) for d in eq_pd.index],
             "values": eq_pd["portfolio_value"].tolist(),
+        })
+    except Exception:
+        pass
+
+_bench_json: str | None = None
+if benchmark_sym != "None" and eq_pd is not None:
+    try:
+        _bench_raw = _load_benchmark(
+            benchmark_sym,
+            eq_pd.index[0].date().isoformat(),
+            eq_pd.index[-1].date().isoformat(),
+        )
+        if _bench_raw is not None:
+            _bench_raw.index = pd.to_datetime(_bench_raw.index)
+            _bench_aligned = _bench_raw.reindex(eq_pd.index, method="ffill").dropna()
+            if not _bench_aligned.empty:
+                _bench_norm = _bench_aligned / _bench_aligned.iloc[0] * eq_vals[0]
+                _bench_json = _json_mod.dumps({
+                    "dates":  [str(d.date()) for d in _bench_norm.index],
+                    "values": _bench_norm.tolist(),
+                })
+    except Exception:
+        pass
+
+_daily_rets_json: str | None = None
+if daily_rets is not None:
+    try:
+        _daily_rets_json = _json_mod.dumps({
+            "dates":  [str(d.date()) for d in daily_rets.index],
+            "values": daily_rets.tolist(),
         })
     except Exception:
         pass
@@ -422,11 +437,12 @@ with _dl1:
             weights_frozen   = _weights_frozen,
             stress_frozen    = _stress_frozen,
             monthly_csv      = _monthly_csv,
-            trades_csv       = _trades_csv,
             lookback_years   = lookback_years,
             benchmark_sym    = benchmark_sym,
             as_of_str        = date.today().isoformat(),
             eq_json          = _eq_json,
+            bench_json       = _bench_json,
+            daily_rets_json  = _daily_rets_json,
         )
         st.download_button(
             label="📄 PDF Report",

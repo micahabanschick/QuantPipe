@@ -2,7 +2,7 @@
 
 An end-to-end quantitative finance pipeline for systematic equity and crypto trading. Built around a **Sector × Size × Style ETF rotation** framework, with a clear path from free data and paper trading to live deployment.
 
-**Stack:** Python 3.13 · Polars · DuckDB · Parquet · VectorBT · cvxpy · PyPortfolioOpt · Streamlit · IBKR · CCXT · `uv`
+**Stack:** Python 3.13 · Polars · DuckDB · Parquet · VectorBT · cvxpy · PyPortfolioOpt · Streamlit · streamlit-ace · reportlab · kaleido · IBKR · CCXT · `uv`
 
 **Status:** Phases 0–6 complete. Pipeline running with live data. 145 tests passing.
 
@@ -26,6 +26,8 @@ An end-to-end quantitative finance pipeline for systematic equity and crypto tra
   - [execution](#execution)
   - [orchestration](#orchestration)
   - [reports](#reports)
+  - [strategies](#strategies)
+  - [tools](#tools)
   - [research](#research)
   - [tests](#tests)
 - [Setup](#setup)
@@ -136,9 +138,19 @@ QuantPipe/
 │   ├── rebalance.py            Daily rebalance: load weights → check → orders → reconcile
 │   └── run_pipeline.py         Master cron chain: ingest → signals → alert on failure
 │
+├── strategies/
+│   ├── __init__.py
+│   └── momentum_top5.py        Cross-sectional 12-1 momentum, equal-weight top-5 (template)
+│
+├── tools/
+│   ├── __init__.py
+│   └── backtest_runner.py      Subprocess backtest runner — loads any strategy, emits JSON
+│
 ├── reports/
 │   ├── health_dashboard.py     Dashboard #1: ops health, ingestion status, log viewer
-│   └── performance_dashboard.py Dashboard #2: equity curve, drawdown, Sharpe, exposures
+│   ├── performance_dashboard.py Dashboard #2: equity curve, drawdown, Sharpe, exposures, PDF export
+│   ├── strategy_lab.py         Dashboard #3: in-browser strategy editor + backtest runner
+│   └── pdf_export.py           ReportLab PDF builder — charts via kaleido, no Streamlit deps
 │
 ├── research/                   Jupyter notebooks (exploration only, never production)
 │
@@ -454,21 +466,69 @@ Exit codes: `0` = success, `1` = partial failure, `2` = total failure. Pushover/
 
 ### `reports`
 
-**Dashboard #1 — Pipeline Health:**
+All three dashboards are wired together in `app.py` and launched via a single command:
 
 ```bash
-streamlit run reports/health_dashboard.py
+streamlit run app.py
 ```
+
+**Dashboard #1 — Pipeline Health** (`reports/health_dashboard.py`):
 
 Shows: last ingestion time per asset class, signal freshness, universe sizes, per-symbol row counts with staleness flags, portfolio snapshot metrics (VaR, gross exposure, pre-trade status), tabbed log viewers for pipeline/ingest/signals logs.
 
-**Dashboard #2 — Performance:**
+**Dashboard #2 — Performance** (`reports/performance_dashboard.py`):
+
+Shows: equity curve with benchmark overlay, trailing returns bar, rolling Sharpe/Sortino, monthly returns heatmap, return distribution with VaR markers, current portfolio positions + sector breakdown, stress scenario bars, top drawdown table.
+
+Download bar at the top of the page:
+- **📄 PDF Report** — full multi-section report (executive summary, performance charts, portfolio, risk, analytics) as a print-ready PDF generated with ReportLab + kaleido.
+- **📊 Trade History** — every backtest transaction (entry, exit, size, P&L) as CSV.
+
+**Dashboard #3 — Strategy Lab** (`reports/strategy_lab.py`):
+
+In-browser strategy development environment backed by the `strategies/` folder.
+
+- Strategy selector dropdown auto-discovers all `strategies/*.py` files.
+- **➕ New Strategy** button scaffolds a new file from the standard template.
+- Ace editor (via `streamlit-ace`) for in-browser Python editing with syntax highlighting.
+- Save / Discard / Reload action bar with per-file dirty state tracking.
+- Backtest config panel (lookback, top-N, cost bps, weight scheme) pre-filled from `DEFAULT_PARAMS`.
+- **▶ Run Backtest** fires `tools/backtest_runner.py` as a subprocess, streams progress, and displays full tearsheet results in-page.
+
+### `strategies`
+
+User-defined strategy files. Each file must expose:
+
+| Attribute | Type | Description |
+|---|---|---|
+| `NAME` | `str` | Display name in Strategy Lab selector |
+| `DESCRIPTION` | `str` | One-line summary |
+| `DEFAULT_PARAMS` | `dict` | Fallback values for `lookback_years`, `top_n`, `cost_bps`, `weight_scheme` |
+| `get_signal(features, rebal_dates, **kwargs)` | function | Returns signal `pl.DataFrame` |
+| `get_weights(signal, **kwargs)` | function | Returns weights `pl.DataFrame` |
+
+New strategies can be created from the Strategy Lab UI or by copying `strategies/momentum_top5.py`.
+
+### `tools`
+
+**`backtest_runner.py`** — invoked as a subprocess by Strategy Lab.
 
 ```bash
-streamlit run reports/performance_dashboard.py
+uv run python tools/backtest_runner.py \
+    --strategy strategies/momentum_top5.py \
+    --lookback-years 6 \
+    --top-n 5 \
+    --cost-bps 5.0 \
+    --weight-scheme equal
 ```
 
-Shows: equity curve with drawdown, rolling Sharpe, monthly returns heatmap, current portfolio positions + sector breakdown, VaR trend, stress scenario table.
+Emits a single JSON payload to stdout:
+
+```json
+{ "ok": true, "strategy_name": "...", "metrics": {...}, "equity": {...}, "benchmark": {...}, "params": {...} }
+```
+
+Progress lines stream to stderr for display in the Strategy Lab console expander.
 
 ---
 
@@ -589,11 +649,8 @@ uv run python orchestration/run_pipeline.py
 # 2. Paper rebalance at market close (automated via Task Scheduler at 16:30)
 uv run python orchestration/rebalance.py --broker paper
 
-# 3. Health dashboard
-streamlit run reports/health_dashboard.py
-
-# 4. Performance dashboard
-streamlit run reports/performance_dashboard.py
+# 3. All dashboards (Health · Performance · Strategy Lab)
+streamlit run app.py
 ```
 
 ### Run tests

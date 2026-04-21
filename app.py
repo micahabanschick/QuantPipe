@@ -129,6 +129,8 @@ pg = st.navigation(
                     title="Performance",       icon="📈"),
             st.Page("reports/strategy_lab.py",
                     title="Strategy Lab",      icon="⚗️"),
+            st.Page("reports/research_dashboard.py",
+                    title="Research",          icon="🔬"),
         ],
         "Reference": [
             st.Page("reports/instructions.py",
