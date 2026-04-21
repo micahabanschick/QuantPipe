@@ -22,12 +22,8 @@ from reports._theme import (
 )
 from storage.parquet_store import list_symbols, load_bars
 
-st.set_page_config(
-    page_title="QuantPipe — Pipeline Health",
-    layout="wide",
-    page_icon="🔧",
-    initial_sidebar_state="collapsed",
-)
+# st.set_page_config() is called once in app.py; do not call it here.
+# To run standalone: uncomment and add st.set_page_config(...) above st.markdown().
 st.markdown(CSS, unsafe_allow_html=True)
 
 LOOKBACK          = 30

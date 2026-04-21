@@ -25,12 +25,8 @@ from reports._theme import (
 from risk.scenarios import run_all_scenarios
 from storage.parquet_store import load_bars
 
-st.set_page_config(
-    page_title="QuantPipe — Performance",
-    layout="wide",
-    page_icon="📈",
-    initial_sidebar_state="expanded",
-)
+# st.set_page_config() is called once in app.py; do not call it here.
+# To run standalone: uncomment and add st.set_page_config(...) above st.markdown().
 st.markdown(CSS, unsafe_allow_html=True)
 
 PORTFOLIO_LOG  = DATA_DIR / "gold" / "equity" / "portfolio_log.parquet"
