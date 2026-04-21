@@ -192,7 +192,7 @@ def _tab_overview(results: dict, config):
     {int(alloc_pct * 100)}%</div>
   <div style="font-size:0.72rem;color:{COLORS['neutral']};margin-top:4px;">allocation</div>
   <div style="border-top:1px solid {COLORS['border_dim']};margin:10px 0 8px;"></div>
-  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;">
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
     <div style="text-align:center;">
       <div style="font-size:0.78rem;font-weight:700;color:{COLORS['text']};">{cagr_str}</div>
       <div style="font-size:0.62rem;color:{COLORS['text_muted']};">CAGR</div>

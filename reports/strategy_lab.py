@@ -482,14 +482,23 @@ def _show_result_tabs(data: dict, result_key: str) -> None:
         unsafe_allow_html=True,
     )
 
-    # CSV export
+    # CSV exports
     eq = data.get("equity", {})
+    tlog = data.get("trade_log", [])
+    _dl_cols = st.columns([2, 2, 6])
     if eq.get("dates"):
         csv = pd.DataFrame({"date": eq["dates"], "nav": eq["values"]}).to_csv(index=False).encode()
-        st.download_button(
-            "⬇ Export equity curve (CSV)", csv,
+        _dl_cols[0].download_button(
+            "⬇ Equity Curve (CSV)", csv,
             file_name=f"{strat_nm.replace(' ','_')}_equity.csv",
             mime="text/csv", key=f"dl_{result_key}",
+        )
+    if tlog:
+        tdf_csv = pd.DataFrame(tlog).to_csv(index=False).encode()
+        _dl_cols[1].download_button(
+            "⬇ Trade Log (CSV)", tdf_csv,
+            file_name=f"{strat_nm.replace(' ','_')}_trades.csv",
+            mime="text/csv", key=f"dl_trades_{result_key}",
         )
 
     st.divider()
@@ -857,8 +866,14 @@ st.session_state["selected_strategy"] = str(selected_dir)
 main_py = _main_py(selected_dir)
 
 st.markdown(
-    f'<div style="color:{COLORS["text_muted"]};font-size:0.72rem;margin:-4px 0 12px;">'
-    f'strategies/{selected_dir.name}/</div>',
+    f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'
+    f'border-left:4px solid {COLORS["positive"]};border-radius:0 8px 8px 0;'
+    f'padding:10px 18px;margin:4px 0 18px;display:flex;align-items:baseline;gap:14px;">'
+    f'<span style="font-size:1.05rem;font-weight:700;color:{COLORS["text"]};'
+    f'letter-spacing:-0.02em;">{selected_label}</span>'
+    f'<span style="font-size:0.72rem;color:{COLORS["text_muted"]};">'
+    f'strategies/{selected_dir.name}/</span>'
+    f'</div>',
     unsafe_allow_html=True,
 )
 st.divider()

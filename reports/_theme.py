@@ -168,31 +168,41 @@ html, body, [data-testid="stApp"] {{
     background: {COLORS['card_bg']};
     border: 1px solid {COLORS['border']};
     border-radius: 10px;
-    padding: 18px 20px 14px;
+    padding: 16px 18px 14px;
     box-shadow: 0 2px 8px rgba(0,0,0,0.35);
     transition: border-color 0.18s ease;
+    min-width: 0;
+    overflow: hidden;
 }}
 [data-testid="metric-container"]:hover {{ border-color: #3d4f6e; }}
 [data-testid="stMetricValue"] {{
-    font-size: 1.55rem !important;
+    font-size: 1.35rem !important;
     font-weight: 700 !important;
     color: {COLORS['text']} !important;
-    letter-spacing: -0.025em;
-    line-height: 1.15;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }}
 [data-testid="stMetricLabel"] {{
     color: {COLORS['neutral']} !important;
-    font-size: 0.70rem !important;
+    font-size: 0.69rem !important;
     text-transform: uppercase;
-    letter-spacing: 0.09em;
+    letter-spacing: 0.08em;
     font-weight: 600;
     margin-bottom: 4px;
+    line-height: 1.35;
+    overflow-wrap: break-word;
 }}
 [data-testid="stMetricDelta"] svg {{ display: none; }}
 [data-testid="stMetricDelta"] > div {{
-    font-size: 0.80rem !important;
+    font-size: 0.78rem !important;
     font-weight: 500;
     letter-spacing: 0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }}
 
 /* ── Tabs ────────────────────────────────────────────────────────────────── */
@@ -262,7 +272,7 @@ html, body, [data-testid="stApp"] {{
 }}
 
 /* ── Divider ─────────────────────────────────────────────────────────────── */
-hr {{ border: none !important; border-top: 1px solid {COLORS['border']} !important; margin: 6px 0; }}
+hr {{ border: none !important; border-top: 1px solid {COLORS['border']} !important; margin: 18px 0; }}
 
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 [data-testid="stSpinner"] {{ color: {COLORS['positive']}; }}
@@ -334,11 +344,14 @@ def kpi_card(label: str, value: str, delta: str = "",
         f'border-top:3px solid {top_border};'
         f'border-radius:2px 2px 10px 10px;'
         f'padding:16px 18px 14px;'
+        f'min-width:0;overflow:hidden;'
         f'box-shadow:0 2px 8px rgba(0,0,0,0.3);">'
         f'<div style="color:{COLORS["neutral"]};font-size:0.68rem;text-transform:uppercase;'
-        f'letter-spacing:0.09em;font-weight:600;margin-bottom:7px;">{label}</div>'
-        f'<div style="color:{COLORS["text"]};font-size:1.5rem;font-weight:700;'
-        f'letter-spacing:-0.025em;line-height:1.1;">{value}</div>'
+        f'letter-spacing:0.08em;font-weight:600;margin-bottom:7px;'
+        f'line-height:1.35;overflow-wrap:break-word;">{label}</div>'
+        f'<div style="color:{COLORS["text"]};font-size:1.3rem;font-weight:700;'
+        f'letter-spacing:-0.02em;line-height:1.2;'
+        f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{value}</div>'
         f'{delta_html}'
         f'</div>'
     )
@@ -347,8 +360,9 @@ def kpi_card(label: str, value: str, delta: str = "",
 def section_label(text: str) -> str:
     return (
         f'<div style="color:{COLORS["neutral"]};font-size:0.68rem;text-transform:uppercase;'
-        f'letter-spacing:0.1em;font-weight:700;margin:18px 0 10px;'
-        f'border-left:3px solid {COLORS["positive"]};padding-left:10px;">{text}</div>'
+        f'letter-spacing:0.09em;font-weight:700;margin:20px 0 12px;'
+        f'border-left:3px solid {COLORS["positive"]};padding-left:10px;'
+        f'line-height:1.4;overflow-wrap:break-word;">{text}</div>'
     )
 
 

@@ -188,7 +188,7 @@ with tab_status:
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
 
     # ── Data freshness visual ──────────────────────────────────────────────────
-    st.markdown(section_label("Data Freshness (hours since last update)"), unsafe_allow_html=True)
+    st.markdown(section_label("Data Freshness"), unsafe_allow_html=True)
 
     MAX_H = 72
     sources   = ["Equity Prices", "Crypto Prices", "Signals", "Pipeline Run"]
@@ -237,7 +237,7 @@ with tab_status:
     c1, c2, c3 = st.columns(3)
     c1.markdown(kpi_card("Daily Pipeline", "06:15 Mon–Fri", accent=COLORS["blue"]),   unsafe_allow_html=True)
     c2.markdown(kpi_card("Daily Rebalance","16:30 Mon–Fri", accent=COLORS["purple"]), unsafe_allow_html=True)
-    c3.markdown(kpi_card("Scheduler",       "Windows Task Scheduler", accent=COLORS["neutral"]), unsafe_allow_html=True)
+    c3.markdown(kpi_card("Scheduler",       "Task Scheduler", accent=COLORS["neutral"]), unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
