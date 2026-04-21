@@ -1,10 +1,10 @@
 # QuantPipe
 
-An end-to-end quantitative finance pipeline for systematic equity and crypto trading. Built around a **Sector × Size × Style ETF rotation** framework, with a clear path from free data and paper trading to live deployment.
+An end-to-end quantitative finance pipeline for systematic equity and crypto trading. Built around a **Sector × Size × Style ETF rotation** framework with regime-adaptive overlays, a multi-strategy portfolio management layer, and direct Interactive Brokers execution.
 
-**Stack:** Python 3.13 · Polars · DuckDB · Parquet · VectorBT · cvxpy · PyPortfolioOpt · Streamlit · streamlit-ace · reportlab · kaleido · IBKR · CCXT · `uv`
+**Stack:** Python 3.13 · Polars · DuckDB · Parquet · cvxpy · PyPortfolioOpt · scipy · ib_insync · CCXT · Streamlit · Plotly · `uv`
 
-**Status:** Phases 0–6 complete + Research tools + RADA strategy. Pipeline running with live data. 145 tests passing.
+**Status:** Phases 0–6 complete. Portfolio management, multi-strategy blending, IB paper/live trading, and real-time monitoring dashboards all operational.
 
 **Live results (canary, 6-year backtest):** Sharpe 1.036 · CAGR 17.1% · Max DD −14.3%
 
@@ -14,27 +14,13 @@ An end-to-end quantitative finance pipeline for systematic equity and crypto tra
 
 - [Architecture Overview](#architecture-overview)
 - [Repository Structure](#repository-structure)
+- [Dashboards](#dashboards)
 - [Modules](#modules)
-  - [config](#config)
-  - [data\_adapters](#data_adapters)
-  - [storage](#storage)
-  - [features](#features)
-  - [signals](#signals)
-  - [backtest](#backtest)
-  - [portfolio](#portfolio)
-  - [risk](#risk)
-  - [execution](#execution)
-  - [orchestration](#orchestration)
-  - [reports](#reports)
-  - [strategies](#strategies)
-  - [tools](#tools)
-  - [research](#research)
-  - [tests](#tests)
 - [Setup](#setup)
 - [Running the Pipeline](#running-the-pipeline)
+- [Interactive Brokers Integration](#interactive-brokers-integration)
 - [Build Phases](#build-phases)
 - [Design Principles](#design-principles)
-- [Reference Documents](#reference-documents)
 
 ---
 
@@ -48,35 +34,29 @@ Data flows in one direction through clearly separated layers. No module reaches 
     │  CCXT (crypto)
     │  IBKR (live/paper)
     ▼
-[data_adapters]   ← unified DataAdapter protocol
+[data_adapters]       ← unified DataAdapter protocol, retry + dead-letter logging
     ▼
-[storage]         ← Parquet on disk, DuckDB queries, bronze/gold layers
+[storage]             ← Parquet on disk, bronze/gold layers, atomic writes, file locks
     ▼
-[features]        ← pure functions, point-in-time safe, snapshot-tested
+[features]            ← pure functions, point-in-time safe
     ▼
-[signals]         ← cross-sectional rankings, walk-forward validated
+[signals]             ← cross-sectional rankings, walk-forward validated
     ▼
-[backtest]        ← VectorBT integration, cost models, tearsheets
+[backtest]            ← cost models, tearsheets, walk-forward engine
     ▼
-[portfolio]       ← signals + covariance → target weights (cvxpy / PyPortfolioOpt)
+[portfolio]           ← signals + covariance → target weights
+    │                    multi-strategy blending, optimizer, deployment config
     ▼
-[risk]            ← pre-trade checks, VaR, exposure limits (hard blocks)
+[risk]                ← pre-trade checks, factor exposure, stress scenarios
     ▼
-[execution]       ← BrokerAdapter protocol → IBKR, CCXT, PaperBroker
+[execution]           ← IBKR / paper / CCXT brokers, order journal, NAV tracking
     ▼
-[reports]         ← Streamlit dashboards (health · performance · strategy lab · research)
-    │
-[orchestration]   ← cron-driven pipeline, alerting via Pushover/ntfy
-    │
-[research]        ← Monte Carlo, signal scanner, factor analysis, walk-forward (pure functions)
+[orchestration]       ← daily pipeline, signal generation, rebalance, kill-switch
+    ▼
+[reports]             ← 7-dashboard Streamlit app
+    ▼
+[research]            ← Monte Carlo, walk-forward research tools (Jupyter-compatible)
 ```
-
-**Key invariants:**
-- The data layer never talks to execution.
-- Every feature is a pure function of data available on or before date T — no lookahead.
-- `DataAdapter` and `BrokerAdapter` are protocols; swapping providers requires no downstream changes.
-- Paper and live trading share 100% of the strategy and execution code path.
-- Pre-trade checks are hard blocks, never advisory warnings.
 
 ---
 
@@ -84,704 +64,343 @@ Data flows in one direction through clearly separated layers. No module reaches 
 
 ```
 QuantPipe/
-│
+├── app.py                          # Streamlit app launcher
 ├── config/
-│   ├── universes.py            9-box ETFs, GICS sectors, crypto universe
-│   └── settings.py             Paths, API keys, pipeline defaults (loaded from .env)
-│
+│   ├── settings.py                 # env-var config (IBKR, alerts, paths)
+│   └── universes.py                # equity + crypto universe definitions
 ├── data_adapters/
-│   ├── base.py                 DataAdapter protocol + OHLCV schema
-│   ├── yfinance_adapter.py     Yahoo Finance (equities, ETFs) — free
-│   └── ccxt_adapter.py         CCXT unified interface (crypto, any exchange)
-│
+│   ├── base.py                     # DataAdapter protocol + OHLCV schema
+│   ├── yfinance_adapter.py         # equity/ETF data (retry + dead-letter)
+│   └── ccxt_adapter.py             # crypto OHLCV (pagination guard + retry)
 ├── storage/
-│   ├── parquet_store.py        write_bars(), load_bars(), list_symbols()
-│   ├── validators.py           Post-ingestion data quality checks
-│   ├── adjustments.py          Corporate actions (splits, dividends) storage
-│   └── universe.py             universe_as_of_date() — survivorship-bias-safe lookups
-│
+│   ├── parquet_store.py            # atomic reads/writes, file-locked partitions
+│   └── universe.py                 # universe registry
 ├── features/
-│   ├── canonical.py            5 pure factor functions (momentum, vol, reversal, …)
-│   └── compute.py              compute_and_store(), load_features() with gold-layer cache
-│
+│   └── compute.py                  # momentum, volatility, cross-sectional features
 ├── signals/
-│   ├── momentum.py             cross_sectional_momentum(), momentum_weights(),
-│   │                           get_monthly_rebalance_dates()
-│   ├── composite.py            CompositeSignal — multi-factor blending with IC weighting
-│   └── analysis.py             signal_decay(), ic_series(), turnover_analysis()
-│
+│   ├── momentum.py                 # cross-sectional momentum signal
+│   ├── composite.py                # multi-factor signal blending
+│   └── analysis.py                 # signal diagnostics and IC analysis
 ├── backtest/
-│   ├── engine.py               run_backtest() — VectorBT wrapper, cost model
-│   ├── tearsheet.py            print_tearsheet(), tearsheet_dict()
-│   ├── walk_forward.py         walk_forward() — expanding-window OOS validation
-│   └── canary.py               Canary strategy: 12-1 momentum top-5, monthly rebalance
-│
+│   ├── engine.py                   # vectorised backtest loop
+│   ├── tearsheet.py                # tearsheet_dict() for dashboards
+│   └── walk_forward.py             # out-of-sample walk-forward validation
 ├── portfolio/
-│   ├── covariance.py           ledoit_wolf_cov(), sample_cov(), compute_returns()
-│   └── optimizer.py            construct_portfolio() — 5 methods (equal, vol_scaled,
-│                               mean_variance, min_variance, max_sharpe)
-│
+│   ├── covariance.py               # Ledoit-Wolf + sample covariance
+│   ├── optimizer.py                # equal / vol_scaled / MV / min-var / max-Sharpe
+│   ├── multi_strategy.py           # strategy discovery, blending, optimizer,
+│   │                               #   deployment config I/O, deployment history
+│   └── _backtest_cache.py          # mtime + 24hr TTL backtest result cache
 ├── risk/
-│   ├── engine.py               compute_exposures(), historical_var(), pre_trade_check(),
-│   │                           generate_risk_report(), print_risk_report()
-│   ├── scenarios.py            4 stress scenarios (2008 GFC, 2020 COVID, 2022 rates,
-│   │                           2000 dot-com) + run_all_scenarios()
-│   ├── factor_model.py         FactorModel — OLS factor loadings, R², idiosyncratic risk
-│   └── attribution.py          performance_attribution() — factor vs. selection decomposition
-│
+│   ├── engine.py                   # pre-trade checks, VaR, exposure limits
+│   ├── factor_model.py             # Barra-style factor exposure decomposition
+│   ├── attribution.py              # return attribution by factor
+│   └── scenarios.py                # historical stress scenarios (2008, COVID, …)
 ├── execution/
-│   ├── base.py                 BrokerAdapter protocol, Order, Fill, Position types
-│   ├── paper_broker.py         In-memory paper broker — fills at mark price
-│   ├── ibkr_adapter.py         IBKRAdapter via ib_insync (paper port 7497)
-│   ├── ccxt_broker.py          CCXTBroker — live + paper crypto execution
-│   ├── trader.py               compute_orders() — pure, idempotent weight → order calc
-│   └── reconciler.py           reconcile(), has_material_drift(), write_reconcile_log()
-│
+│   ├── base.py                     # BrokerAdapter protocol, Order/Position/Fill
+│   ├── paper_broker.py             # in-memory paper broker
+│   ├── ibkr_adapter.py             # ib_insync wrapper (paper + live)
+│   ├── ccxt_broker.py              # CCXT execution adapter
+│   ├── trader.py                   # compute_orders(), nav_from_positions()
+│   ├── reconciler.py               # position reconciliation + drift detection
+│   ├── order_journal.py            # append-only order audit trail (Parquet)
+│   └── trading_log.py              # per-broker NAV snapshots (Parquet)
 ├── orchestration/
-│   ├── backfill_history.py     One-shot historical seed (run once)
-│   ├── ingest_daily.py         Nightly incremental ingestion
-│   ├── generate_signals.py     Daily signal generation + risk snapshot persistence
-│   ├── rebalance.py            Daily rebalance: load weights → check → orders → reconcile
-│   └── run_pipeline.py         Master cron chain: ingest → signals → alert on failure
-│
-├── strategies/
-│   ├── __init__.py
-│   ├── momentum_top5/
-│   │   ├── momentum_top5.py    Cross-sectional 12-1 momentum, equal-weight top-5 (template)
-│   │   └── README.md
-│   └── regime_adaptive_dynamic_allocation/
-│       ├── regime_adaptive_dynamic_allocation.py   RADA — 4-component regime score + skip-month momentum
-│       └── README.md
-│
-├── tools/
-│   ├── __init__.py
-│   └── backtest_runner.py      Subprocess backtest runner — loads any strategy, emits JSON
-│
+│   ├── run_pipeline.py             # master orchestrator: ingest → signals → alert
+│   ├── ingest_daily.py             # incremental price ingestion
+│   ├── generate_signals.py         # config-driven multi-strategy signal generation
+│   ├── rebalance.py                # daily rebalance: weights → broker orders
+│   └── _halt.py                    # kill-switch (QP_HALT sentinel file)
 ├── reports/
-│   ├── health_dashboard.py     Dashboard #1: ops health, ingestion status, log viewer
-│   ├── performance_dashboard.py Dashboard #2: equity curve, drawdown, Sharpe, exposures, PDF export
-│   ├── strategy_lab.py         Dashboard #3: folder-based strategy editor + backtest runner
-│   ├── research_dashboard.py   Dashboard #4: signal scanner, factor analysis, walk-forward, Monte Carlo
-│   └── pdf_export.py           ReportLab PDF builder — charts via kaleido, no Streamlit deps
-│
+│   ├── _theme.py                   # shared Plotly theme + CSS
+│   ├── health_dashboard.py         # pipeline status, heartbeat, data freshness
+│   ├── performance_dashboard.py    # equity curve, drawdown, factor exposure
+│   ├── strategy_lab.py             # interactive backtest runner (all strategies)
+│   ├── research_dashboard.py       # Monte Carlo, walk-forward research tools
+│   ├── portfolio_dashboard.py      # multi-strategy management (6 tabs)
+│   ├── paper_trading_dashboard.py  # paper account monitoring + equity curve
+│   ├── live_trading_dashboard.py   # live IBKR account monitoring
+│   └── instructions.py             # in-app guide and glossary
+├── strategies/
+│   ├── momentum_top5/              # canary: cross-sectional momentum, equal-weight
+│   └── regime_adaptive_dynamic_allocation/  # RADA: 4-component regime + momentum
+├── tools/
+│   └── backtest_runner.py          # subprocess runner used by Strategy Lab
 ├── research/
-│   ├── signal_scanner.py       scan_signals() — cross-sectional IC, autocorrelation, decay
-│   ├── factor_analysis.py      factor_returns(), cumulative_factor_performance()
-│   ├── walk_forward_runner.py  run_walk_forward() — expanding-window OOS result builder
-│   └── monte_carlo.py          MCConfig, run() — circular block bootstrap, fan chart data
-│
+│   ├── __init__.py
+│   └── monte_carlo.py              # block-bootstrap Monte Carlo (overflow-safe)
 ├── tests/
-│   ├── test_adapters.py        Adapter schema + date range (hits network)
-│   ├── test_storage.py         Parquet roundtrip, idempotency, list_symbols
-│   ├── test_features.py        Per-feature correctness + snapshot tests
-│   ├── test_signals.py         Momentum signal ranking, weights, rebalance dates
-│   ├── test_portfolio.py       Covariance estimation + all 5 optimizer methods
-│   ├── test_risk.py            Exposures, VaR, pre-trade checks, stress scenarios
-│   ├── test_orchestration.py   Signal generation helpers, pipeline step sequencing
-│   └── test_execution.py       Trader, PaperBroker, reconciler
-│
-├── .env.example                All required environment variables documented
-├── pyproject.toml              Dependencies and tool config (uv-compatible)
-└── quantfinance_*.md           Reference design documents
+│   └── test_adapters.py            # live-network adapter tests (@pytest.mark.network)
+├── data/
+│   ├── bronze/equity/daily/        # raw OHLCV partitions (symbol=X/)
+│   └── gold/equity/
+│       ├── target_weights.parquet  # latest rebalance target weights
+│       ├── portfolio_log.parquet   # daily risk snapshots
+│       ├── order_journal.parquet   # append-only order audit trail
+│       ├── trading_history.parquet # per-broker NAV snapshots
+│       ├── deployment_config.json  # active strategy deployment config
+│       ├── deployment_history.jsonl# immutable deployment event log
+│       └── backtest_cache/         # cached strategy backtest results
+├── logs/
+│   ├── pipeline.log
+│   ├── signals.log
+│   ├── rebalance.log
+│   └── dead_letters.log            # failed data adapter requests
+├── .pipeline_heartbeat.json        # machine-readable pipeline status
+├── pyproject.toml
+└── .env                            # secrets (never committed)
 ```
+
+---
+
+## Dashboards
+
+The Streamlit app (`streamlit run app.py`) provides seven dashboards:
+
+### Pipeline Health
+Real-time pipeline status read from `.pipeline_heartbeat.json`. Shows last run time, data freshness, ingestion coverage, and alert configuration.
+
+### Performance
+Strategy equity curve vs SPY benchmark, drawdown chart, rolling Sharpe, factor exposure heatmap, and return attribution.
+
+### Strategy Lab
+Interactive backtest runner. Select any strategy from `strategies/`, adjust parameters, and run a full backtest with tearsheet metrics, equity curve, and trade log. Results are cached by strategy mtime + 24hr TTL.
+
+### Research
+Monte Carlo fan chart (block bootstrap, overflow-safe), walk-forward validation across rolling windows, and distribution analysis.
+
+### Portfolio Management
+Six-tab multi-strategy control centre:
+- **Overview** — deployed allocation pie, blended equity curve vs components vs SPY
+- **Comparison** — side-by-side metrics table, overlaid equity curves, drawdown, rolling Sharpe
+- **Optimizer** — strategy correlation heatmap, allocation optimizer (equal / inverse-vol / min-variance / max-Sharpe via scipy), one-click deploy
+- **Deployment** — per-strategy active toggles, weight sliders, save config
+- **Blended Preview** — live target weights table + position pie
+- **Trade** — IB connection settings, auto-detect port scan, paper/live mode selector, pre-flight check, execute rebalance (streams subprocess output live)
+
+### Paper Trading
+Live monitoring of the paper account:
+- Daily equity curve reconstructed from `target_weights × bronze-layer prices`, anchored at post-rebalance NAV snapshots
+- Vertical dotted lines at every deployment config change (with version + strategy labels)
+- Drawdown shading and rebalance dot markers
+- KPI cards: NAV, total return, CAGR, Sharpe, max drawdown
+- Current positions table and pie chart
+- Trade history from the order journal
+
+### Live Trading
+Minimal IBKR live account monitor: TCP connection probe, read-only live snapshot (NAV + open positions), historical live NAV chart. Full live execution is triggered from the Portfolio → Trade tab.
 
 ---
 
 ## Modules
 
 ### `config`
-
-**`universes.py`** — defines the three trading universes used throughout the pipeline:
-
-| Constant | Contents |
-|---|---|
-| `STYLE_SIZE_9BOX` | 9 iShares Russell ETFs — Large/Mid/Small × Growth/Blend/Value |
-| `SECTOR_SPDRS` | 11 GICS sector SPDR ETFs (XLK, XLV, XLF, …) |
-| `BENCHMARKS` | SPY, QQQ, AGG, TLT, GLD, DIA |
-| `EQUITY_UNIVERSE` | Union of all above — 26 ETFs total |
-| `CRYPTO_UNIVERSE` | BTC, ETH, SOL, AVAX, LINK, ADA, DOT, POL, BNB, XRP (USDT pairs) |
-
-**`settings.py`** — loads all configuration from `.env`. Copy `.env.example` to `.env` and fill in your keys. Never commit `.env`.
-
----
+Central settings loaded from environment variables via `.env`. All paths, API keys, IBKR connection parameters, and alert tokens live here. Import with `from config.settings import ...`.
 
 ### `data_adapters`
-
-All adapters implement the `DataAdapter` protocol defined in `base.py`.
-
-```python
-from data_adapters import YFinanceAdapter, CCXTAdapter
-from datetime import date
-
-adapter = YFinanceAdapter()
-df = adapter.get_bars("SPY", date(2020, 1, 1), date(2024, 12, 31))
-# Returns Polars DataFrame: date, symbol, open, high, low, close, volume, adj_close
-```
-
-| Adapter | Asset class | Cost | Notes |
-|---|---|---|---|
-| `YFinanceAdapter` | Equities, ETFs | Free | Auto-adjusted + raw close stored |
-| `CCXTAdapter` (data) | Crypto OHLCV | Free | Kraken default, pagination handled |
-| `IBKRAdapter` | All | Requires account | Phase 6 — live/paper execution |
-| `CCXTBroker` | Crypto | Free / keys | Phase 6 — order routing via CCXT |
-
----
+Implements the `DataAdapter` protocol. Each adapter handles retries (3 attempts, exponential backoff), dead-letter logging to `logs/dead_letters.log`, and returns a validated Polars DataFrame in the standard OHLCV schema.
 
 ### `storage`
-
-Parquet files on disk, queryable via DuckDB. No server required.
-
-**Layout:**
-```
-data/
-├── bronze/
-│   ├── equity/daily/symbol=SPY/year=2024/data.parquet
-│   └── crypto/daily/symbol=BTC_USDT/year=2024/data.parquet
-└── gold/
-    ├── equity/features/                 Pre-computed feature Parquet
-    ├── equity/target_weights.parquet    Latest rebalance weights (upserted daily)
-    ├── equity/portfolio_log.parquet     Daily risk snapshots (VaR, exposures)
-    └── equity/reconcile_log.parquet     Broker reconciliation history
-```
-
-```python
-from storage import write_bars, load_bars, list_symbols
-
-write_bars(df, asset_class="equity", symbol="SPY")  # idempotent upsert
-df = load_bars(["SPY", "QQQ"], start=date(2020,1,1), end=date(2024,12,31))
-symbols = list_symbols("equity")
-```
-
-**Validators** (`storage/validators.py`):
-
-| Check | Catches |
-|---|---|
-| `check_row_counts` | Missing trading days |
-| `check_null_rate` | Null rate > 1% in price columns |
-| `check_price_jumps` | Daily moves > 8σ |
-| `check_staleness` | Last bar older than 3 trading days |
-
----
+Bronze layer: partitioned Parquet files at `data/bronze/{asset_class}/daily/symbol=X/`. All writes are atomic (`.tmp` + `os.replace`) and file-locked to prevent concurrent corruption. Gold layer: derived artefacts (target weights, portfolio log, order journal, NAV history).
 
 ### `features`
-
-Five canonical factors in `features/canonical.py`. All backward-looking — no lookahead possible by construction.
-
-| Function | Description |
-|---|---|
-| `log_return(prices, periods=1)` | Log return over N periods |
-| `realized_vol(prices, window=21)` | Rolling annualised volatility |
-| `momentum_12m_1m(prices)` | 12-month return skipping most recent month (Jegadeesh & Titman) |
-| `dollar_volume(close, volume, window=63)` | Rolling average dollar volume — liquidity filter |
-| `reversal_5d(prices)` | Negative 5-day return — short-term mean reversion signal |
-
-Snapshot tests in `tests/test_features.py` pin output to a fixed fixture. Any accidental lookahead contamination fails immediately.
-
----
+Pure, side-effect-free feature computation. Key features: `momentum_12m_1m` (skip-month), `realized_vol_21d`. All features are point-in-time safe — no forward-looking data leaks.
 
 ### `signals`
-
-Cross-sectional signal pipeline. `signals/momentum.py` provides the baseline implementation; `signals/composite.py` blends multiple factors; `signals/analysis.py` diagnoses signal quality.
-
-```python
-from signals.momentum import cross_sectional_momentum, momentum_weights, get_monthly_rebalance_dates
-
-# Rank universe by 12-1 momentum at each rebalance date, select top 5
-signal = cross_sectional_momentum(features_df, rebalance_dates, top_n=5)
-
-# Convert signal to equal-weight or vol-scaled weights
-weights = momentum_weights(signal, weight_scheme="equal")
-weights = momentum_weights(signal, weight_scheme="vol_scaled", vol_series=vol_df)
-```
-
-```python
-from signals.composite import CompositeSignal
-from signals.analysis import ic_series, signal_decay, turnover_analysis
-
-# Blend momentum + reversal with IC-based weights
-cs = CompositeSignal([("momentum", 0.7), ("reversal", 0.3)])
-blended = cs.blend(features_df, rebalance_dates)
-
-# Diagnose signal quality
-ic = ic_series(signal, forward_returns)          # Information Coefficient over time
-decay = signal_decay(signal, forward_returns)    # IC by holding period
-turnover = turnover_analysis(weights_history)    # Average portfolio turnover
-```
-
----
+Cross-sectional momentum ranking with monthly rebalance date generation. Composite signal blending and IC diagnostics.
 
 ### `backtest`
-
-VectorBT integration with a shared cash, group-by portfolio simulation.
-
-```python
-from backtest.engine import run_backtest
-from backtest.tearsheet import print_tearsheet
-
-result = run_backtest(prices, weights, cost_bps=5.0, initial_cash=100_000)
-print_tearsheet(result, title="Canary Strategy")
-# result.sharpe, result.cagr, result.max_drawdown, result.equity_curve
-```
-
-**Canary validation:** `uv run python backtest/canary.py` runs the full 12-1 momentum pipeline and prints a tearsheet + risk report. Expected Sharpe: 0.5–1.5. Anything outside that range indicates a pipeline bug.
-
-**Walk-forward validation:**
-
-```python
-from backtest.walk_forward import walk_forward
-
-result = walk_forward(prices, features, signal_fn, weight_fn, train_years=3, test_months=12)
-print(result.combined_sharpe)   # stitched OOS Sharpe
-```
-
----
+Vectorised backtest loop with per-trade cost models. `tearsheet_dict()` returns a plain dict for dashboard consumption. Walk-forward engine uses `dateutil.relativedelta` for correct month arithmetic.
 
 ### `portfolio`
-
-Pure function interface — no I/O, no state.
-
-```python
-from portfolio import ledoit_wolf_cov, construct_portfolio, PortfolioConstraints
-
-cov, symbols = ledoit_wolf_cov(prices_df, lookback_days=252)
-weights = construct_portfolio(
-    signals,
-    cov_matrix=cov,
-    symbols=symbols,
-    method="vol_scaled",          # or "equal", "mean_variance", "min_variance", "max_sharpe"
-    constraints=PortfolioConstraints(max_position=0.40),
-)
-```
-
-| Method | Description | Requires |
-|---|---|---|
-| `equal` | 1/N equal weight | — |
-| `vol_scaled` | Inverse-volatility weight (1/σᵢ normalised) | cov matrix |
-| `mean_variance` | Max μᵀw − (λ/2)wᵀΣw via cvxpy | cov + expected returns |
-| `min_variance` | Minimum variance via PyPortfolioOpt | cov matrix |
-| `max_sharpe` | Maximum Sharpe ratio via PyPortfolioOpt | cov + expected returns |
-
----
+- **`optimizer.py`**: five weighting methods (equal, inverse-vol, mean-variance, min-variance, max-Sharpe) implemented with cvxpy / PyPortfolioOpt / scipy.
+- **`multi_strategy.py`**: discovers strategies from `strategies/`, runs backtests as subprocesses (via `tools/backtest_runner.py`), caches results, builds strategy return matrices, computes correlations, optimises cross-strategy allocations, blends symbol-level weights, reads/writes deployment config and deployment history.
+- **`_backtest_cache.py`**: invalidates cache when strategy `.py` mtime changes or after 24 hours.
 
 ### `risk`
-
-Pre-trade checks are **hard blocks** — `CheckResult(passed=False)` must prevent order submission. Never downgrade to a warning.
-
-```python
-from risk import pre_trade_check, generate_risk_report, print_risk_report, RiskLimits, run_all_scenarios
-
-check = pre_trade_check(proposed_weights, RiskLimits(max_position=0.40, var_limit_pct=0.025))
-if not check.passed:
-    raise RuntimeError(f"Pre-trade check failed: {check.violations}")
-
-report = generate_risk_report(weights, prices_df, stress_results=run_all_scenarios(weights))
-print_risk_report(report)
-```
-
-**Default `RiskLimits`:**
-
-| Limit | Default |
-|---|---|
-| `max_position` | 40% in any single name |
-| `max_sector` | 60% in any one sector |
-| `max_gross` | 100% gross exposure |
-| `max_net` | 100% net exposure |
-| `max_top5_concentration` | 80% in top-5 names |
-| `var_limit_pct` | None (uncapped by default) |
-
-**Stress scenarios** in `risk/scenarios.py`: `2008_GFC`, `2020_COVID`, `2022_RATES`, `2000_DOTCOM`.
-
-**Factor model** (`risk/factor_model.py`) — OLS factor loadings, R², and idiosyncratic risk for any portfolio against a configurable factor set (SPY, sectors, style boxes).
-
-**Attribution** (`risk/attribution.py`) — decomposes realized P&L into factor-driven and stock-selection components:
-
-```python
-from risk.factor_model import FactorModel
-from risk.attribution import performance_attribution
-
-fm = FactorModel(factors=["SPY", "TLT", "GLD"])
-loadings = fm.fit(portfolio_returns, factor_returns)
-
-attr = performance_attribution(weights_history, price_history, factor_returns)
-# attr.factor_return, attr.selection_return, attr.total_return
-```
-
----
+Pre-trade hard gate: if any limit is violated, `generate_signals.py` returns exit code 1 and does **not** write target weights. Includes historical VaR, Barra-style factor exposure, and 2008/2011/2015/COVID/2022 stress scenarios.
 
 ### `execution`
-
-All broker adapters implement `BrokerAdapter` from `execution/base.py` — swap providers without touching downstream code.
-
-**Order computation (pure function):**
-
-```python
-from execution import compute_orders, nav_from_positions
-
-nav = nav_from_positions(positions, cash, prices)
-orders = compute_orders(target_weights, positions, prices, nav, min_trade_pct=0.005)
-# Idempotent: same inputs always produce the same orders
-# Returns integer share quantities, skips dust trades
-```
-
-**Paper broker:**
-
-```python
-from execution import PaperBroker, Order
-
-broker = PaperBroker(initial_cash=100_000)
-broker.set_prices({"SPY": 520.0, "QQQ": 445.0})
-order_id = broker.place_order(Order(symbol="SPY", qty=10))
-```
-
-**IBKR (paper/live):**
-
-```python
-from execution.ibkr_adapter import IBKRAdapter
-
-with IBKRAdapter(host="127.0.0.1", port=7497, is_paper=True) as broker:
-    positions = broker.get_positions()
-    orders = compute_orders(target_weights, positions, prices, nav)
-    for order in orders:
-        broker.place_order(order)
-```
-
-**Reconciler:**
-
-```python
-from execution import reconcile, has_material_drift, format_reconcile_report
-
-report = reconcile(internal_positions, broker.get_positions(), prices, nav)
-print(format_reconcile_report(report))
-if has_material_drift(report, threshold_pct=5.0):
-    raise RuntimeError("Material drift detected — investigate before next rebalance")
-```
-
----
+- **`ibkr_adapter.py`**: synchronous ib_insync wrapper. Supports paper (port 7497) and live (port 7496) TWS sessions, as well as IB Gateway (4002/4001). Waits up to 30 seconds for order fills.
+- **`order_journal.py`**: append-only Parquet audit trail. Every order attempt is recorded before and after the broker call.
+- **`trading_log.py`**: NAV snapshot written after every non-dry-run rebalance. Used by the Paper/Live Trading dashboards to anchor the equity curve.
 
 ### `orchestration`
-
-**Full daily pipeline:**
-
-```bash
-# Master chain: ingest → validate → features → signals → alert on failure
-uv run python orchestration/run_pipeline.py
-
-# Skip ingestion and regenerate signals only
-uv run python orchestration/run_pipeline.py --skip-ingest
-
-# Execute rebalance against paper broker
-uv run python orchestration/rebalance.py --broker paper
-
-# Dry-run: compute orders without placing them
-uv run python orchestration/rebalance.py --broker paper --dry-run
-
-# Live IBKR rebalance (requires TWS/Gateway running)
-uv run python orchestration/rebalance.py --broker ibkr
-```
-
-**Windows Task Scheduler setup (run once):**
-
-```bash
-# Registers two tasks: DailyPipeline at 06:15 and DailyRebalance at 16:30, Mon–Fri
-uv run python orchestration/setup_scheduler.py
-
-# Verify
-schtasks /Query /TN "QuantPipe\DailyPipeline" /FO LIST
-schtasks /Query /TN "QuantPipe\DailyRebalance" /FO LIST
-
-# Remove
-uv run python orchestration/setup_scheduler.py --remove
-```
-
-The scheduler calls `orchestration/run_pipeline.bat` and `orchestration/run_rebalance.bat`,
-which are thin wrappers that `cd` to the project directory and redirect output to `logs/`.
-
-**Individual steps:**
-
-```bash
-uv run python orchestration/backfill_history.py          # one-shot historical seed
-uv run python orchestration/ingest_daily.py              # incremental ingest
-uv run python orchestration/generate_signals.py          # signal generation + risk snapshot
-uv run python features/compute.py                        # recompute gold-layer features
-```
-
-Exit codes: `0` = success, `1` = partial failure, `2` = total failure. Pushover/ntfy alert sent on any non-zero exit.
-
----
+- **`run_pipeline.py`**: chains ingest → signals. Writes `.pipeline_heartbeat.json` on completion. Sends Pushover/ntfy alerts on failure.
+- **`generate_signals.py`**: reads `deployment_config.json`; if active strategies are configured it runs each strategy's `get_signal()` + `get_weights()` and blends by allocation weight. Falls back to default cross-sectional momentum if no config exists.
+- **`rebalance.py`**: loads target weights, connects to broker (paper/ibkr/ccxt), runs pre-trade check, computes and places orders, reconciles positions, writes NAV snapshot. Accepts `--ibkr-host/port/client-id/live` flags for dashboard-triggered execution.
+- **`_halt.py`**: checks for `QP_HALT` sentinel file. Called at the top of both `run_pipeline` and `run_rebalance`.
 
 ### `reports`
-
-All four dashboards are wired together in `app.py` and launched via a single command:
-
-```bash
-streamlit run app.py
-```
-
-**Dashboard #1 — Pipeline Health** (`reports/health_dashboard.py`):
-
-Shows: last ingestion time per asset class, signal freshness, universe sizes, per-symbol row counts with staleness flags, portfolio snapshot metrics (VaR, gross exposure, pre-trade status), tabbed log viewers for pipeline/ingest/signals logs.
-
-**Dashboard #2 — Performance** (`reports/performance_dashboard.py`):
-
-Shows: equity curve with benchmark overlay, trailing returns bar, rolling Sharpe/Sortino, monthly returns heatmap, return distribution with VaR markers, current portfolio positions + sector breakdown, stress scenario bars, top drawdown table.
-
-Download bar at the top of the page:
-- **PDF Report** — full multi-section report (executive summary, performance charts, portfolio, risk, analytics) as a print-ready PDF generated with ReportLab + kaleido.
-- **Trade History** — every backtest transaction (entry, exit, size, P&L) as CSV.
-
-**Dashboard #3 — Strategy Lab** (`reports/strategy_lab.py`):
-
-In-browser strategy development environment backed by the `strategies/` folder.
-
-- Strategy selector dropdown auto-discovers all strategy folders under `strategies/`.
-- **➕ New Strategy** button scaffolds a new folder with a `.py` stub and `README.md`.
-- Ace editor (via `streamlit-ace`) with per-file tabs for every file in the strategy folder.
-- Save / Discard / Reload action bar with per-file dirty state tracking.
-- Backtest config panel (lookback, top-N, cost bps, weight scheme) pre-filled from `DEFAULT_PARAMS`.
-- **▶ Run Backtest** fires `tools/backtest_runner.py` as a subprocess, streams progress, and displays full tearsheet results in-page.
-
-**Dashboard #4 — Research** (`reports/research_dashboard.py`):
-
-Quantitative research workbench with five tabs:
-
-| Tab | Tool | Purpose |
-|---|---|---|
-| Signal Scanner | `research/signal_scanner.py` | IC series, signal decay by holding period, autocorrelation |
-| Factor Analysis | `research/factor_analysis.py` | Factor return series, cumulative performance, correlation heatmap |
-| Walk-Forward | `research/walk_forward_runner.py` | Expanding-window OOS Sharpe, rolling performance, parameter stability |
-| Monte Carlo | `research/monte_carlo.py` | Circular block bootstrap, fan chart, terminal wealth distribution, P(ruin/doubling) |
-| (More coming) | — | — |
+All dashboards share `_theme.py` for consistent dark styling. The `@st.cache_resource` pattern is used for heavy loaders; `@st.cache_data(ttl=N)` for data that can be refreshed.
 
 ### `strategies`
+Each strategy lives in its own folder: `strategies/<slug>/<slug>.py`. The file must export `get_signal()`, `get_weights()`, `NAME`, `DESCRIPTION`, and `DEFAULT_PARAMS`. The Strategy Lab and Portfolio Management layer discover strategies automatically by scanning this directory.
 
-Each strategy lives in its own subfolder: `strategies/<slug>/<slug>.py` + `README.md`. The Strategy Lab auto-discovers all subfolders and the backtest runner resolves the primary `.py` by name match.
-
-Every strategy module must expose:
-
-| Attribute | Type | Description |
-|---|---|---|
-| `NAME` | `str` | Display name in Strategy Lab selector |
-| `DESCRIPTION` | `str` | One-line summary |
-| `DEFAULT_PARAMS` | `dict` | Fallback values for `lookback_years`, `top_n`, `cost_bps`, `weight_scheme` |
-| `get_signal(features, rebal_dates, **kwargs)` | `pl.DataFrame` | Columns: `rebalance_date, symbol, score, rank, selected` |
-| `get_weights(signal, **kwargs)` | `pl.DataFrame` | Columns: `rebalance_date, symbol, weight` |
-
-**Included strategies:**
-
-| Strategy | File | Description |
-|---|---|---|
-| Momentum Top-5 | `momentum_top5/momentum_top5.py` | 12-1 skip-month momentum, equal-weight top-5 (baseline template) |
-| RADA | `regime_adaptive_dynamic_allocation/regime_adaptive_dynamic_allocation.py` | 4-component regime score (trend · breadth · vol · macro) sets equity/cash split; skip-month momentum selects top-N ETFs within that allocation |
-
-New strategies can be created from the Strategy Lab UI (scaffolds folder + stub + README) or by copying the `momentum_top5/` folder.
+Current strategies:
+- **`momentum_top5`** — cross-sectional 12-1 momentum, equal-weight top-5 long-only. Canary baseline.
+- **`regime_adaptive_dynamic_allocation`** — 4-component regime score (trend 40%, breadth 25%, vol 20%, macro momentum 15%) sets equity/cash split; skip-month momentum with 50-day SMA trend filter selects positions.
 
 ### `tools`
-
-**`backtest_runner.py`** — invoked as a subprocess by Strategy Lab.
-
-```bash
-uv run python tools/backtest_runner.py \
-    --strategy strategies/momentum_top5/momentum_top5.py \
-    --lookback-years 6 \
-    --top-n 5 \
-    --cost-bps 5.0 \
-    --weight-scheme equal
-```
-
-Emits a single JSON payload to stdout:
-
-```json
-{ "ok": true, "strategy_name": "...", "metrics": {...}, "equity": {...}, "benchmark": {...}, "params": {...} }
-```
-
-Progress lines stream to stderr for display in the Strategy Lab console expander.
-
----
+`backtest_runner.py` is invoked as a subprocess by both the Strategy Lab dashboard and `portfolio/multi_strategy.py`. It emits a single JSON payload to stdout and progress lines to stderr.
 
 ### `research`
-
-Python module providing the analytical backend for the Research dashboard. Each tool is a pure function — no I/O, no Streamlit dependencies — and can be called from notebooks or scripts.
-
-| Module | Key functions | Description |
-|---|---|---|
-| `signal_scanner.py` | `scan_signals()` | IC series, autocorrelation, decay by holding period |
-| `factor_analysis.py` | `factor_returns()`, `cumulative_factor_performance()` | Long/short factor portfolios, cumulative returns, correlation |
-| `walk_forward_runner.py` | `run_walk_forward()` | Expanding-window OOS result builder, rolling Sharpe surface |
-| `monte_carlo.py` | `MCConfig`, `run()`, `load_returns_csv()` | Circular block bootstrap, fan chart percentiles, terminal wealth stats, P(ruin) / P(doubling) |
-
-```python
-from research.monte_carlo import MCConfig, load_returns_csv, run as run_mc
-
-rets, meta = load_returns_csv("backtest_returns.csv", from_equity=False)
-result = run_mc(rets, MCConfig(n_sims=5000, horizon_years=5.0, initial_capital=100_000))
-print(f"Median terminal wealth: ${result.med_final:,.0f}")
-print(f"P(doubling): {result.prob_doubling:.1%}")
-```
-
-Rules:
-- Research modules contain only pure analysis functions — logic that matters migrates to a production module.
-- Never use `data.shift(-1)` or any future-looking operation.
-- Track every hypothesis: what you expected, what you found.
-
----
-
-### `tests`
-
-```bash
-uv run pytest                                # all 145 tests
-uv run pytest --ignore=tests/test_adapters.py   # skip network tests
-uv run pytest tests/test_risk.py -v         # single file, verbose
-```
-
-| File | Covers |
-|---|---|
-| `test_adapters.py` | YFinance schema, date range, null checks (hits network) |
-| `test_storage.py` | Parquet roundtrip, idempotency, list_symbols |
-| `test_features.py` | Per-feature correctness, no-lookahead snapshot tests |
-| `test_signals.py` | Momentum ranking, weight schemes, rebalance dates |
-| `test_portfolio.py` | Ledoit-Wolf covariance, all 5 optimizer methods, position cap |
-| `test_risk.py` | Exposures, VaR, pre-trade hard blocks, stress scenarios |
-| `test_orchestration.py` | Upsert helpers, pipeline step sequencing |
-| `test_execution.py` | Trader idempotency, PaperBroker fills, reconciler drift detection |
+`monte_carlo.py` implements block bootstrap Monte Carlo with log-cumsum overflow protection (capped at 1,000,000× initial capital). The `run()` function validates the input return series for unrealistic per-period returns before simulating.
 
 ---
 
 ## Setup
 
-### Prerequisites
-
-- Python 3.13 via `uv`
-- Windows, macOS, or Linux
-
-### Install `uv`
-
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-```
-
-### Clone and install
-
-```bash
-git clone git@github.com:micahabanschick/QuantPipe.git
+# 1. Clone and enter
+git clone https://github.com/micahabanschick/QuantPipe.git
 cd QuantPipe
-uv sync                           # core dependencies
-uv sync --extra dev               # pytest, ruff, black
-uv sync --extra backtest          # VectorBT
-uv sync --extra portfolio         # cvxpy, PyPortfolioOpt
-uv sync --extra execution         # ib_insync
-# Install everything at once:
-uv sync --extra dev --extra backtest --extra portfolio --extra execution
-```
 
-### Configure environment
+# 2. Install all dependencies (including execution extras for IBKR)
+uv sync --extra execution
 
-```bash
+# 3. Copy and fill in secrets
 cp .env.example .env
-# Edit .env — fill in API keys (see .env.example for all variables)
-```
+# Edit .env: IBKR_HOST, IBKR_PORT, PUSHOVER_TOKEN, etc.
 
-### Seed historical data
+# 4. Run historical backfill (first run only, ~2–5 minutes)
+uv run python storage/backfill.py
 
-```bash
-uv run python orchestration/backfill_history.py
-# Takes 5–15 minutes. Populates data/bronze/ for all 26 ETFs and 9 crypto symbols.
-```
-
-### Compute gold-layer features
-
-```bash
+# 5. Compute features
 uv run python features/compute.py
-# Writes pre-computed features to data/gold/equity/features/
-```
 
-### Generate first signal snapshot
-
-```bash
+# 6. Generate signals
 uv run python orchestration/generate_signals.py
-# Creates data/gold/equity/target_weights.parquet and portfolio_log.parquet
-# Required before launching the dashboards.
+
+# 7. Launch the app
+streamlit run app.py
 ```
 
-### Register automated daily tasks (Windows)
+### Optional dependencies
 
 ```bash
-uv run python orchestration/setup_scheduler.py
-# Registers QuantPipe\DailyPipeline (06:15) and QuantPipe\DailyRebalance (16:30)
+# Portfolio optimizers (cvxpy, PyPortfolioOpt)
+uv sync --extra portfolio
+
+# IBKR execution (ib_insync)
+uv sync --extra execution
+
+# All extras
+uv sync --all-extras
 ```
+
+### Environment variables (`.env`)
+
+| Variable | Description | Default |
+|---|---|---|
+| `IBKR_HOST` | TWS / Gateway host | `127.0.0.1` |
+| `IBKR_PORT` | API socket port | `7497` (TWS paper) |
+| `IBKR_CLIENT_ID` | API client ID | `1` |
+| `IBKR_PAPER` | Paper mode flag | `true` |
+| `PUSHOVER_TOKEN` | Pushover app token | — |
+| `PUSHOVER_USER` | Pushover user key | — |
+| `NTFY_TOPIC` | ntfy.sh topic (alternative) | — |
 
 ---
 
 ## Running the Pipeline
 
-### Validate end-to-end
-
 ```bash
-uv run python backtest/canary.py
-# Expected: Sharpe 0.5–1.5. Prints full tearsheet + risk report.
-# Confirmed result: Sharpe 1.036, CAGR 17.1%, Max DD -14.3%
-```
-
-### Daily operations
-
-```bash
-# 1. Ingest + features + signals (automated via Task Scheduler at 06:15)
+# Full daily pipeline (ingest + signals)
 uv run python orchestration/run_pipeline.py
 
-# 2. Paper rebalance at market close (automated via Task Scheduler at 16:30)
-uv run python orchestration/rebalance.py --broker paper
+# Signals only (skip re-ingestion)
+uv run python orchestration/run_pipeline.py --skip-ingest
 
-# 3. All dashboards (Health · Performance · Strategy Lab · Research)
-streamlit run app.py
+# Paper rebalance (dry run — computes orders but does not place)
+uv run python orchestration/rebalance.py --broker paper --dry-run
+
+# Paper rebalance (places orders against IB paper account)
+uv run python orchestration/rebalance.py --broker ibkr
+
+# Live rebalance (real money — use with caution)
+uv run python orchestration/rebalance.py --broker ibkr --ibkr-live
+
+# Emergency kill-switch
+touch QP_HALT       # stops next pipeline/rebalance run
+rm QP_HALT          # clears the halt
+
+# Run tests
+uv run pytest                          # fast tests only
+uv run pytest -m network               # include live-network tests
 ```
 
-### Run tests
+### Cron (daily at 06:00 weekdays)
 
-```bash
-uv run pytest --ignore=tests/test_adapters.py   # fast, no network
+```cron
+0 6 * * 1-5 cd /path/to/QuantPipe && .venv/Scripts/python.exe orchestration/run_pipeline.py >> logs/pipeline.log 2>&1
+```
+
+---
+
+## Interactive Brokers Integration
+
+QuantPipe connects to TWS or IB Gateway via `ib_insync`. Both paper and live sessions are supported.
+
+### Port reference
+
+| Application | Session | Port |
+|---|---|---|
+| TWS | Paper | 7497 |
+| TWS | Live | 7496 |
+| IB Gateway | Paper | 4002 |
+| IB Gateway | Live | 4001 |
+
+### TWS setup
+
+1. Open TWS and log in.
+2. Go to **Edit → Global Configuration → API → Settings**.
+3. Enable **"Enable ActiveX and Socket Clients"**.
+4. Set the socket port (default `7497` for paper TWS).
+5. Uncheck **"Read-Only API"** (required to place orders).
+6. Add `127.0.0.1` to **Trusted IP Addresses**.
+7. Click **OK / Apply**.
+
+The Portfolio → Trade tab includes an **Auto-Detect Ports** button that scans all four standard ports and identifies which ones are active.
+
+### Execution flow
+
+```
+Portfolio tab → Deploy config  →  deployment_config.json + deployment_history.jsonl
+generate_signals.py            →  target_weights.parquet (blended across strategies)
+rebalance.py --broker ibkr     →  IBKR orders → order_journal.parquet + trading_history.parquet
+Paper Trading dashboard        →  equity curve with deployment markers
 ```
 
 ---
 
 ## Build Phases
 
-| Phase | Deliverable | Status |
+| Phase | Description | Status |
 |---|---|---|
-| **0 — Setup** | Repo, dependencies, accounts | Complete |
-| **1 — Data layer** | Daily bars for 26 ETFs + 10 crypto, queryable in <1s | Complete |
-| **2 — Data quality + features** | Adjustments, universe-as-of-date, 5 factors, snapshot tests | Complete |
-| **3 — Backtest + first signal** | Canary strategy: Sharpe ~1.0, walk-forward validated | Complete |
-| **4 — Portfolio + risk** | Ledoit-Wolf, 5 optimizer methods, VaR, pre-trade checks, stress scenarios | Complete |
-| **5 — Reporting + orchestration** | Two Streamlit dashboards, Task Scheduler automation, Pushover alerts | Complete |
-| **6 — Paper trading** | Trader, IBKRAdapter, CCXTBroker, reconciler, rebalance script, Task Scheduler live | Complete |
-| **7 — Go live** | Gate: 4 weeks green paper trading, implementation gap < 25% of Sharpe | Pending |
-| **8 — Expand** | Paid data, additional strategies, scale capital | Future |
-
-**Gate criteria before Phase 7** (all must be true):
-- Paper trading reconciler green for 4+ consecutive weeks
-- Implementation gap understood and within acceptable bounds
-- Pre-trade checks tested — attempting to violate limits must produce a block
-- Written kill-switch procedure exists
-- Dashboard checked daily
+| 0 | Project scaffold, config, storage layer, CI | ✅ Complete |
+| 1 | Data ingestion (yfinance + CCXT), bronze layer | ✅ Complete |
+| 2 | Feature engineering (momentum, vol), point-in-time safe | ✅ Complete |
+| 3 | Backtest engine, walk-forward, tearsheets | ✅ Complete |
+| 4 | Portfolio construction (cvxpy / PyPortfolioOpt), risk engine | ✅ Complete |
+| 5 | Reporting dashboards (Health, Performance, Strategy Lab, Research) | ✅ Complete |
+| 6 | Paper trading loop: execution layer, rebalance orchestration | ✅ Complete |
+| 7 | Multi-strategy portfolio management, IBKR integration, trading dashboards | ✅ Complete |
 
 ---
 
 ## Design Principles
 
-1. **Separation of concerns.** Each module does one thing and exposes a clean interface. The data layer never talks to execution.
-2. **Point-in-time correctness.** No lookahead bias. Features use only data available on or before date T. Snapshot tests enforce this.
-3. **Research-to-production parity.** The same code generates signals in research and runs live — no rewrite gap.
-4. **Honest evaluation.** Cost models (5bps round-trip), slippage, and walk-forward validation are non-negotiable.
-5. **Hard risk gates.** Pre-trade checks block orders — they are never downgraded to warnings.
-6. **Incremental deployability.** Each phase delivers something real and usable before the next begins.
-7. **Idempotency everywhere.** Writes upsert by key, order computation is pure, reruns produce no duplicates.
+**One-way data flow.** Each layer consumes from the layer below and writes to the layer above. No module imports from a higher layer.
 
----
+**Atomic writes everywhere.** Every Parquet write uses `.tmp` + `os.replace()`. File locks prevent concurrent corruption. The pipeline can be killed at any point and restarted safely.
 
-## Reference Documents
+**Hard gates, not soft warnings.** The pre-trade check in `generate_signals.py` and `rebalance.py` returns a non-zero exit code and refuses to write weights if any risk limit is violated.
 
-| Document | Contents |
-|---|---|
-| [`quantfinance_pipeline_outline.md`](quantfinance_pipeline_outline.md) | All 11 apps, feasibility notes, difficulty ratings, recommended build order |
-| [`quantfinance_build_plan.md`](quantfinance_build_plan.md) | Constrained build plan: tooling, budget, per-phase milestones, per-app difficulty |
-| [`quantfinance_kickoff_week1.md`](quantfinance_kickoff_week1.md) | Day-by-day Week 1 plan, setup checklist, strategy decisions (ETF 9-box rotation, crypto sidecar, options as live overlay) |
+**No silent fallbacks in optimisation.** Solver failures in `portfolio/optimizer.py` raise `RuntimeError` rather than silently returning equal weights. You should know when your optimizer fails.
+
+**Strategies are pure functions.** `get_signal()` and `get_weights()` take DataFrames in, return DataFrames out. No I/O, no global state. Prices are injected by the runner, making strategies unit-testable without a storage layer.
+
+**Kill-switch.** `touch QP_HALT` in the project root stops the pipeline and rebalancer immediately. Both scripts check for this file at startup.
+
+**Deployment history is immutable.** Every call to `write_deployment_config()` appends to `deployment_history.jsonl` — it is never overwritten. This provides a permanent audit trail visible as vertical markers on the Paper Trading equity curve.
