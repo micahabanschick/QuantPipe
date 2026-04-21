@@ -212,7 +212,7 @@ with tab_status:
         xaxis=dict(range=[0, MAX_H + 14], showgrid=False, title="Hours"),
         showlegend=False,
     )
-    st.plotly_chart(fig_fresh, use_container_width=True, config=PLOTLY_CONFIG)
+    st.plotly_chart(fig_fresh, width="stretch", config=PLOTLY_CONFIG)
 
     # ── Scheduled task info ────────────────────────────────────────────────────
     st.markdown(section_label("Scheduled Tasks"), unsafe_allow_html=True)
@@ -283,7 +283,7 @@ with tab_data:
                         ] if col.name == "status" else [""] * len(col),
                         axis=0,
                     ),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     height=420,
                 )
@@ -311,7 +311,7 @@ with tab_data:
                     xaxis=dict(showgrid=False),
                     showlegend=False,
                 )
-                st.plotly_chart(fig_rc, use_container_width=True, config=PLOTLY_CONFIG)
+                st.plotly_chart(fig_rc, width="stretch", config=PLOTLY_CONFIG)
         else:
             st.warning("No equity data found for this window.")
     else:
@@ -344,7 +344,7 @@ with tab_data:
                     ] if col.name == "status" else [""] * len(col),
                     axis=0,
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -418,7 +418,7 @@ with tab_port:
                 fig_trend.update_yaxes(tickformat=".2%", row=1, col=1)
                 fig_trend.update_yaxes(tickformat=".0%", row=2, col=1)
                 fig_trend.update_layout(hovermode="x unified", showlegend=True)
-                st.plotly_chart(fig_trend, use_container_width=True, config=PLOTLY_CONFIG)
+                st.plotly_chart(fig_trend, width="stretch", config=PLOTLY_CONFIG)
 
             # ── Current weights bar ────────────────────────────────────────────
             if TARGET_WEIGHTS.exists():
@@ -446,7 +446,7 @@ with tab_port:
                         yaxis=dict(showgrid=False, autorange="reversed"),
                         showlegend=False,
                     )
-                    st.plotly_chart(fig_wts, use_container_width=True, config=PLOTLY_CONFIG)
+                    st.plotly_chart(fig_wts, width="stretch", config=PLOTLY_CONFIG)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

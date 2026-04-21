@@ -118,8 +118,8 @@ def _top_drawdowns(eq_values: np.ndarray, idx, top_n: int = 5) -> list[dict]:
             "Trough":      str(_d(idx[t])),
             "Recovery":    str(_d(idx[e])) if e is not None else "Ongoing",
             "Drawdown":    f"{dd[t]:.2%}",
-            "Depth (d)":   t - s,
-            "Recov (d)":   (e - t) if e is not None else "—",
+            "Depth (d)":   str(t - s),
+            "Recov (d)":   str(e - t) if e is not None else "—",
             "_dd_val":     dd[t],
         })
 
@@ -341,17 +341,18 @@ with tab_ov:
             hovertemplate="<b>%{x|%Y-%m-%d}</b><br>Portfolio: $%{y:,.0f}<extra></extra>",
         ))
 
-        # Rebalance date annotations
+        # Rebalance date markers (add_shape handles date strings; add_vline annotation
+        # breaks in Plotly 6.x when x is a date string due to mean-computation bug)
         if show_rebal_lines and target_weights_df is not None:
             rebal_col = "rebalance_date" if "rebalance_date" in target_weights_df.columns else "date"
             rdates = target_weights_df[rebal_col].unique().to_list()
             for rd in rdates:
-                fig_eq.add_vline(
-                    x=str(rd),
-                    line=dict(color=COLORS["border"], width=1),
-                    annotation_text="↑",
-                    annotation_font=dict(color=COLORS["neutral"], size=9),
-                    annotation_position="top",
+                fig_eq.add_shape(
+                    type="line",
+                    x0=str(rd), x1=str(rd),
+                    y0=0, y1=1,
+                    xref="x", yref="paper",
+                    line=dict(color=COLORS["border"], width=1, dash="dot"),
                 )
 
         apply_theme(fig_eq, legend_inside=True)
@@ -360,7 +361,7 @@ with tab_ov:
             yaxis=dict(tickformat="$,.0f"),
             xaxis=dict(rangeselector=range_selector()),
         )
-        st.plotly_chart(fig_eq, use_container_width=True, config=PLOTLY_CONFIG)
+        st.plotly_chart(fig_eq, width="stretch", config=PLOTLY_CONFIG)
 
         # ── Trailing returns bar ──────────────────────────────────────────────
         st.markdown(section_label("Trailing Returns"), unsafe_allow_html=True)
@@ -386,7 +387,7 @@ with tab_ov:
             xaxis=dict(showgrid=False),
             showlegend=False,
         )
-        st.plotly_chart(fig_tr, use_container_width=True, config=PLOTLY_CONFIG)
+        st.plotly_chart(fig_tr, width="stretch", config=PLOTLY_CONFIG)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -436,7 +437,7 @@ with tab_port:
                 "Weight": [f"{w:.1%}" for w in wts],
                 "Sector": [EQUITY_SECTOR_MAP.get(s, "Other") for s in syms],
             })
-            st.dataframe(tbl_pd, use_container_width=True, hide_index=True, height=220)
+            st.dataframe(tbl_pd, width="stretch", hide_index=True, height=220)
 
         # ── Sector donut ───────────────────────────────────────────────────────
         with col_pie:
@@ -464,7 +465,7 @@ with tab_port:
                     showlegend=False,
                     margin=dict(l=0, r=0, t=10, b=0),
                 )
-                st.plotly_chart(fig_pie, use_container_width=True, config=PLOTLY_CONFIG)
+                st.plotly_chart(fig_pie, width="stretch", config=PLOTLY_CONFIG)
 
         # ── Position weight bars ───────────────────────────────────────────────
         st.markdown(section_label("Position Weights"), unsafe_allow_html=True)
@@ -492,7 +493,7 @@ with tab_port:
             yaxis=dict(showgrid=False),
             showlegend=False,
         )
-        st.plotly_chart(fig_bars, use_container_width=True, config=PLOTLY_CONFIG)
+        st.plotly_chart(fig_bars, width="stretch", config=PLOTLY_CONFIG)
 
         # ── Weight history (if multiple rebalance dates) ───────────────────────
         if target_weights_df is not None:
@@ -518,7 +519,7 @@ with tab_port:
                     yaxis=dict(tickformat=".0%"),
                     hovermode="x unified",
                 )
-                st.plotly_chart(fig_hist, use_container_width=True, config=PLOTLY_CONFIG)
+                st.plotly_chart(fig_hist, width="stretch", config=PLOTLY_CONFIG)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -578,7 +579,7 @@ with tab_risk:
                     xaxis=dict(showgrid=False),
                     showlegend=False,
                 )
-                st.plotly_chart(fig_wf, use_container_width=True, config=PLOTLY_CONFIG)
+                st.plotly_chart(fig_wf, width="stretch", config=PLOTLY_CONFIG)
             else:
                 st.info("No portfolio loaded for stress scenarios.")
 
@@ -591,7 +592,7 @@ with tab_risk:
                     dd_df.style.map(
                         lambda v: f"color:{COLORS['negative']}" if isinstance(v, str) and "%" in v and "-" in v else "",
                     ),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                     height=290,
                 )
@@ -639,7 +640,7 @@ with tab_risk:
         fig_rv.update_yaxes(tickformat=".1%", row=1, col=1)
         fig_rv.update_yaxes(tickformat=".1%", row=2, col=1)
         fig_rv.update_layout(hovermode="x unified")
-        st.plotly_chart(fig_rv, use_container_width=True, config=PLOTLY_CONFIG)
+        st.plotly_chart(fig_rv, width="stretch", config=PLOTLY_CONFIG)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -680,7 +681,7 @@ with tab_analytics:
             height=max(180, 38 * len(pivot)),
             yaxis=dict(autorange="reversed"),
         )
-        st.plotly_chart(fig_hm, use_container_width=True, config=PLOTLY_CONFIG)
+        st.plotly_chart(fig_hm, width="stretch", config=PLOTLY_CONFIG)
 
         col_dist, col_corr = st.columns([1, 1])
 
@@ -725,7 +726,7 @@ with tab_analytics:
                 yaxis=dict(title="Density"),
                 bargap=0.05,
             )
-            st.plotly_chart(fig_dist, use_container_width=True, config=PLOTLY_CONFIG)
+            st.plotly_chart(fig_dist, width="stretch", config=PLOTLY_CONFIG)
 
         # ── Correlation matrix ─────────────────────────────────────────────────
         with col_corr:
@@ -760,7 +761,7 @@ with tab_analytics:
                         height=300,
                         yaxis=dict(autorange="reversed"),
                     )
-                    st.plotly_chart(fig_corr, use_container_width=True, config=PLOTLY_CONFIG)
+                    st.plotly_chart(fig_corr, width="stretch", config=PLOTLY_CONFIG)
                 else:
                     st.info("Price data unavailable for correlation.")
             else:
@@ -796,6 +797,6 @@ with tab_analytics:
 
         apply_subplot_theme(fig_ra, height=380)
         fig_ra.update_layout(hovermode="x unified", showlegend=True)
-        st.plotly_chart(fig_ra, use_container_width=True, config=PLOTLY_CONFIG)
+        st.plotly_chart(fig_ra, width="stretch", config=PLOTLY_CONFIG)
 
 st.caption("QuantPipe — for research and paper trading only. Not investment advice.")

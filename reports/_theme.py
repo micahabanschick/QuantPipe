@@ -89,7 +89,7 @@ def apply_theme(fig, title: str = "", height: int | None = None,
         layout["height"] = height
     if legend_inside:
         layout["legend"] = dict(
-            bgcolor=COLORS["card_bg"] + "cc",
+            bgcolor="rgba(26,31,46,0.85)",
             bordercolor=COLORS["border"],
             font=dict(color=COLORS["neutral"], size=11),
             x=0.01, y=0.99,
