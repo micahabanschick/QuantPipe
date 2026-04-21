@@ -198,12 +198,12 @@ def _block_bootstrap(returns: np.ndarray, n_out: int, block_size: int, rng: np.r
     return path
 
 
+_LOG_CAP = np.log(1e6)   # cap individual paths at 1 000 000× initial capital
+
+
 def _build_equity(rets: np.ndarray, capital: float) -> np.ndarray:
-    # Use log-cumsum to prevent float64 overflow from cumprod.
-    # Cap at exp(100) ≈ 2.7e43 × capital — effectively caps runaway paths
-    # while preserving all realistic outcomes.
     log_gross = np.log(np.clip(1.0 + rets, 1e-10, None))
-    log_cum   = np.clip(np.cumsum(log_gross), None, 100.0)
+    log_cum   = np.clip(np.cumsum(log_gross), None, _LOG_CAP)
     eq        = np.empty(len(rets) + 1)
     eq[0]     = capital
     eq[1:]    = capital * np.exp(log_cum)
@@ -293,6 +293,25 @@ def run(returns: np.ndarray, config: MCConfig) -> MCResult:
             f"percentage format (e.g. 5.0 for 5 %). "
             f"Check 'Returns are in % format (÷ 100)' to auto-convert, "
             f"or divide your CSV column by 100 before uploading."
+        )
+
+    # Detect plausible-looking but still unrealistic returns (e.g. 9% per day).
+    # Even if each individual return passes the > 2.0 filter, compounding
+    # over many periods can still produce astronomically wrong results.
+    # Threshold: geometric mean compounds to > 1 000× over the full series.
+    mean_log   = float(np.mean(np.log(np.clip(1.0 + returns, 1e-10, None))))
+    log_mult   = mean_log * n                 # log of expected terminal multiple
+    if log_mult > np.log(1e3):               # > 1 000× initial capital
+        cagr_daily  = (np.exp(mean_log * 252) - 1.0) * 100
+        cagr_monthly= (np.exp(mean_log * 12)  - 1.0) * 100
+        raise ValueError(
+            f"Mean per-period return is {float(np.mean(returns)):.4%} over {n:,} periods, "
+            f"implying a ×{np.exp(log_mult):.2e} total return — "
+            f"not physically plausible.\n\n"
+            f"If daily  → implied CAGR ≈ {cagr_daily:.0f}%\n"
+            f"If monthly → implied CAGR ≈ {cagr_monthly:.0f}%\n\n"
+            f"Most likely cause: the return column is in percentage format "
+            f"(e.g. 8.98 for a 8.98 % gain). Enable the '÷ 100' checkbox and re-run."
         )
 
     C      = config
