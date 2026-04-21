@@ -102,21 +102,24 @@ def _load_target_weights(as_of: date) -> dict[str, float]:
     return weights
 
 
-def _build_broker(broker_name: str):
+def _build_broker(broker_name: str, ibkr_host: str | None = None,
+                  ibkr_port: int | None = None, ibkr_client_id: int | None = None,
+                  ibkr_is_paper: bool = True):
     """Construct the appropriate broker adapter."""
     if broker_name == "paper":
         from execution.paper_broker import PaperBroker
         return PaperBroker(initial_cash=100_000.0)
 
     elif broker_name == "ibkr":
-        from config.settings import IBKR_CLIENT_ID, IBKR_HOST, IBKR_PORT
+        from config.settings import IBKR_CLIENT_ID, IBKR_HOST, IBKR_PAPER, IBKR_PORT
         from execution.ibkr_adapter import IBKRAdapter
-        return IBKRAdapter(
-            host=IBKR_HOST or "127.0.0.1",
-            port=int(IBKR_PORT or 7497),
-            client_id=int(IBKR_CLIENT_ID or 1),
-            is_paper=True,
-        )
+        host = ibkr_host or IBKR_HOST or "127.0.0.1"
+        port = ibkr_port or int(IBKR_PORT or 4002)
+        cid  = ibkr_client_id if ibkr_client_id is not None else int(IBKR_CLIENT_ID or 1)
+        is_paper = ibkr_is_paper
+        mode = "paper" if is_paper else "LIVE"
+        log.info(f"Building IBKR adapter: {host}:{port} client_id={cid} mode={mode}")
+        return IBKRAdapter(host=host, port=port, client_id=cid, is_paper=is_paper)
 
     elif broker_name == "ccxt":
         from config.settings import KRAKEN_API_KEY, KRAKEN_API_SECRET
@@ -147,11 +150,17 @@ def run_rebalance(
     broker_name: str = "paper",
     dry_run: bool = False,
     as_of: date | None = None,
+    ibkr_host: str | None = None,
+    ibkr_port: int | None = None,
+    ibkr_client_id: int | None = None,
+    ibkr_is_paper: bool = True,
 ) -> int:
     check_halt()   # abort immediately if QP_HALT file exists
 
     today = as_of or date.today()
-    log.info(f"======== Rebalance | {today} | broker={broker_name} | dry_run={dry_run} ========")
+    mode = "paper" if ibkr_is_paper else "LIVE"
+    log.info(f"======== Rebalance | {today} | broker={broker_name} "
+             f"| mode={mode} | dry_run={dry_run} ========")
 
     # 1. Load target weights
     try:
@@ -161,7 +170,9 @@ def run_rebalance(
         return 2
 
     # 2. Connect to broker
-    broker = _build_broker(broker_name)
+    broker = _build_broker(broker_name,
+                          ibkr_host=ibkr_host, ibkr_port=ibkr_port,
+                          ibkr_client_id=ibkr_client_id, ibkr_is_paper=ibkr_is_paper)
     try:
         if hasattr(broker, "connect"):
             broker.connect()
@@ -279,8 +290,22 @@ def main() -> None:
     parser.add_argument("--broker", choices=["paper", "ibkr", "ccxt"], default="paper")
     parser.add_argument("--dry-run", action="store_true", help="Compute orders but do not place")
     parser.add_argument("--date", type=date.fromisoformat, default=None)
+    # IBKR-specific overrides (used by portfolio dashboard subprocess calls)
+    parser.add_argument("--ibkr-host",      default=None, help="Override IBKR host")
+    parser.add_argument("--ibkr-port",      type=int, default=None, help="Override IBKR port")
+    parser.add_argument("--ibkr-client-id", type=int, default=None, help="Override IBKR client ID")
+    parser.add_argument("--ibkr-live",      action="store_true",
+                        help="Use live IBKR account (default: paper)")
     args = parser.parse_args()
-    sys.exit(run_rebalance(args.broker, args.dry_run, args.date))
+    sys.exit(run_rebalance(
+        broker_name=args.broker,
+        dry_run=args.dry_run,
+        as_of=args.date,
+        ibkr_host=args.ibkr_host,
+        ibkr_port=args.ibkr_port,
+        ibkr_client_id=args.ibkr_client_id,
+        ibkr_is_paper=not args.ibkr_live,
+    ))
 
 
 if __name__ == "__main__":
