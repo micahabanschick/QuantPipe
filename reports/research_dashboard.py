@@ -31,6 +31,7 @@ from research.factor_analysis import (
     factor_pivot_from_features, price_pivot_from_bars,
 )
 from research.walk_forward_runner import WFVConfig, fold_summary, oos_equity_normalised, run as run_wfv
+from research.monte_carlo import MCConfig, load_returns_csv, run as run_mc
 from storage.parquet_store import load_bars
 from storage.universe import universe_as_of_date
 from features.compute import load_features
@@ -112,8 +113,8 @@ if _symbols:
     with st.spinner("Loading features…"):
         features_df = _features(_symbols, str(_start), str(_end))
 
-tab_scanner, tab_factor, tab_signal_analysis, tab_wfv = st.tabs(
-    ["  Signal Scanner  ", "  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  "]
+tab_scanner, tab_factor, tab_signal_analysis, tab_wfv, tab_mc = st.tabs(
+    ["  Signal Scanner  ", "  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  "]
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -673,5 +674,304 @@ with tab_wfv:
             fig_cb.update_layout(height=240, title="OOS CAGR by Fold",
                                   yaxis=dict(tickformat=".0%", showgrid=False), xaxis=dict(showgrid=False), showlegend=False)
             st.plotly_chart(fig_cb, width="stretch", config=PLOTLY_CONFIG)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — MONTE CARLO BOOTSTRAP
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_mc:
+    st.markdown(section_label("Monte Carlo Block-Bootstrap Analysis"), unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="color:{COLORS["neutral"]};font-size:0.83rem;margin-bottom:14px;">'
+        "Upload a CSV of trade returns or an equity curve to run circular block-bootstrap "
+        "analysis across 10 000+ simulated paths. Covers: equity fan chart · metric "
+        "distributions · terminal wealth · convergence diagnostics · rolling Sharpe stability."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Config ────────────────────────────────────────────────────────────────
+    mc_col1, mc_col2, mc_col3, mc_col4 = st.columns(4)
+    with mc_col1:
+        mc_n_sims   = st.selectbox("Simulations", [1_000, 5_000, 10_000, 25_000],
+                                    index=2, format_func=lambda x: f"{x:,}")
+    with mc_col2:
+        mc_block    = st.slider("Block size", 3, 63, 10,
+                                help="Block length for circular block bootstrap (match rebalance cadence)")
+    with mc_col3:
+        mc_ppyr     = st.selectbox("Periods / year",
+                                    [252, 52, 26, 12],
+                                    format_func=lambda x: {252:"Daily (252)",52:"Weekly (52)",
+                                                            26:"Biweekly (26)",12:"Monthly (12)"}[x])
+    with mc_col4:
+        mc_capital  = st.number_input("Initial capital ($)", min_value=1_000,
+                                       max_value=10_000_000, value=100_000, step=1_000)
+
+    mc_t_col1, mc_t_col2, mc_t_col3 = st.columns(3)
+    mc_target_sharpe = mc_t_col1.number_input("Target Sharpe", value=1.0, step=0.1, format="%.1f")
+    mc_target_calmar = mc_t_col2.number_input("Target Calmar", value=0.5, step=0.1, format="%.1f")
+    mc_target_dd     = mc_t_col3.number_input("Max DD target (e.g. −0.20)", value=-0.20, step=0.05, format="%.2f")
+
+    # ── File upload ───────────────────────────────────────────────────────────
+    mc_file      = st.file_uploader(
+        "Upload CSV (trade log or equity curve)",
+        type=["csv"],
+        help=(
+            "Accepted formats:\n"
+            "• QC trade log — columns: Entry Price, Exit Price, P&L, Exit Time\n"
+            "• Return series — column named 'return', 'returns', or 'ret'\n"
+            "• Equity curve — column named 'equity', 'value', 'nav', etc."
+        ),
+    )
+    mc_is_equity = st.checkbox("CSV is an equity curve (not trade/return series)", value=False)
+
+    mc_run = st.button("▶ Run Monte Carlo", type="primary", disabled=mc_file is None)
+    _mc_key = f"mc_result_{mc_n_sims}_{mc_block}_{mc_ppyr}_{mc_capital}"
+
+    if mc_run and mc_file is not None:
+        with st.spinner(f"Running {mc_n_sims:,} bootstrap simulations…"):
+            try:
+                import io, tempfile, os
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+                    tmp.write(mc_file.getvalue())
+                    tmp_path = tmp.name
+                rets = load_returns_csv(tmp_path, from_equity=mc_is_equity, initial_capital=float(mc_capital))
+                os.unlink(tmp_path)
+
+                cfg = MCConfig(
+                    n_simulations   = mc_n_sims,
+                    block_size      = mc_block,
+                    initial_capital = float(mc_capital),
+                    periods_per_yr  = float(mc_ppyr),
+                    seed            = 42,
+                    target_sharpe   = mc_target_sharpe,
+                    target_calmar   = mc_target_calmar,
+                    target_max_dd   = mc_target_dd,
+                )
+                mc_result = run_mc(rets, cfg)
+                st.session_state[_mc_key] = mc_result
+            except Exception as exc:
+                st.error(f"Monte Carlo failed: {exc}")
+                mc_result = None
+    else:
+        mc_result = st.session_state.get(_mc_key)
+
+    if mc_result is None:
+        if mc_file is None:
+            st.info("Upload a CSV then click **▶ Run Monte Carlo**.")
+        st.stop()
+
+    r = mc_result
+
+    # ── Return series stats ───────────────────────────────────────────────────
+    st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
+    rs1, rs2, rs3, rs4, rs5, rs6 = st.columns(6)
+    rs1.markdown(kpi_card("Periods",    str(r.n_periods),          accent=COLORS["neutral"]),  unsafe_allow_html=True)
+    rs2.markdown(kpi_card("Mean Ret",   f"{r.ret_mean:.5f}",       accent=COLORS["blue"]),     unsafe_allow_html=True)
+    rs3.markdown(kpi_card("Std Dev",    f"{r.ret_std:.5f}",        accent=COLORS["neutral"]),  unsafe_allow_html=True)
+    rs4.markdown(kpi_card("Skew",       f"{r.ret_skew:.3f}",       accent=COLORS["warning"]),  unsafe_allow_html=True)
+    rs5.markdown(kpi_card("Kurt",       f"{r.ret_kurt:.3f}",       accent=COLORS["warning"]),  unsafe_allow_html=True)
+    rs6.markdown(kpi_card("Block Size", str(r.block_size),         accent=COLORS["neutral"]),  unsafe_allow_html=True)
+
+    st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
+
+    # ── Section A: Equity Fan Chart ────────────────────────────────────────────
+    st.markdown(section_label("Equity Fan Chart"), unsafe_allow_html=True)
+
+    fig_fan = go.Figure()
+    fig_fan.add_traces([
+        go.Scatter(x=r.fan_x, y=r.fan_p5,  line=dict(width=0), showlegend=False, hoverinfo="skip"),
+        go.Scatter(x=r.fan_x, y=r.fan_p95, fill="tonexty", fillcolor="rgba(38,120,178,0.08)",
+                   line=dict(width=0), name="5th–95th", showlegend=True),
+        go.Scatter(x=r.fan_x, y=r.fan_p10, line=dict(width=0), showlegend=False, hoverinfo="skip"),
+        go.Scatter(x=r.fan_x, y=r.fan_p90, fill="tonexty", fillcolor="rgba(38,120,178,0.12)",
+                   line=dict(width=0), name="10th–90th", showlegend=True),
+        go.Scatter(x=r.fan_x, y=r.fan_p25, line=dict(width=0), showlegend=False, hoverinfo="skip"),
+        go.Scatter(x=r.fan_x, y=r.fan_p75, fill="tonexty", fillcolor="rgba(38,120,178,0.20)",
+                   line=dict(width=0), name="25th–75th", showlegend=True),
+        go.Scatter(x=r.fan_x, y=r.fan_p50, line=dict(color=COLORS["blue"], width=2),
+                   name="Median", hovertemplate="Period %{x}: $%{y:,.0f}<extra>Median</extra>"),
+        go.Scatter(x=r.fan_x, y=r.orig_equity, line=dict(color=COLORS["warning"], width=1.5, dash="dash"),
+                   name="Original", hovertemplate="Period %{x}: $%{y:,.0f}<extra>Original</extra>"),
+    ])
+    apply_theme(fig_fan, legend_inside=False)
+    fig_fan.update_layout(
+        height=320,
+        yaxis=dict(tickprefix="$", tickformat=",.0f"),
+        xaxis=dict(title="Period"),
+    )
+    st.plotly_chart(fig_fan, width="stretch", config=PLOTLY_CONFIG)
+
+    # ── Section B: Terminal Wealth + Metric Distributions ─────────────────────
+    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Terminal Wealth & Metric Distributions"), unsafe_allow_html=True)
+
+    # KPIs
+    tw1, tw2, tw3, tw4, tw5 = st.columns(5)
+    tw1.markdown(kpi_card("P(Losing Money)",   f"{r.p_loss:.1%}",      accent=COLORS["negative"]), unsafe_allow_html=True)
+    tw2.markdown(kpi_card("P(Loss > 25 %)",    f"{r.p_loss_25pct:.1%}", accent=COLORS["negative"]), unsafe_allow_html=True)
+    tw3.markdown(kpi_card("P(Doubling)",        f"{r.p_double:.1%}",    accent=COLORS["positive"]), unsafe_allow_html=True)
+    tw4.markdown(kpi_card("Median Final",       f"${r.terminal_percentiles[50]:,.0f}", accent=COLORS["blue"]), unsafe_allow_html=True)
+    tw5.markdown(kpi_card("P5 Final",           f"${r.terminal_percentiles[5]:,.0f}",  accent=COLORS["neutral"]), unsafe_allow_html=True)
+
+    st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
+
+    # Metric distribution charts (2 × 2)
+    _mc_dist_panels = [
+        ("Sharpe Ratio",    r.sharpe_dist,   r.orig_sharpe,  COLORS["teal"],     mc_target_sharpe, "≥"),
+        ("Calmar Ratio",    r.calmar_dist,   r.orig_calmar,  COLORS["blue"],     mc_target_calmar, "≥"),
+        ("Max Drawdown",    [v*100 for v in r.max_dd_dist], r.orig_max_dd*100, COLORS["negative"], mc_target_dd*100, "≥"),
+        ("Ann. Volatility", [v*100 for v in r.ann_vol_dist], r.orig_ann_vol*100, COLORS["neutral"], None, None),
+    ]
+    dist_row1, dist_row2 = st.columns(2), st.columns(2)
+    for panel_idx, (title, dist, orig_val, color, target_val, direction) in enumerate(_mc_dist_panels):
+        col = (dist_row1 if panel_idx < 2 else dist_row2)[panel_idx % 2]
+        with col:
+            med = float(np.median(dist))
+            fig_d = go.Figure()
+            fig_d.add_trace(go.Histogram(
+                x=dist, nbinsx=80,
+                marker=dict(color=color, line=dict(width=0)), opacity=0.65,
+                name="Bootstrap", histnorm="probability density",
+                hovertemplate="%{x:.3f}: %{y:.4f}<extra></extra>",
+            ))
+            fig_d.add_vline(x=med, line=dict(color=COLORS["text"], width=1.5, dash="dash"),
+                            annotation_text=f"Med {med:.2f}", annotation_font_size=9)
+            fig_d.add_vline(x=orig_val, line=dict(color=COLORS["warning"], width=2),
+                            annotation_text=f"Actual {orig_val:.2f}", annotation_font_size=9,
+                            annotation_position="top left")
+            if target_val is not None:
+                fig_d.add_vline(x=target_val, line=dict(color=COLORS["neutral"], width=1, dash="dot"),
+                                annotation_text=f"Target {target_val:.1f}", annotation_font_size=8)
+                if direction == "≥":
+                    prob = float((np.array(dist) >= target_val).mean())
+                else:
+                    prob = float((np.array(dist) <= target_val).mean())
+                title_full = f"{title}  (P = {prob:.1%})"
+            else:
+                title_full = title
+            apply_theme(fig_d, legend_inside=True)
+            fig_d.update_layout(
+                height=240, title=dict(text=title_full, font=dict(size=11)),
+                showlegend=False, bargap=0.02,
+            )
+            st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CONFIG)
+
+    # ── Section C: Target Achievement ─────────────────────────────────────────
+    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Joint Target Achievement"), unsafe_allow_html=True)
+
+    tc1, tc2, tc3, tc4 = st.columns(4)
+    tc1.markdown(kpi_card(f"P(Sharpe ≥ {mc_target_sharpe:.1f})",    f"{r.p_meets_sharpe:.1%}",  accent=COLORS["teal"]),     unsafe_allow_html=True)
+    tc2.markdown(kpi_card(f"P(Calmar ≥ {mc_target_calmar:.1f})",    f"{r.p_meets_calmar:.1%}",  accent=COLORS["blue"]),     unsafe_allow_html=True)
+    tc3.markdown(kpi_card(f"P(Max DD ≥ {mc_target_dd:.0%})",        f"{r.p_meets_max_dd:.1%}",  accent=COLORS["warning"]),  unsafe_allow_html=True)
+    tc4.markdown(kpi_card("P(All Three)",                             f"{r.p_meets_all:.1%}",     accent=COLORS["positive"]), unsafe_allow_html=True)
+
+    # Horizontal bar chart
+    target_labels = [
+        f"Sharpe ≥ {mc_target_sharpe:.1f}",
+        f"Calmar ≥ {mc_target_calmar:.1f}",
+        f"Max DD ≥ {mc_target_dd:.0%}",
+        "Any Two",
+        "All Three",
+    ]
+    target_probs = [
+        r.p_meets_sharpe * 100,
+        r.p_meets_calmar * 100,
+        r.p_meets_max_dd * 100,
+        r.p_meets_any_two * 100,
+        r.p_meets_all * 100,
+    ]
+    bar_colors_t = [
+        COLORS["teal"], COLORS["blue"], COLORS["warning"], COLORS["neutral"], COLORS["positive"]
+    ]
+    fig_target = go.Figure(go.Bar(
+        x=target_probs, y=target_labels, orientation="h",
+        marker=dict(color=bar_colors_t, line=dict(width=0)), opacity=0.75,
+        text=[f"{v:.1f} %" for v in target_probs], textposition="outside",
+        textfont=dict(size=11, color=COLORS["text"]),
+        hovertemplate="<b>%{y}</b>: %{x:.1f}%<extra></extra>",
+    ))
+    apply_theme(fig_target)
+    fig_target.update_layout(
+        height=220, xaxis=dict(range=[0, 105], title="Probability (%)", showgrid=False),
+        yaxis=dict(showgrid=False), showlegend=False,
+    )
+    st.plotly_chart(fig_target, width="stretch", config=PLOTLY_CONFIG)
+
+    # ── Section D: Rolling Sharpe Stability ───────────────────────────────────
+    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    st.markdown(section_label(f"Rolling Sharpe Stability (window = {r.rolling_window} periods)"), unsafe_allow_html=True)
+
+    fig_roll = go.Figure()
+    fig_roll.add_traces([
+        go.Scatter(x=r.rolling_x, y=r.rolling_p10, line=dict(width=0), showlegend=False, hoverinfo="skip"),
+        go.Scatter(x=r.rolling_x, y=r.rolling_p90, fill="tonexty", fillcolor="rgba(38,120,178,0.10)",
+                   line=dict(width=0), name="10th–90th"),
+        go.Scatter(x=r.rolling_x, y=r.rolling_p50, line=dict(color=COLORS["blue"], width=1.5), name="Median"),
+        go.Scatter(x=r.rolling_x, y=r.rolling_orig, line=dict(color=COLORS["warning"], width=1.5, dash="dash"),
+                   name="Original"),
+    ])
+    fig_roll.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+    fig_roll.add_hline(y=mc_target_sharpe, line=dict(color=COLORS["neutral"], width=1, dash="dot"),
+                       annotation_text=f"Target {mc_target_sharpe:.1f}", annotation_font_size=8)
+    apply_theme(fig_roll, legend_inside=True)
+    fig_roll.update_layout(height=280, xaxis=dict(title="Period"), yaxis=dict(title="Annualized Sharpe"))
+    st.plotly_chart(fig_roll, width="stretch", config=PLOTLY_CONFIG)
+
+    # ── Section E: Convergence ────────────────────────────────────────────────
+    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Convergence Diagnostics"), unsafe_allow_html=True)
+
+    cv_col1, cv_col2 = st.columns(2)
+    with cv_col1:
+        fig_cv1 = go.Figure()
+        fig_cv1.add_traces([
+            go.Scatter(x=r.conv_n, y=r.conv_p5,  line=dict(color=COLORS["neutral"], width=1, dash="dot"),  name="P5"),
+            go.Scatter(x=r.conv_n, y=r.conv_p50, line=dict(color=COLORS["blue"],    width=2),              name="P50"),
+            go.Scatter(x=r.conv_n, y=r.conv_p95, line=dict(color=COLORS["neutral"], width=1, dash="dot"),  name="P95"),
+        ])
+        apply_theme(fig_cv1, legend_inside=True)
+        fig_cv1.update_layout(
+            height=240, title="Terminal Equity Percentiles vs Simulation Count",
+            xaxis=dict(type="log", title="# Simulations"),
+            yaxis=dict(tickprefix="$", tickformat=",.0f"),
+        )
+        st.plotly_chart(fig_cv1, width="stretch", config=PLOTLY_CONFIG)
+
+    with cv_col2:
+        fig_cv2 = go.Figure(go.Scatter(
+            x=r.conv_n, y=r.conv_sharpe_p50,
+            line=dict(color=COLORS["teal"], width=2), name="Sharpe P50",
+        ))
+        apply_theme(fig_cv2, legend_inside=True)
+        fig_cv2.update_layout(
+            height=240, title="Median Sharpe vs Simulation Count",
+            xaxis=dict(type="log", title="# Simulations"),
+            yaxis=dict(title="Sharpe (median)"),
+        )
+        st.plotly_chart(fig_cv2, width="stretch", config=PLOTLY_CONFIG)
+
+    # ── Section F: Summary Table ──────────────────────────────────────────────
+    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Summary Table"), unsafe_allow_html=True)
+
+    _sum_df = pd.DataFrame(r.summary_rows)
+    _sum_display = _sum_df.copy()
+    for c in ["sharpe", "calmar", "sortino"]:
+        if c in _sum_display.columns:
+            _sum_display[c] = _sum_display[c].apply(lambda v: f"{v:.3f}")
+    for c in ["max_dd", "ann_vol"]:
+        if c in _sum_display.columns:
+            _sum_display[c] = _sum_display[c].apply(lambda v: f"{v:.2%}")
+    if "final_equity" in _sum_display.columns:
+        _sum_display["final_equity"] = _sum_display["final_equity"].apply(lambda v: f"${v:,.0f}")
+    _sum_display.columns = [
+        {"sharpe": "Sharpe", "calmar": "Calmar", "max_dd": "Max DD",
+         "sortino": "Sortino", "ann_vol": "Ann. Vol", "final_equity": "Final Equity",
+         "Percentile": "Percentile"}.get(c, c)
+        for c in _sum_display.columns
+    ]
+    st.dataframe(_sum_display, width="stretch", hide_index=True)
 
 st.caption("QuantPipe — for research and paper trading only. Not investment advice.")
