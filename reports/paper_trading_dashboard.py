@@ -68,7 +68,7 @@ def _load_deployment_events() -> list[dict]:
             e = json.loads(line)
             slugs = [s["slug"] for s in e.get("strategies", [])]
             e["label"] = f"v{e['version']}: {', '.join(slugs)}"
-            e["ts"] = pd.Timestamp(e["timestamp"])
+            e["ts"] = pd.Timestamp(e["timestamp"]).tz_convert(None)  # make tz-naive
             events.append(e)
         except Exception:
             pass
