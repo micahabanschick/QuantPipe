@@ -4,7 +4,9 @@ An end-to-end quantitative finance pipeline for systematic equity and crypto tra
 
 **Stack:** Python 3.13 · Polars · DuckDB · Parquet · VectorBT · cvxpy · PyPortfolioOpt · Streamlit · IBKR · CCXT · `uv`
 
-**Status:** Phases 0–6 complete. Paper trading loop is live. 145 tests passing.
+**Status:** Phases 0–6 complete. Pipeline running with live data. 145 tests passing.
+
+**Live results (canary, 6-year backtest):** Sharpe 1.036 · CAGR 17.1% · Max DD −14.3%
 
 ---
 
@@ -420,12 +422,22 @@ uv run python orchestration/rebalance.py --broker paper --dry-run
 uv run python orchestration/rebalance.py --broker ibkr
 ```
 
-**Cron setup (runs at 6am ET weekdays):**
+**Windows Task Scheduler setup (run once):**
 
-```cron
-0 6 * * 1-5 cd /path/to/QuantPipe && .venv/Scripts/python.exe orchestration/run_pipeline.py >> logs/pipeline.log 2>&1
-30 16 * * 1-5 cd /path/to/QuantPipe && .venv/Scripts/python.exe orchestration/rebalance.py --broker paper >> logs/rebalance.log 2>&1
+```bash
+# Registers two tasks: DailyPipeline at 06:15 and DailyRebalance at 16:30, Mon–Fri
+uv run python orchestration/setup_scheduler.py
+
+# Verify
+schtasks /Query /TN "QuantPipe\DailyPipeline" /FO LIST
+schtasks /Query /TN "QuantPipe\DailyRebalance" /FO LIST
+
+# Remove
+uv run python orchestration/setup_scheduler.py --remove
 ```
+
+The scheduler calls `orchestration/run_pipeline.bat` and `orchestration/run_rebalance.bat`,
+which are thin wrappers that `cd` to the project directory and redirect output to `logs/`.
 
 **Individual steps:**
 
@@ -531,7 +543,7 @@ cp .env.example .env
 
 ```bash
 uv run python orchestration/backfill_history.py
-# Takes 5–15 minutes. Required before running signals or backtests.
+# Takes 5–15 minutes. Populates data/bronze/ for all 26 ETFs and 9 crypto symbols.
 ```
 
 ### Compute gold-layer features
@@ -541,30 +553,46 @@ uv run python features/compute.py
 # Writes pre-computed features to data/gold/equity/features/
 ```
 
+### Generate first signal snapshot
+
+```bash
+uv run python orchestration/generate_signals.py
+# Creates data/gold/equity/target_weights.parquet and portfolio_log.parquet
+# Required before launching the dashboards.
+```
+
+### Register automated daily tasks (Windows)
+
+```bash
+uv run python orchestration/setup_scheduler.py
+# Registers QuantPipe\DailyPipeline (06:15) and QuantPipe\DailyRebalance (16:30)
+```
+
 ---
 
 ## Running the Pipeline
 
-### Validate the full pipeline end-to-end
+### Validate end-to-end
 
 ```bash
 uv run python backtest/canary.py
-# Expected: Sharpe 0.5–1.5. Prints tearsheet + risk report.
+# Expected: Sharpe 0.5–1.5. Prints full tearsheet + risk report.
+# Confirmed result: Sharpe 1.036, CAGR 17.1%, Max DD -14.3%
 ```
 
 ### Daily operations
 
 ```bash
-# 1. Ingest + features + signals (run at market open or overnight)
+# 1. Ingest + features + signals (automated via Task Scheduler at 06:15)
 uv run python orchestration/run_pipeline.py
 
-# 2. Rebalance at market close (paper mode — no real orders)
+# 2. Paper rebalance at market close (automated via Task Scheduler at 16:30)
 uv run python orchestration/rebalance.py --broker paper
 
-# 3. Check health dashboard
+# 3. Health dashboard
 streamlit run reports/health_dashboard.py
 
-# 4. Review performance
+# 4. Performance dashboard
 streamlit run reports/performance_dashboard.py
 ```
 
@@ -585,8 +613,8 @@ uv run pytest --ignore=tests/test_adapters.py   # fast, no network
 | **2 — Data quality + features** | Adjustments, universe-as-of-date, 5 factors, snapshot tests | Complete |
 | **3 — Backtest + first signal** | Canary strategy: Sharpe ~1.0, walk-forward validated | Complete |
 | **4 — Portfolio + risk** | Ledoit-Wolf, 5 optimizer methods, VaR, pre-trade checks, stress scenarios | Complete |
-| **5 — Reporting + orchestration** | Two Streamlit dashboards, cron chain, Pushover alerts | Complete |
-| **6 — Paper trading** | Trader, IBKRAdapter, CCXTBroker, reconciler, rebalance script | Complete |
+| **5 — Reporting + orchestration** | Two Streamlit dashboards, Task Scheduler automation, Pushover alerts | Complete |
+| **6 — Paper trading** | Trader, IBKRAdapter, CCXTBroker, reconciler, rebalance script, Task Scheduler live | Complete |
 | **7 — Go live** | Gate: 4 weeks green paper trading, implementation gap < 25% of Sharpe | Pending |
 | **8 — Expand** | Paid data, additional strategies, scale capital | Future |
 

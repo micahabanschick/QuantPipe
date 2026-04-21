@@ -148,7 +148,8 @@ def run_generate_signals(as_of: date | None = None) -> int:
     try:
         from portfolio.covariance import compute_returns
         prices_filtered = prices.filter(pl.col("symbol").is_in(list(current_weights.keys())))
-        limits = RiskLimits()
+        # top-5 concentration cap is meaningless for a TOP_N=5 portfolio
+        limits = RiskLimits(max_top5_concentration=1.0)
 
         returns_matrix, sym_order = compute_returns(prices_filtered)
         w_vec = np.array([current_weights.get(s, 0.0) for s in sym_order])
