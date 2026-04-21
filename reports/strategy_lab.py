@@ -1,12 +1,14 @@
-"""Strategy Lab — code editor, strategy selector, and backtest runner."""
+"""Strategy Lab — code editor, backtester, parameter sweep, and walk-forward validation."""
 
 import importlib.util
 import json
 import re
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -22,9 +24,9 @@ from reports._theme import (
     status_banner,
 )
 
-_ROOT       = Path(__file__).parent.parent
-_STRAT_DIR  = _ROOT / "strategies"
-_ACE_THEME  = "tomorrow_night"
+_ROOT      = Path(__file__).parent.parent
+_STRAT_DIR = _ROOT / "strategies"
+_ACE_THEME = "tomorrow_night"
 
 _ACE_LANG: dict[str, str] = {
     ".py":   "python",
@@ -36,69 +38,52 @@ _ACE_LANG: dict[str, str] = {
     ".yml":  "yaml",
 }
 
-# ── Templates ─────────────────────────────────────────────────────────────────
+_MONTH_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
-_PY_TEMPLATE = '''\
-"""{name} — {description}
 
-Strategy interface (required by tools/backtest_runner.py):
-  NAME          : displayed in the Strategy Lab selector
-  DESCRIPTION   : one-line summary
-  DEFAULT_PARAMS: fallback values used when the UI does not override them
-  get_signal()  : (features, rebal_dates, **params) -> signal DataFrame
-  get_weights() : (signal, **params) -> weights DataFrame
-"""
+# ── Strategy templates ────────────────────────────────────────────────────────
+
+_PY_TEMPLATE = """\
+\"\"\"{name} — {description}
+
+Required interface (tools/backtest_runner.py):
+  NAME, DESCRIPTION, DEFAULT_PARAMS, get_signal(), get_weights()
+\"\"\"
 
 import polars as pl
-
 from signals.momentum import cross_sectional_momentum, momentum_weights
 
-NAME = "{name}"
+NAME        = "{name}"
 DESCRIPTION = "{description}"
 DEFAULT_PARAMS = {{
     "lookback_years": 6,
-    "top_n": 5,
-    "cost_bps": 5.0,
-    "weight_scheme": "equal",
+    "top_n":          5,
+    "cost_bps":       5.0,
+    "weight_scheme":  "equal",
 }}
 
 
-def get_signal(
-    features: pl.DataFrame,
-    rebal_dates: list,
-    top_n: int = DEFAULT_PARAMS["top_n"],
-    **kwargs,
-) -> pl.DataFrame:
-    """Rank symbols by 12-1 momentum and select the top_n on each rebalance date."""
+def get_signal(features, rebal_dates, top_n=DEFAULT_PARAMS["top_n"], **kwargs):
     return cross_sectional_momentum(features, rebal_dates, top_n=top_n)
 
 
-def get_weights(
-    signal: pl.DataFrame,
-    weight_scheme: str = DEFAULT_PARAMS["weight_scheme"],
-    **kwargs,
-) -> pl.DataFrame:
-    """Convert ranked signal to target weights."""
+def get_weights(signal, weight_scheme=DEFAULT_PARAMS["weight_scheme"], **kwargs):
     return momentum_weights(signal, weight_scheme=weight_scheme)
-'''
+"""
 
-_README_TEMPLATE = '''\
+_README_TEMPLATE = """\
 # {name}
 
 > {description}
-
-## Strategy Overview
-
-*(Describe the strategy logic here.)*
 
 ## Parameters
 
 | Parameter | Default | Description |
 |---|---|---|
-| `lookback_years` | 6 | Historical period used for the backtest |
-| `top_n` | 5 | Number of top-ranked ETFs to hold |
-| `cost_bps` | 5.0 | Round-trip transaction cost in basis points |
-| `weight_scheme` | equal | Position sizing — `equal` or `vol_scaled` |
+| `lookback_years` | 6 | Historical window for the backtest |
+| `top_n` | 5 | Number of ETFs held at each rebalance |
+| `cost_bps` | 5.0 | Round-trip transaction cost (basis points) |
+| `weight_scheme` | equal | `equal` or `vol_scaled` |
 
 ## Signal
 
@@ -107,17 +92,12 @@ _README_TEMPLATE = '''\
 ## Known Limitations
 
 *(List any known limitations here.)*
-
-## References
-
-*(Add references here.)*
-'''
+"""
 
 
-# ── Folder-based strategy helpers ─────────────────────────────────────────────
+# ── Folder helpers ────────────────────────────────────────────────────────────
 
 def _migrate_legacy_strategies() -> None:
-    """Wrap any top-level flat .py files (old format) into their own subfolder."""
     _STRAT_DIR.mkdir(exist_ok=True)
     for py_file in list(_STRAT_DIR.glob("*.py")):
         if py_file.name == "__init__.py":
@@ -130,18 +110,12 @@ def _migrate_legacy_strategies() -> None:
 
 
 def _list_strategies() -> list[Path]:
-    """Return strategy directories that contain at least one .py file."""
     _STRAT_DIR.mkdir(exist_ok=True)
     _migrate_legacy_strategies()
-    dirs = []
-    for d in sorted(_STRAT_DIR.iterdir()):
-        if d.is_dir() and any(d.glob("*.py")):
-            dirs.append(d)
-    return dirs
+    return [d for d in sorted(_STRAT_DIR.iterdir()) if d.is_dir() and any(d.glob("*.py"))]
 
 
 def _main_py(strategy_dir: Path) -> Path | None:
-    """The primary .py file — same name as the folder, or the first .py found."""
     preferred = strategy_dir / f"{strategy_dir.name}.py"
     if preferred.exists():
         return preferred
@@ -150,14 +124,12 @@ def _main_py(strategy_dir: Path) -> Path | None:
 
 
 def _strategy_files(strategy_dir: Path) -> list[Path]:
-    """All editable files: .py files first, then others alphabetically."""
-    pys   = sorted(strategy_dir.glob("*.py"))
-    rest  = sorted(f for f in strategy_dir.iterdir() if f.is_file() and f.suffix != ".py")
+    pys  = sorted(strategy_dir.glob("*.py"))
+    rest = sorted(f for f in strategy_dir.iterdir() if f.is_file() and f.suffix != ".py")
     return pys + rest
 
 
 def _display_name(strategy_dir: Path) -> str:
-    """Read NAME from the main .py; fall back to title-cased folder name."""
     main = _main_py(strategy_dir)
     if main:
         try:
@@ -173,7 +145,6 @@ def _display_name(strategy_dir: Path) -> str:
 
 
 def _strategy_options(dirs: list[Path]) -> dict[str, Path]:
-    """Map display label → directory Path."""
     out: dict[str, Path] = {}
     for d in dirs:
         label = _display_name(d)
@@ -194,10 +165,9 @@ def _load_file(path: Path) -> str:
         return f"# File not found: {path}\n"
 
 
-# ── Single-file editor ────────────────────────────────────────────────────────
+# ── Editor ────────────────────────────────────────────────────────────────────
 
 def _render_editor(file_path: Path) -> None:
-    """Render Ace editor + save/discard/reload bar for a single file."""
     disk_key  = f"disk__{file_path}"
     edit_key  = f"edit__{file_path}"
     dirty_key = f"dirty_{file_path}"
@@ -220,8 +190,8 @@ def _render_editor(file_path: Path) -> None:
         show_print_margin=False,
         wrap=False,
         auto_update=True,
-        min_lines=28,
-        max_lines=52,
+        min_lines=30,
+        max_lines=55,
         key=f"ace_{file_path}",
     )
 
@@ -234,10 +204,8 @@ def _render_editor(file_path: Path) -> None:
     ab1, ab2, ab3, ab4 = st.columns([2, 2, 2, 4])
     with ab1:
         save_clicked = st.button(
-            "💾 Save", use_container_width=True,
-            disabled=not dirty,
-            type="primary" if dirty else "secondary",
-            key=f"save_{file_path}",
+            "💾 Save", use_container_width=True, disabled=not dirty,
+            type="primary" if dirty else "secondary", key=f"save_{file_path}",
         )
     with ab2:
         discard_clicked = st.button(
@@ -247,8 +215,7 @@ def _render_editor(file_path: Path) -> None:
     with ab3:
         reload_clicked = st.button(
             "🔄 Reload", use_container_width=True,
-            help="Re-read from disk (discards unsaved edits)",
-            key=f"reload_{file_path}",
+            help="Re-read from disk (discards unsaved edits)", key=f"reload_{file_path}",
         )
     with ab4:
         if dirty:
@@ -293,145 +260,556 @@ def _render_editor(file_path: Path) -> None:
 def _new_strategy_dialog() -> None:
     st.markdown(
         f'<div style="color:{COLORS["neutral"]};font-size:0.82rem;margin-bottom:12px;">'
-        "Creates a new strategy folder with a Python file and a README. "
-        "Customise both in the editor after creation."
-        "</div>",
-        unsafe_allow_html=True,
+        "Creates a strategy folder with a Python file and README."
+        "</div>", unsafe_allow_html=True,
     )
-
     name = st.text_input("Strategy name", placeholder="e.g. Momentum Vol-Scaled")
-    desc = st.text_input("Description",   placeholder="One-line summary of the strategy")
-
+    desc = st.text_input("Description",   placeholder="One-line summary")
     slug = _name_to_slug(name) if name else "strategy"
     st.markdown(
         f'<div style="color:{COLORS["text_muted"]};font-size:0.75rem;margin:4px 0 12px;">'
         f'Will be saved as <code>strategies/{slug}/</code></div>',
         unsafe_allow_html=True,
     )
-
     col_create, col_cancel = st.columns(2)
     with col_create:
         create = st.button("Create", type="primary", use_container_width=True, disabled=not name)
     with col_cancel:
         if st.button("Cancel", use_container_width=True):
             st.rerun()
-
     if create and name:
         target_dir = _STRAT_DIR / slug
         if target_dir.exists():
-            st.error(f"strategies/{slug}/ already exists. Choose a different name.")
+            st.error(f"strategies/{slug}/ already exists.")
         else:
             target_dir.mkdir(parents=True)
             description = desc or "No description provided."
             (target_dir / f"{slug}.py").write_text(
-                _PY_TEMPLATE.format(name=name, description=description),
-                encoding="utf-8",
+                _PY_TEMPLATE.format(name=name, description=description), encoding="utf-8",
             )
             (target_dir / "README.md").write_text(
-                _README_TEMPLATE.format(name=name, description=description),
-                encoding="utf-8",
+                _README_TEMPLATE.format(name=name, description=description), encoding="utf-8",
             )
             st.session_state["selected_strategy"] = str(target_dir)
             st.rerun()
 
 
+# ── Strategy validator ────────────────────────────────────────────────────────
+
+def _validate_strategy(main_py: Path) -> list[str]:
+    """Return list of issues, or [] if the strategy is clean."""
+    issues = []
+    try:
+        source = main_py.read_text(encoding="utf-8")
+        compile(source, str(main_py), "exec")
+    except SyntaxError as e:
+        issues.append(f"SyntaxError line {e.lineno}: {e.msg}")
+        return issues
+
+    try:
+        spec = importlib.util.spec_from_file_location("_val", main_py)
+        mod  = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        issues.append(f"Import error: {e}")
+        return issues
+
+    for attr in ("get_signal", "get_weights"):
+        if not hasattr(mod, attr):
+            issues.append(f"Missing required function: {attr}()")
+    for attr in ("NAME", "DESCRIPTION", "DEFAULT_PARAMS"):
+        if not hasattr(mod, attr):
+            issues.append(f"Missing module attribute: {attr}")
+    dp = getattr(mod, "DEFAULT_PARAMS", {})
+    for key in ("top_n", "lookback_years", "cost_bps", "weight_scheme"):
+        if key not in dp:
+            issues.append(f"DEFAULT_PARAMS missing key: {key!r}")
+    return issues
+
+
+# ── Chart builders ────────────────────────────────────────────────────────────
+
+def _equity_fig(data: dict) -> go.Figure:
+    equity   = data.get("equity", {})
+    bench    = data.get("benchmark", {})
+    strat_nm = data.get("strategy_name", "Strategy")
+    eq_vals  = equity.get("values", [])
+    fig = go.Figure()
+    if equity.get("dates"):
+        eq_dates = pd.to_datetime(equity["dates"])
+        fig.add_trace(go.Scatter(
+            x=eq_dates, y=eq_vals, mode="lines", name=strat_nm,
+            line=dict(color=COLORS["positive"], width=2.5),
+            fill="tozeroy", fillcolor="rgba(0,212,170,0.05)",
+            hovertemplate="%{x|%b %d %Y}<br>$%{y:,.0f}<extra></extra>",
+        ))
+        if bench.get("dates") and eq_vals:
+            b_vals = bench["values"]
+            scale  = eq_vals[0] / b_vals[0] if b_vals and b_vals[0] else 1
+            fig.add_trace(go.Scatter(
+                x=pd.to_datetime(bench["dates"]), y=[v * scale for v in b_vals],
+                mode="lines", name="SPY (scaled)",
+                line=dict(color=COLORS["neutral"], width=1.5, dash="dot"),
+                hovertemplate="%{x|%b %d %Y}<br>$%{y:,.0f}<extra></extra>",
+            ))
+    apply_theme(fig, title="Equity Curve vs. SPY", height=320)
+    fig.update_layout(yaxis=dict(tickprefix="$", tickformat=",.0f"))
+    return fig
+
+
+def _rolling_fig(data: dict) -> go.Figure:
+    rs  = data.get("rolling_sharpe", {})
+    win = rs.get("window", 252)
+    fig = go.Figure()
+    if rs.get("dates"):
+        fig.add_trace(go.Scatter(
+            x=pd.to_datetime(rs["dates"]), y=rs["values"],
+            name=f"Rolling Sharpe ({win}d)",
+            line=dict(color=COLORS["info"], width=2),
+            hovertemplate="%{x|%b %Y}<br>Sharpe %{y:.2f}<extra></extra>",
+        ))
+        fig.add_hline(y=1.0, line=dict(color=COLORS["positive"], width=1, dash="dot"))
+        fig.add_hline(y=0.0, line=dict(color=COLORS["neutral"],  width=1))
+    apply_theme(fig, title=f"Rolling Sharpe ({win}-day window)", height=220)
+    return fig
+
+
+def _drawdown_fig(data: dict) -> go.Figure:
+    dd = data.get("drawdown_pct", {})
+    fig = go.Figure()
+    if dd.get("dates"):
+        fig.add_trace(go.Scatter(
+            x=pd.to_datetime(dd["dates"]), y=dd["values"],
+            fill="tozeroy", fillcolor="rgba(255,75,75,0.12)",
+            line=dict(color=COLORS["negative"], width=1.5),
+            name="Drawdown",
+            hovertemplate="%{x|%b %d %Y}<br>%{y:.1f}%<extra></extra>",
+        ))
+    apply_theme(fig, title="Drawdown from Peak", height=180)
+    fig.update_layout(yaxis=dict(ticksuffix="%"))
+    return fig
+
+
+def _monthly_heatmap_fig(monthly_data: dict) -> go.Figure | None:
+    if not monthly_data:
+        return None
+    years = sorted(monthly_data.keys())
+    z, text = [], []
+    for yr in years:
+        row_z, row_t = [], []
+        for m in _MONTH_ORDER:
+            v = monthly_data[yr].get(m)
+            row_z.append(v if v is not None else float("nan"))
+            row_t.append(f"{v*100:+.1f}%" if v is not None else "")
+        z.append(row_z)
+        text.append(row_t)
+    flat = [v for row in z for v in row if v == v]
+    max_abs = max((abs(v) for v in flat), default=0.05)
+    fig = go.Figure(go.Heatmap(
+        z=z, x=_MONTH_ORDER, y=years,
+        text=text, texttemplate="%{text}", textfont=dict(size=10, color=COLORS["text"]),
+        colorscale=[[0.0,"#ff4b4b"],[0.5,COLORS["card_bg"]],[1.0,"#00d4aa"]],
+        zmin=-max_abs, zmax=max_abs, zmid=0,
+        showscale=True,
+        colorbar=dict(tickformat=".0%", len=0.8, thickness=12,
+                      tickfont=dict(color=COLORS["neutral"], size=10)),
+        hovertemplate="<b>%{y} %{x}</b><br>%{text}<extra></extra>",
+    ))
+    apply_theme(fig, title="Monthly Returns", height=max(200, len(years) * 32 + 80))
+    fig.update_layout(
+        xaxis=dict(side="top"),
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=50, r=60, t=60, b=10),
+    )
+    return fig
+
+
 # ── Results renderer ──────────────────────────────────────────────────────────
 
-def _show_results(results_ph, console_ph, data: dict) -> None:
-    console_lines = data.get("_console", [])
-
-    if not data.get("ok"):
-        with results_ph.container():
-            err = data.get("error", "Unknown error")
-            st.markdown(
-                status_banner(f"Backtest failed — {err[:140]}", COLORS["negative"]),
-                unsafe_allow_html=True,
-            )
-        with console_ph.container():
-            if console_lines:
-                with st.expander("Console output", expanded=True):
-                    st.code("\n".join(console_lines), language="text")
+def _show_result_tabs(data: dict, result_key: str) -> None:
+    if not data or not data.get("ok"):
         return
 
     metrics  = data.get("metrics", {})
     params   = data.get("params", {})
-    equity   = data.get("equity", {})
-    bench    = data.get("benchmark", {})
     strat_nm = data.get("strategy_name", "Strategy")
     sharpe   = float(metrics.get("sharpe") or 0)
 
-    with results_ph.container():
-        if sharpe >= 0.8:
-            bc, bt = COLORS["positive"], f"Backtest complete — Sharpe {sharpe:.2f}"
-        elif sharpe >= 0.4:
-            bc, bt = COLORS["warning"],  f"Backtest complete — Sharpe {sharpe:.2f} (below target)"
+    if sharpe >= 0.8:
+        bc, bt = COLORS["positive"], f"Backtest complete — Sharpe {sharpe:.2f}"
+    elif sharpe >= 0.4:
+        bc, bt = COLORS["warning"],  f"Backtest complete — Sharpe {sharpe:.2f} (below target)"
+    else:
+        bc, bt = COLORS["negative"], f"Backtest complete — Sharpe {sharpe:.2f} (low)"
+    st.markdown(status_banner(bt, bc), unsafe_allow_html=True)
+
+    p_period = f"{metrics.get('start','?')} → {metrics.get('end','?')} ({metrics.get('years','?')}y)"
+    p_cfg    = (f"Top-{params.get('top_n','?')} · {params.get('weight_scheme','?')} · "
+                f"{params.get('cost_bps','?')} bps")
+    st.markdown(
+        f'<div style="color:{COLORS["neutral"]};font-size:0.75rem;margin-bottom:10px;">'
+        f'<b style="color:{COLORS["text"]}">{strat_nm}</b> &nbsp;·&nbsp; '
+        f'{p_period} &nbsp;·&nbsp; {p_cfg}</div>',
+        unsafe_allow_html=True,
+    )
+
+    def _pct(v): return f"{v:+.1%}" if isinstance(v, float) else "—"
+    def _f(v):   return f"{v:.3f}"  if isinstance(v, float) else "—"
+
+    # 8 KPI cards in two rows of 4
+    kpis = [
+        ("Total Return",  _pct(metrics.get("total_return")), None),
+        ("CAGR",          _pct(metrics.get("cagr")), None),
+        ("Sharpe",        _f(sharpe), COLORS["positive"] if sharpe >= 0.8 else COLORS["warning"]),
+        ("Sortino",       _f(metrics.get("sortino")), None),
+        ("Max Drawdown",  _pct(metrics.get("max_drawdown")), COLORS["negative"]),
+        ("Calmar",        _f(metrics.get("calmar")), None),
+        ("Alpha (ann)",   _pct(data.get("alpha", 0.0)), None),
+        ("Beta vs SPY",   f"{data.get('beta', 1.0):.2f}", None),
+    ]
+    for i in range(0, len(kpis), 4):
+        cols = st.columns(4)
+        for col, (label, val, accent) in zip(cols, kpis[i:i+4]):
+            with col:
+                st.markdown(kpi_card(label, val, accent=accent), unsafe_allow_html=True)
+
+    st.markdown(
+        f'<div style="color:{COLORS["text_muted"]};font-size:0.72rem;margin:4px 0 8px;">'
+        f'Tracking error: {data.get("tracking_error", 0):.2%} &nbsp;·&nbsp; '
+        f'Information ratio: {data.get("information_ratio", 0):.2f} &nbsp;·&nbsp; '
+        f'Trades: {metrics.get("n_trades","—")} &nbsp;·&nbsp; '
+        f'Total cost: ${metrics.get("total_cost", 0):,.0f}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # CSV export
+    eq = data.get("equity", {})
+    if eq.get("dates"):
+        csv = pd.DataFrame({"date": eq["dates"], "nav": eq["values"]}).to_csv(index=False).encode()
+        st.download_button(
+            "⬇ Export equity curve (CSV)", csv,
+            file_name=f"{strat_nm.replace(' ','_')}_equity.csv",
+            mime="text/csv", key=f"dl_{result_key}",
+        )
+
+    st.divider()
+
+    t1, t2, t3, t4 = st.tabs(["Equity Curve", "Rolling Analytics", "Monthly Returns", "Trade Log"])
+
+    with t1:
+        st.plotly_chart(_equity_fig(data), config=PLOTLY_CONFIG, use_container_width=True)
+
+    with t2:
+        st.plotly_chart(_rolling_fig(data),   config=PLOTLY_CONFIG, use_container_width=True)
+        st.plotly_chart(_drawdown_fig(data),  config=PLOTLY_CONFIG, use_container_width=True)
+
+    with t3:
+        fig_hm = _monthly_heatmap_fig(data.get("monthly_returns", {}))
+        if fig_hm:
+            st.plotly_chart(fig_hm, config=PLOTLY_CONFIG, use_container_width=True)
         else:
-            bc, bt = COLORS["negative"], f"Backtest complete — Sharpe {sharpe:.2f} (low)"
-        st.markdown(status_banner(bt, bc), unsafe_allow_html=True)
+            st.info("Need at least 2 months of data for the monthly heatmap.")
 
-        p_period = f"{metrics.get('start','?')} → {metrics.get('end','?')} ({metrics.get('years','?')}y)"
-        p_cfg    = (
-            f"Top-{params.get('top_n','?')} · "
-            f"{params.get('weight_scheme','?')} weight · "
-            f"{params.get('cost_bps','?')} bps"
+    with t4:
+        tlog = data.get("trade_log", [])
+        if tlog:
+            tdf = pd.DataFrame(tlog)
+            b  = int((tdf["side"] == "BUY").sum())  if "side"  in tdf.columns else 0
+            s  = int((tdf["side"] == "SELL").sum()) if "side"  in tdf.columns else 0
+            av = float(abs(tdf["value"]).mean())     if "value" in tdf.columns else 0.0
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Buy orders",      b)
+            c2.metric("Sell orders",     s)
+            c3.metric("Avg trade value", f"${av:,.0f}")
+            st.dataframe(tdf, use_container_width=True, hide_index=True)
+        else:
+            st.info("No trades recorded.")
+
+
+# ── Parameter sweep ───────────────────────────────────────────────────────────
+
+def _run_sweep(
+    main_py: Path,
+    top_n_list: list[int],
+    lookback_list: list[int],
+    cost_bps: float,
+    weight_scheme: str,
+) -> pd.DataFrame:
+    """Grid search over top_n × lookback_years. Returns Sharpe DataFrame."""
+    import polars as pl
+    from backtest.engine import run_backtest
+    from features.compute import load_features
+    from signals.momentum import get_monthly_rebalance_dates
+    from storage.parquet_store import load_bars
+    from storage.universe import universe_as_of_date
+
+    spec = importlib.util.spec_from_file_location("_sweep", main_py)
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    end        = date.today()
+    max_lb     = max(lookback_list)
+    start_max  = date(end.year - max_lb, end.month, end.day)
+    symbols    = universe_as_of_date("equity", end, require_data=True)
+    prices_all = load_bars(symbols, start_max, end, "equity")
+    feats_all  = load_features(symbols, start_max, end, "equity",
+                                feature_list=["momentum_12m_1m", "realized_vol_21d"])
+    all_dates  = sorted(prices_all["date"].unique().to_list())
+
+    results: dict[tuple, float] = {}
+    for lb in lookback_list:
+        start_lb = date(end.year - lb, end.month, end.day)
+        p_lb = prices_all.filter(pl.col("date") >= start_lb)
+        f_lb = feats_all.filter(pl.col("date") >= start_lb)
+        rdates = get_monthly_rebalance_dates(start_lb, end, all_dates)
+        for tn in top_n_list:
+            try:
+                sig = mod.get_signal(f_lb, rdates, top_n=tn, prices_df=p_lb)
+                wts = mod.get_weights(sig, weight_scheme=weight_scheme)
+                res = run_backtest(p_lb, wts, cost_bps=cost_bps)
+                results[(lb, tn)] = res.sharpe
+            except Exception:
+                results[(lb, tn)] = float("nan")
+
+    grid = pd.DataFrame(index=lookback_list, columns=top_n_list, dtype=float)
+    for (lb, tn), sh in results.items():
+        grid.loc[lb, tn] = sh
+    grid.index.name   = "Lookback (years)"
+    grid.columns.name = "Top-N"
+    return grid
+
+
+def _render_sweep_tab(main_py: Path, default_params: dict) -> None:
+    st.markdown(
+        f'<div style="color:{COLORS["neutral"]};font-size:0.82rem;margin-bottom:12px;">'
+        "Grid search over Lookback × Top-N to find the parameter set with the highest Sharpe. "
+        "Each cell is a full backtest — keep the grid small (≤20 cells)."
+        "</div>", unsafe_allow_html=True,
+    )
+    sa, sb = st.columns(2)
+    with sa:
+        top_n_str = st.text_input("Top-N values (comma-separated)", value="3,5,7,10", key="sw_tn")
+    with sb:
+        lb_str = st.text_input("Lookback years (comma-separated)", value="3,5,7", key="sw_lb")
+
+    sc, sd = st.columns(2)
+    with sc:
+        sw_cost = st.number_input("Cost (bps)", value=float(default_params.get("cost_bps", 5.0)),
+                                   min_value=0.0, max_value=100.0, step=0.5, key="sw_cost")
+    with sd:
+        sw_scheme_opts = ["equal", "vol_scaled"]
+        sw_scheme = st.selectbox("Weighting", options=sw_scheme_opts,
+                                  index=sw_scheme_opts.index(default_params.get("weight_scheme","equal")),
+                                  key="sw_scheme")
+
+    run_sweep = st.button("▶ Run Parameter Sweep", type="primary", key="run_sweep_btn")
+    sweep_key = f"sweep_{main_py}"
+
+    if run_sweep and main_py:
+        try:
+            tn_list = [int(x.strip()) for x in top_n_str.split(",") if x.strip()]
+            lb_list = [int(x.strip()) for x in lb_str.split(",")    if x.strip()]
+        except ValueError:
+            st.error("Invalid grid values — use comma-separated integers.")
+            return
+        n_cells = len(tn_list) * len(lb_list)
+        with st.spinner(f"Grid search ({n_cells} backtests)…"):
+            try:
+                grid = _run_sweep(main_py, tn_list, lb_list, sw_cost, sw_scheme)
+                st.session_state[sweep_key] = grid
+            except Exception as exc:
+                st.error(f"Sweep failed: {exc}")
+                return
+
+    grid = st.session_state.get(sweep_key)
+    if grid is not None and isinstance(grid, pd.DataFrame):
+        best_idx    = grid.stack().idxmax()
+        best_lb, best_tn = best_idx
+        best_sh = grid.loc[best_lb, best_tn]
+        st.success(f"Best: lookback={best_lb}y, top_n={best_tn} → Sharpe {best_sh:.3f}")
+
+        z     = grid.values.tolist()
+        x_lab = [str(c) for c in grid.columns.tolist()]
+        y_lab = [str(i) for i in grid.index.tolist()]
+        text  = [[f"{v:.2f}" if v == v else "" for v in row] for row in z]
+        vmax  = float(np.nanmax(grid.values))
+        vmin  = float(np.nanmin(grid.values))
+
+        fig = go.Figure(go.Heatmap(
+            z=z, x=x_lab, y=y_lab,
+            text=text, texttemplate="%{text}", textfont=dict(size=11),
+            colorscale=[[0.0,"#ff4b4b"],[0.5,COLORS["card_bg"]],[1.0,"#00d4aa"]],
+            zmid=(vmax + vmin) / 2,
+            colorbar=dict(title="Sharpe", thickness=12, len=0.8,
+                          tickfont=dict(color=COLORS["neutral"], size=10)),
+            hovertemplate="Lookback=%{y}y  Top-N=%{x}<br>Sharpe=%{text}<extra></extra>",
+        ))
+        apply_theme(fig, title="Sharpe Heatmap — Lookback × Top-N", height=300)
+        fig.update_layout(
+            xaxis=dict(title="Top-N positions"),
+            yaxis=dict(title="Lookback years", autorange="reversed"),
         )
-        st.markdown(
-            f'<div style="color:{COLORS["neutral"]};font-size:0.76rem;margin-bottom:12px;">'
-            f'<b style="color:{COLORS["text"]}">{strat_nm}</b> &nbsp;·&nbsp; '
-            f'{p_period} &nbsp;·&nbsp; {p_cfg}</div>',
-            unsafe_allow_html=True,
-        )
+        st.plotly_chart(fig, config=PLOTLY_CONFIG, use_container_width=True)
+        st.dataframe(grid.style.format("{:.3f}"), use_container_width=True)
+    elif not run_sweep:
+        st.info("Configure the grid and click **Run Parameter Sweep**.")
 
-        def _pct(v):  return f"{v:+.1%}" if isinstance(v, float) else "—"
-        def _f(v):    return f"{v:.3f}"  if isinstance(v, float) else "—"
-        def _cost(v): return f"${v:,.0f}" if isinstance(v, (int, float)) else "—"
-        def _n(v):    return str(int(v)) if isinstance(v, (int, float)) else "—"
 
-        kpis = [
-            ("Total Return",     _pct(metrics.get("total_return")), None),
-            ("CAGR",             _pct(metrics.get("cagr")),         None),
-            ("Sharpe",           _f(sharpe), COLORS["positive"] if sharpe >= 0.8 else COLORS["warning"]),
-            ("Sortino",          _f(metrics.get("sortino")),        None),
-            ("Max Drawdown",     _pct(metrics.get("max_drawdown")), COLORS["negative"]),
-            ("Calmar",           _f(metrics.get("calmar")),         None),
-            ("Transaction Cost", _cost(metrics.get("total_cost")),  None),
-            ("Trades",           _n(metrics.get("n_trades")),       None),
-        ]
-        for i in range(0, len(kpis), 2):
-            c1, c2 = st.columns(2)
-            for col, (label, val, accent) in zip([c1, c2], kpis[i:i + 2]):
-                with col:
-                    st.markdown(kpi_card(label, val, accent=accent), unsafe_allow_html=True)
+# ── Walk-forward validation ────────────────────────────────────────────────────
 
-        if equity.get("dates"):
-            eq_dates = pd.to_datetime(equity["dates"])
-            eq_vals  = equity["values"]
+def _run_walk_forward(
+    main_py: Path,
+    top_n: int,
+    lookback_years: int,
+    cost_bps: float,
+    weight_scheme: str,
+    test_frac: float = 0.30,
+) -> dict:
+    """Split history into IS/OOS at test_frac; return metrics + equity curves."""
+    import polars as pl
+    from backtest.engine import run_backtest
+    from features.compute import load_features
+    from signals.momentum import get_monthly_rebalance_dates
+    from storage.parquet_store import load_bars
+    from storage.universe import universe_as_of_date
 
-            fig = go.Figure()
+    spec = importlib.util.spec_from_file_location("_wf", main_py)
+    mod  = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    end        = date.today()
+    start_full = date(end.year - lookback_years, end.month, end.day)
+    symbols    = universe_as_of_date("equity", end, require_data=True)
+    prices     = load_bars(symbols, start_full, end, "equity")
+    features   = load_features(symbols, start_full, end, "equity",
+                                feature_list=["momentum_12m_1m", "realized_vol_21d"])
+    all_dates  = sorted(prices["date"].unique().to_list())
+
+    split_i  = int(len(all_dates) * (1 - test_frac))
+    split_dt = all_dates[split_i]
+
+    def _run_period(p_start, p_end):
+        px = prices.filter((pl.col("date") >= p_start) & (pl.col("date") <= p_end))
+        ft = features.filter((pl.col("date") >= p_start) & (pl.col("date") <= p_end))
+        pd_ = sorted(px["date"].unique().to_list())
+        rd  = get_monthly_rebalance_dates(p_start, p_end, pd_)
+        sig = mod.get_signal(ft, rd, top_n=top_n, prices_df=px)
+        wts = mod.get_weights(sig, weight_scheme=weight_scheme)
+        return run_backtest(px, wts, cost_bps=cost_bps)
+
+    res_is  = _run_period(start_full, split_dt)
+    res_oos = _run_period(split_dt, end)
+
+    def _eq(res):
+        eq = res.equity_curve
+        return {"dates": [str(d.date()) for d in eq.index],
+                "values": [round(v, 2) for v in eq.tolist()]}
+
+    return {
+        "split_date": str(split_dt),
+        "is_metrics":  {"sharpe": res_is.sharpe,  "cagr": res_is.cagr,
+                         "max_drawdown": res_is.max_drawdown,  "total_return": res_is.total_return},
+        "oos_metrics": {"sharpe": res_oos.sharpe, "cagr": res_oos.cagr,
+                         "max_drawdown": res_oos.max_drawdown, "total_return": res_oos.total_return},
+        "is_equity":  _eq(res_is),
+        "oos_equity": _eq(res_oos),
+    }
+
+
+def _render_wf_tab(main_py: Path, default_params: dict) -> None:
+    st.markdown(
+        f'<div style="color:{COLORS["neutral"]};font-size:0.82rem;margin-bottom:12px;">'
+        "Split the backtest period into in-sample (IS) and out-of-sample (OOS). "
+        "A robust strategy should not severely degrade on OOS data."
+        "</div>", unsafe_allow_html=True,
+    )
+    wa, wb, wc = st.columns(3)
+    with wa:
+        wf_lb   = st.number_input("Lookback (years)", min_value=2, max_value=20,
+                                   value=int(default_params.get("lookback_years", 6)), key="wf_lb")
+    with wb:
+        wf_tn   = st.number_input("Top-N", min_value=1, max_value=20,
+                                   value=int(default_params.get("top_n", 5)), key="wf_tn")
+    with wc:
+        wf_frac = st.slider("OOS fraction", min_value=0.10, max_value=0.50,
+                             value=0.30, step=0.05, key="wf_frac")
+
+    wf_cost = st.number_input("Cost (bps)", min_value=0.0, max_value=100.0,
+                               value=float(default_params.get("cost_bps", 5.0)),
+                               step=0.5, key="wf_cost")
+    run_wf  = st.button("▶ Run Walk-Forward", type="primary", key="run_wf_btn")
+    wf_key  = f"wf_{main_py}"
+
+    if run_wf and main_py:
+        with st.spinner("Running in-sample and out-of-sample backtests…"):
+            try:
+                wf_data = _run_walk_forward(
+                    main_py, top_n=wf_tn, lookback_years=wf_lb,
+                    cost_bps=wf_cost,
+                    weight_scheme=default_params.get("weight_scheme", "equal"),
+                    test_frac=wf_frac,
+                )
+                st.session_state[wf_key] = wf_data
+            except Exception as exc:
+                st.error(f"Walk-forward failed: {exc}")
+                return
+
+    wf = st.session_state.get(wf_key)
+    if wf is None:
+        st.info("Configure above and click **Run Walk-Forward**.")
+        return
+
+    split_dt = wf.get("split_date", "?")
+    is_m     = wf.get("is_metrics",  {})
+    oos_m    = wf.get("oos_metrics", {})
+
+    st.markdown(
+        f'<div style="color:{COLORS["text_muted"]};font-size:0.78rem;'
+        f'margin-bottom:8px;">Split date: {split_dt}</div>',
+        unsafe_allow_html=True,
+    )
+
+    def _d(v): return f"{v:+.1%}" if isinstance(v, float) else "—"
+    def _f(v): return f"{v:.3f}"  if isinstance(v, float) else "—"
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("IS Sharpe",       _f(is_m.get("sharpe")),
+              delta=f"OOS {_f(oos_m.get('sharpe'))}", delta_color="normal")
+    m2.metric("IS CAGR",         _d(is_m.get("cagr")),
+              delta=f"OOS {_d(oos_m.get('cagr'))}", delta_color="normal")
+    m3.metric("IS Max DD",       _d(is_m.get("max_drawdown")),
+              delta=f"OOS {_d(oos_m.get('max_drawdown'))}", delta_color="inverse")
+    m4.metric("IS Total Return", _d(is_m.get("total_return")),
+              delta=f"OOS {_d(oos_m.get('total_return'))}", delta_color="normal")
+
+    # Indexed equity curves overlaid
+    fig = go.Figure()
+    for label, color, eq_data in [
+        ("In-Sample",     COLORS["positive"], wf.get("is_equity",  {})),
+        ("Out-of-Sample", COLORS["warning"],  wf.get("oos_equity", {})),
+    ]:
+        if eq_data.get("dates"):
+            vals = eq_data["values"]
+            norm = [v / vals[0] * 100 for v in vals]
             fig.add_trace(go.Scatter(
-                x=eq_dates, y=eq_vals,
-                mode="lines", name=strat_nm,
-                line=dict(color=COLORS["positive"], width=2),
-                fill="tozeroy", fillcolor="rgba(0,212,170,0.06)",
-                hovertemplate="%{x|%b %d %Y}<br>$%{y:,.0f}<extra></extra>",
+                x=pd.to_datetime(eq_data["dates"]), y=norm,
+                name=label, line=dict(color=color, width=2),
+                hovertemplate=f"{label}<br>%{{x|%b %Y}}<br>%{{y:.1f}}<extra></extra>",
             ))
-            if bench.get("dates") and eq_vals:
-                b_dates = pd.to_datetime(bench["dates"])
-                b_vals  = bench["values"]
-                scale   = eq_vals[0] / b_vals[0] if b_vals and b_vals[0] else 1
-                fig.add_trace(go.Scatter(
-                    x=b_dates, y=[v * scale for v in b_vals],
-                    mode="lines", name="SPY (benchmark)",
-                    line=dict(color=COLORS["neutral"], width=1.5, dash="dot"),
-                    hovertemplate="%{x|%b %d %Y}<br>$%{y:,.0f}<extra></extra>",
-                ))
-            apply_theme(fig, title="Equity Curve vs. Benchmark", height=280)
-            st.plotly_chart(fig, config=PLOTLY_CONFIG, width="stretch")
 
-    with console_ph.container():
-        if console_lines:
-            with st.expander("Console output", expanded=False):
-                st.code("\n".join(console_lines), language="text")
+    fig.add_vline(
+        x=pd.Timestamp(split_dt).timestamp() * 1000,
+        line=dict(color=COLORS["info"], width=1.5, dash="dash"),
+    )
+    fig.add_annotation(
+        x=pd.Timestamp(split_dt), y=105,
+        text="IS | OOS", showarrow=False,
+        font=dict(color=COLORS["info"], size=11),
+        bgcolor=COLORS["card_bg"], bordercolor=COLORS["info"],
+        borderwidth=1, borderpad=3,
+    )
+    apply_theme(fig, title="Walk-Forward: IS vs OOS (indexed to 100)", height=320)
+    st.plotly_chart(fig, config=PLOTLY_CONFIG, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -440,15 +818,15 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
 
 st.markdown(page_header(
     "Strategy Lab",
-    "Edit strategies, configure parameters, and run backtests",
+    "Edit strategy code · Run backtests · Sweep parameters · Validate out-of-sample performance",
 ), unsafe_allow_html=True)
 
-# ── Strategy selector bar ─────────────────────────────────────────────────────
+# ── Strategy selector ─────────────────────────────────────────────────────────
 
 st.markdown(section_label("Strategy"), unsafe_allow_html=True)
 
 strategy_dirs    = _list_strategies()
-strategy_options = _strategy_options(strategy_dirs)   # label -> dir Path
+strategy_options = _strategy_options(strategy_dirs)
 
 sel_col, new_col = st.columns([5, 1])
 
@@ -460,10 +838,9 @@ if not strategy_options:
     st.info("No strategies found in `strategies/`. Click **➕ New** to create your first one.")
     st.stop()
 
-# Resolve which strategy is selected
 _saved_path = st.session_state.get("selected_strategy")
-default_idx = 0
 labels      = list(strategy_options.keys())
+default_idx = 0
 if _saved_path:
     for i, d in enumerate(strategy_options.values()):
         if str(d) == _saved_path:
@@ -472,57 +849,40 @@ if _saved_path:
 
 with sel_col:
     selected_label = st.selectbox(
-        "Strategy",
-        options=labels,
-        index=default_idx,
-        label_visibility="collapsed",
+        "Strategy", options=labels, index=default_idx, label_visibility="collapsed",
     )
 
 selected_dir = strategy_options[selected_label]
 st.session_state["selected_strategy"] = str(selected_dir)
+main_py = _main_py(selected_dir)
 
 st.markdown(
     f'<div style="color:{COLORS["text_muted"]};font-size:0.72rem;margin:-4px 0 12px;">'
     f'strategies/{selected_dir.name}/</div>',
     unsafe_allow_html=True,
 )
-
 st.divider()
 
-# ── Main layout ───────────────────────────────────────────────────────────────
+# ── Two-column: editor | config + controls ────────────────────────────────────
 
 left, right = st.columns([3, 2], gap="large")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LEFT — Code editor (with per-file tabs if multiple files exist)
-# ══════════════════════════════════════════════════════════════════════════════
-
 with left:
     st.markdown(section_label("Code Editor"), unsafe_allow_html=True)
-
     strat_files = _strategy_files(selected_dir)
-
     if not strat_files:
         st.warning("No files found in this strategy folder.")
     elif len(strat_files) == 1:
         _render_editor(strat_files[0])
     else:
-        tab_labels = [f.name for f in strat_files]
-        file_tabs  = st.tabs(tab_labels)
+        file_tabs = st.tabs([f.name for f in strat_files])
         for tab, file_path in zip(file_tabs, strat_files):
             with tab:
                 _render_editor(file_path)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# RIGHT — Backtest config + results
-# ══════════════════════════════════════════════════════════════════════════════
-
 with right:
     st.markdown(section_label("Backtest Configuration"), unsafe_allow_html=True)
 
-    main_py = _main_py(selected_dir)
-
-    # Load strategy defaults to pre-fill UI
     _defaults: dict = {}
     if main_py:
         try:
@@ -551,28 +911,49 @@ with right:
         scheme_opts   = ["equal", "vol_scaled"]
         scheme_def    = _defaults.get("weight_scheme", "equal")
         weight_scheme = st.selectbox(
-            "Weighting",
-            options=scheme_opts,
+            "Weighting", options=scheme_opts,
             index=scheme_opts.index(scheme_def) if scheme_def in scheme_opts else 0,
         )
 
-    run_btn = st.button(
-        "▶  Run Backtest",
-        type="primary",
-        use_container_width=True,
-        disabled=main_py is None,
-        help=f"Backtest strategies/{selected_dir.name}/{main_py.name if main_py else ''}",
-    )
+    btn_run, btn_val = st.columns(2)
+    with btn_run:
+        run_btn = st.button(
+            "▶ Run Backtest", type="primary", use_container_width=True, disabled=main_py is None,
+        )
+    with btn_val:
+        val_btn = st.button(
+            "✔ Validate", use_container_width=True, disabled=main_py is None,
+            help="Check syntax, imports, and required interface",
+        )
+
+    if val_btn and main_py:
+        issues = _validate_strategy(main_py)
+        if issues:
+            for iss in issues:
+                st.error(iss)
+        else:
+            st.success("Strategy is valid — syntax, imports, and interface all pass.")
 
     st.divider()
 
     results_ph = st.empty()
     console_ph = st.empty()
-
     result_key = f"lab_result_{selected_dir.name}"
 
+    # Show previous error if not re-running
     if result_key in st.session_state and not run_btn:
-        _show_results(results_ph, console_ph, st.session_state[result_key])
+        prev = st.session_state[result_key]
+        if prev and not prev.get("ok"):
+            with results_ph.container():
+                err = prev.get("error", "Unknown error")
+                st.markdown(
+                    status_banner(f"Backtest failed — {err[:160]}", COLORS["negative"]),
+                    unsafe_allow_html=True,
+                )
+            if prev.get("_console"):
+                with console_ph.container():
+                    with st.expander("Console output", expanded=True):
+                        st.code("\n".join(prev["_console"]), language="text")
 
     if run_btn and main_py:
         runner = str(_ROOT / "tools" / "backtest_runner.py")
@@ -584,23 +965,15 @@ with right:
             "--cost-bps",       str(float(cost_bps)),
             "--weight-scheme",  weight_scheme,
         ]
-
         with results_ph.container():
-            st.markdown(
-                status_banner("Backtest running…", COLORS["info"], animate=True),
-                unsafe_allow_html=True,
-            )
+            st.markdown(status_banner("Backtest running…", COLORS["info"], animate=True),
+                        unsafe_allow_html=True)
 
-        stdout_buf   = ""
-        stderr_lines: list[str] = []
+        stdout_buf, stderr_lines = "", []
         try:
             proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                cwd=str(_ROOT),
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", cwd=str(_ROOT),
             )
             stdout_buf, stderr_raw = proc.communicate(timeout=300)
             stderr_lines = [ln for ln in stderr_raw.splitlines() if ln.strip()]
@@ -611,11 +984,58 @@ with right:
         except Exception as exc:
             stderr_lines.append(f"ERROR launching subprocess: {exc}")
 
-        try:
-            result_data = json.loads(stdout_buf.strip()) if stdout_buf.strip() else {}
-        except json.JSONDecodeError:
-            result_data = {"ok": False, "error": f"Could not parse output:\n{stdout_buf[:400]}"}
+        result_data = {"ok": False, "error": "No JSON output from runner"}
+        for line in stdout_buf.splitlines():
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    result_data = json.loads(line)
+                    break
+                except json.JSONDecodeError:
+                    pass
 
         result_data["_console"] = stderr_lines
         st.session_state[result_key] = result_data
-        _show_results(results_ph, console_ph, result_data)
+
+        if not result_data.get("ok"):
+            with results_ph.container():
+                err = result_data.get("error", "Unknown error")
+                st.markdown(status_banner(f"Backtest failed — {err[:160]}", COLORS["negative"]),
+                            unsafe_allow_html=True)
+            if stderr_lines:
+                with console_ph.container():
+                    with st.expander("Console output", expanded=True):
+                        st.code("\n".join(stderr_lines), language="text")
+        else:
+            results_ph.empty()
+            console_ph.empty()
+            if stderr_lines:
+                with console_ph.container():
+                    with st.expander("Console output", expanded=False):
+                        st.code("\n".join(stderr_lines), language="text")
+
+# ── Full-width result tabs ────────────────────────────────────────────────────
+
+result_data = st.session_state.get(result_key, {})
+if result_data and result_data.get("ok"):
+    st.divider()
+    _show_result_tabs(result_data, result_key)
+
+# ── Advanced analysis ─────────────────────────────────────────────────────────
+
+st.divider()
+st.markdown(section_label("Advanced Analysis"), unsafe_allow_html=True)
+
+adv1, adv2 = st.tabs(["Parameter Sweep", "Walk-Forward Validation"])
+
+with adv1:
+    if main_py:
+        _render_sweep_tab(main_py, _defaults)
+    else:
+        st.info("Select a strategy to use the parameter sweep.")
+
+with adv2:
+    if main_py:
+        _render_wf_tab(main_py, _defaults)
+    else:
+        st.info("Select a strategy to use walk-forward validation.")
