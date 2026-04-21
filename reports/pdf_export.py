@@ -518,21 +518,26 @@ def _section_trade_history(story: list, portfolio_log_pd: pd.DataFrame | None) -
         ))
         return
 
-    # Limit to most recent 200 rows and readable columns
     df = portfolio_log_pd.copy()
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
-    # Only include useful columns if they exist
-    preferred = ["date", "symbol", "action", "quantity", "price", "value",
-                 "pre_trade_passed", "var_1d_95", "portfolio_value", "cash"]
-    cols = [c for c in preferred if c in df.columns] or list(df.columns)
-    df = df[cols].tail(200)
-
-    # Format numeric columns
+    # Normalise any timestamp columns to short date strings
     for c in df.columns:
-        if df[c].dtype in (float, "float64"):
+        if pd.api.types.is_datetime64_any_dtype(df[c]):
+            df[c] = df[c].dt.strftime("%Y-%m-%d")
+        elif df[c].dtype == object:
+            try:
+                parsed = pd.to_datetime(df[c], errors="coerce")
+                if parsed.notna().mean() > 0.8:
+                    df[c] = parsed.dt.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+    # Format floats compactly (4 decimal places)
+    for c in df.columns:
+        if pd.api.types.is_float_dtype(df[c]):
             df[c] = df[c].apply(lambda x: f"{x:.4f}" if pd.notna(x) else "—")
+
+    df = df.fillna("—").tail(500)
 
     rows = [list(df.columns)] + df.values.tolist()
     n_cols = len(rows[0])
@@ -555,11 +560,11 @@ def _section_trade_history(story: list, portfolio_log_pd: pd.DataFrame | None) -
     ]))
     story.append(t)
 
-    if len(portfolio_log_pd) > 200:
+    if len(portfolio_log_pd) > 500:
         story.append(_sp(0.06))
         story.append(Paragraph(
-            f"Showing most recent 200 of {len(portfolio_log_pd)} records. "
-            "Download the CSV for the full history.",
+            f"Showing most recent 500 of {len(portfolio_log_pd)} transactions. "
+            "Download the CSV for the complete history.",
             _S_CAPTION,
         ))
 

@@ -152,7 +152,8 @@ def _load_target_weights() -> pl.DataFrame | None:
 
 
 @st.cache_data(ttl=300)
-def _load_equity_curve(lookback_years: int) -> pl.DataFrame | None:
+def _load_equity_curve(lookback_years: int) -> tuple[pl.DataFrame, pd.DataFrame] | None:
+    """Returns (equity_pl, trades_pd) or None on failure."""
     try:
         from backtest.engine import run_backtest
         from features.compute import load_features
@@ -180,7 +181,11 @@ def _load_equity_curve(lookback_years: int) -> pl.DataFrame | None:
         result = run_backtest(prices, wts, cost_bps=5.0)
         df = pl.from_pandas(result.equity_curve.reset_index())
         df.columns = ["date", "portfolio_value"]
-        return df.with_columns(pl.col("date").cast(pl.Date))
+        eq_pl = df.with_columns(pl.col("date").cast(pl.Date))
+
+        # Enrich trades with human-readable dates from the equity curve index
+        trades_pd = result.trades.copy() if not result.trades.empty else pd.DataFrame()
+        return eq_pl, trades_pd
     except Exception:
         return None
 
@@ -226,7 +231,13 @@ portfolio_log    = _load_portfolio_log()
 target_weights_df = _load_target_weights()
 
 with st.spinner("Running backtest…"):
-    equity_df = _load_equity_curve(lookback_years)
+    _bt_result = _load_equity_curve(lookback_years)
+
+equity_df        = None
+backtest_trades  = pd.DataFrame()
+
+if _bt_result is not None:
+    equity_df, backtest_trades = _bt_result
 
 eq_pd        = None
 stats        = None
@@ -289,31 +300,32 @@ st.markdown(
 
 @st.cache_data(show_spinner=False, ttl=300)
 def _build_pdf(
-    stats_frozen,        # tuple of (k,v) pairs  — hashable
+    stats_frozen,        # tuple of (k,v) pairs — hashable, daily_rets excluded
     trailing_frozen,
-    drawdowns_frozen,
+    drawdowns_frozen,    # tuple of tuples-of-pairs; each inner → dict inside
     weights_frozen,
     stress_frozen,
     monthly_csv: str | None,
-    log_csv: str | None,
+    trades_csv: str | None,  # backtest result.trades as CSV string
     lookback_years: int,
     benchmark_sym: str,
     as_of_str: str,
-    eq_json: str | None,   # equity curve as JSON for chart re-creation
+    eq_json: str | None,
 ) -> bytes:
     import json as _json
     from datetime import date as _date
 
     # Reconstruct lightweight objects for PDF
-    _stats    = dict(stats_frozen)   if stats_frozen    else {}
-    _trailing = dict(trailing_frozen) if trailing_frozen else {}
-    _draws    = list(drawdowns_frozen) if drawdowns_frozen else []
-    _weights  = dict(weights_frozen)  if weights_frozen   else {}
-    _stress   = dict(stress_frozen)   if stress_frozen    else {}
+    # drawdowns_frozen is a tuple of tuples-of-pairs → must convert each to dict
+    _stats    = dict(stats_frozen)             if stats_frozen    else {}
+    _trailing = dict(trailing_frozen)          if trailing_frozen else {}
+    _draws    = [dict(d) for d in drawdowns_frozen] if drawdowns_frozen else []
+    _weights  = dict(weights_frozen)           if weights_frozen  else {}
+    _stress   = dict(stress_frozen)            if stress_frozen   else {}
     _monthly  = (pd.read_csv(__import__("io").StringIO(monthly_csv))
                  .set_index("Year") if monthly_csv else None)
-    _log_pd   = (pd.read_csv(__import__("io").StringIO(log_csv))
-                 if log_csv else None)
+    _trades_pd = (pd.read_csv(__import__("io").StringIO(trades_csv))
+                  if trades_csv else None)
 
     # Reconstruct equity figure for chart embedding
     _fig_eq = None
@@ -353,7 +365,7 @@ def _build_pdf(
         sector_map=_SECTOR_MAP,
         stress=_stress,
         monthly_pivot=_monthly,
-        portfolio_log_pd=_log_pd,
+        portfolio_log_pd=_trades_pd,
         lookback_years=lookback_years,
         benchmark_sym=benchmark_sym,
         as_of=_as_of,
@@ -362,8 +374,13 @@ def _build_pdf(
 
 
 # Prepare hashable/serialisable inputs for cache key
-_stats_frozen    = tuple(sorted(stats.items())) if stats else ()
-_trailing_frozen = tuple(sorted((k, v if v else 0.0) for k, v in trailing.items())) if trailing else ()
+# Exclude daily_rets (numpy array) — not needed by the PDF generator
+_stats_frozen    = tuple(sorted(
+    (k, float(v)) for k, v in stats.items() if k != "daily_rets"
+)) if stats else ()
+_trailing_frozen = tuple(sorted(
+    (k, float(v) if v is not None else 0.0) for k, v in trailing.items()
+)) if trailing else ()
 _draws_frozen    = tuple(tuple(sorted(d.items())) for d in (drawdowns or []))
 _weights_frozen  = tuple(sorted(current_weights.items()))
 _stress_frozen   = tuple(sorted(stress.items()))
@@ -375,10 +392,11 @@ if monthly_pivot is not None:
     except Exception:
         pass
 
-_log_csv: str | None = None
-if portfolio_log_pd is not None:
+# Trade history CSV — backtest transactions from result.trades
+_trades_csv: str | None = None
+if not backtest_trades.empty:
     try:
-        _log_csv = portfolio_log_pd.to_csv(index=False)
+        _trades_csv = backtest_trades.to_csv(index=False)
     except Exception:
         pass
 
@@ -398,17 +416,17 @@ _dl1, _dl2, _dl3 = st.columns([1, 1, 6])
 with _dl1:
     try:
         _pdf_bytes = _build_pdf(
-            stats_frozen    = _stats_frozen,
-            trailing_frozen = _trailing_frozen,
-            drawdowns_frozen= _draws_frozen,
-            weights_frozen  = _weights_frozen,
-            stress_frozen   = _stress_frozen,
-            monthly_csv     = _monthly_csv,
-            log_csv         = _log_csv,
-            lookback_years  = lookback_years,
-            benchmark_sym   = benchmark_sym,
-            as_of_str       = date.today().isoformat(),
-            eq_json         = _eq_json,
+            stats_frozen     = _stats_frozen,
+            trailing_frozen  = _trailing_frozen,
+            drawdowns_frozen = _draws_frozen,
+            weights_frozen   = _weights_frozen,
+            stress_frozen    = _stress_frozen,
+            monthly_csv      = _monthly_csv,
+            trades_csv       = _trades_csv,
+            lookback_years   = lookback_years,
+            benchmark_sym    = benchmark_sym,
+            as_of_str        = date.today().isoformat(),
+            eq_json          = _eq_json,
         )
         st.download_button(
             label="📄 PDF Report",
@@ -421,17 +439,17 @@ with _dl1:
         st.button("📄 PDF Report", disabled=True, help=f"PDF unavailable: {_pdf_err}")
 
 with _dl2:
-    if portfolio_log_pd is not None:
+    if _trades_csv:
         st.download_button(
             label="📊 Trade History",
-            data=portfolio_log_pd.to_csv(index=False).encode(),
+            data=_trades_csv.encode(),
             file_name=f"quantpipe_trades_{date.today().isoformat()}.csv",
             mime="text/csv",
-            help="Download full portfolio log as CSV",
+            help="Every backtest transaction — entry, exit, size, P&L",
         )
     else:
         st.button("📊 Trade History", disabled=True,
-                  help="No portfolio log available")
+                  help="No backtest trades available — run the pipeline first")
 
 st.markdown("<div style='height:6px'/>", unsafe_allow_html=True)
 
