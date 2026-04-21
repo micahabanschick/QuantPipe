@@ -26,9 +26,19 @@ _ROOT       = Path(__file__).parent.parent
 _STRAT_DIR  = _ROOT / "strategies"
 _ACE_THEME  = "tomorrow_night"
 
-# ── Strategy template ─────────────────────────────────────────────────────────
+_ACE_LANG: dict[str, str] = {
+    ".py":   "python",
+    ".md":   "markdown",
+    ".json": "json",
+    ".toml": "toml",
+    ".txt":  "text",
+    ".yaml": "yaml",
+    ".yml":  "yaml",
+}
 
-_TEMPLATE = '''\
+# ── Templates ─────────────────────────────────────────────────────────────────
+
+_PY_TEMPLATE = '''\
 """{name} — {description}
 
 Strategy interface (required by tools/backtest_runner.py):
@@ -72,43 +82,109 @@ def get_weights(
     return momentum_weights(signal, weight_scheme=weight_scheme)
 '''
 
+_README_TEMPLATE = '''\
+# {name}
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+> {description}
+
+## Strategy Overview
+
+*(Describe the strategy logic here.)*
+
+## Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `lookback_years` | 6 | Historical period used for the backtest |
+| `top_n` | 5 | Number of top-ranked ETFs to hold |
+| `cost_bps` | 5.0 | Round-trip transaction cost in basis points |
+| `weight_scheme` | equal | Position sizing — `equal` or `vol_scaled` |
+
+## Signal
+
+*(Describe the signal construction here.)*
+
+## Known Limitations
+
+*(List any known limitations here.)*
+
+## References
+
+*(Add references here.)*
+'''
+
+
+# ── Folder-based strategy helpers ─────────────────────────────────────────────
+
+def _migrate_legacy_strategies() -> None:
+    """Wrap any top-level flat .py files (old format) into their own subfolder."""
+    _STRAT_DIR.mkdir(exist_ok=True)
+    for py_file in list(_STRAT_DIR.glob("*.py")):
+        if py_file.name == "__init__.py":
+            continue
+        slug = py_file.stem
+        target_dir = _STRAT_DIR / slug
+        if not target_dir.exists():
+            target_dir.mkdir()
+            py_file.rename(target_dir / py_file.name)
+
 
 def _list_strategies() -> list[Path]:
-    """Return all .py files in strategies/ except __init__.py, sorted by name."""
+    """Return strategy directories that contain at least one .py file."""
     _STRAT_DIR.mkdir(exist_ok=True)
-    return sorted(
-        p for p in _STRAT_DIR.glob("*.py")
-        if p.name != "__init__.py"
-    )
+    _migrate_legacy_strategies()
+    dirs = []
+    for d in sorted(_STRAT_DIR.iterdir()):
+        if d.is_dir() and any(d.glob("*.py")):
+            dirs.append(d)
+    return dirs
 
 
-def _strategy_display_name(path: Path) -> str:
-    """Try to read NAME from the file; fall back to the stem."""
-    try:
-        spec = importlib.util.spec_from_file_location("_tmp", path)
-        mod  = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return getattr(mod, "NAME", path.stem)
-    except Exception:
-        return path.stem
+def _main_py(strategy_dir: Path) -> Path | None:
+    """The primary .py file — same name as the folder, or the first .py found."""
+    preferred = strategy_dir / f"{strategy_dir.name}.py"
+    if preferred.exists():
+        return preferred
+    pys = sorted(strategy_dir.glob("*.py"))
+    return pys[0] if pys else None
 
 
-def _strategy_options(paths: list[Path]) -> dict[str, Path]:
-    """Map display label → Path for the selectbox."""
-    out = {}
-    for p in paths:
-        label = _strategy_display_name(p)
+def _strategy_files(strategy_dir: Path) -> list[Path]:
+    """All editable files: .py files first, then others alphabetically."""
+    pys   = sorted(strategy_dir.glob("*.py"))
+    rest  = sorted(f for f in strategy_dir.iterdir() if f.is_file() and f.suffix != ".py")
+    return pys + rest
+
+
+def _display_name(strategy_dir: Path) -> str:
+    """Read NAME from the main .py; fall back to title-cased folder name."""
+    main = _main_py(strategy_dir)
+    if main:
+        try:
+            spec = importlib.util.spec_from_file_location("_tmp", main)
+            mod  = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            name = getattr(mod, "NAME", None)
+            if name:
+                return name
+        except Exception:
+            pass
+    return strategy_dir.name.replace("_", " ").title()
+
+
+def _strategy_options(dirs: list[Path]) -> dict[str, Path]:
+    """Map display label → directory Path."""
+    out: dict[str, Path] = {}
+    for d in dirs:
+        label = _display_name(d)
         if label in out:
-            label = f"{label} ({p.stem})"
-        out[label] = p
+            label = f"{label} ({d.name})"
+        out[label] = d
     return out
 
 
-def _name_to_filename(name: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
-    return f"{slug or 'strategy'}.py"
+def _name_to_slug(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower() or "strategy"
 
 
 def _load_file(path: Path) -> str:
@@ -118,14 +194,107 @@ def _load_file(path: Path) -> str:
         return f"# File not found: {path}\n"
 
 
+# ── Single-file editor ────────────────────────────────────────────────────────
+
+def _render_editor(file_path: Path) -> None:
+    """Render Ace editor + save/discard/reload bar for a single file."""
+    disk_key  = f"disk__{file_path}"
+    edit_key  = f"edit__{file_path}"
+    dirty_key = f"dirty_{file_path}"
+
+    if disk_key not in st.session_state:
+        content = _load_file(file_path)
+        st.session_state[disk_key]  = content
+        st.session_state[edit_key]  = content
+        st.session_state[dirty_key] = False
+
+    lang = _ACE_LANG.get(file_path.suffix, "text")
+
+    new_content = st_ace(
+        value=st.session_state[edit_key],
+        language=lang,
+        theme=_ACE_THEME,
+        font_size=14,
+        tab_size=4,
+        show_gutter=True,
+        show_print_margin=False,
+        wrap=False,
+        auto_update=True,
+        min_lines=28,
+        max_lines=52,
+        key=f"ace_{file_path}",
+    )
+
+    if new_content is not None:
+        st.session_state[edit_key]  = new_content
+        st.session_state[dirty_key] = (new_content != st.session_state[disk_key])
+
+    dirty = st.session_state[dirty_key]
+
+    ab1, ab2, ab3, ab4 = st.columns([2, 2, 2, 4])
+    with ab1:
+        save_clicked = st.button(
+            "💾 Save", use_container_width=True,
+            disabled=not dirty,
+            type="primary" if dirty else "secondary",
+            key=f"save_{file_path}",
+        )
+    with ab2:
+        discard_clicked = st.button(
+            "↩ Discard", use_container_width=True, disabled=not dirty,
+            key=f"discard_{file_path}",
+        )
+    with ab3:
+        reload_clicked = st.button(
+            "🔄 Reload", use_container_width=True,
+            help="Re-read from disk (discards unsaved edits)",
+            key=f"reload_{file_path}",
+        )
+    with ab4:
+        if dirty:
+            st.markdown(
+                f'<div style="padding:8px 0;color:{COLORS["warning"]};'
+                f'font-size:0.80rem;font-weight:600;">● Unsaved changes</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="padding:8px 0;color:{COLORS["positive"]};font-size:0.80rem;">'
+                f'✓ Saved</div>',
+                unsafe_allow_html=True,
+            )
+
+    if save_clicked:
+        try:
+            file_path.write_text(st.session_state[edit_key], encoding="utf-8")
+            st.session_state[disk_key]  = st.session_state[edit_key]
+            st.session_state[dirty_key] = False
+            st.success(f"Saved → strategies/{file_path.parent.name}/{file_path.name}")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Save failed: {exc}")
+
+    if discard_clicked:
+        st.session_state[edit_key]  = st.session_state[disk_key]
+        st.session_state[dirty_key] = False
+        st.rerun()
+
+    if reload_clicked:
+        fresh = _load_file(file_path)
+        st.session_state[disk_key]  = fresh
+        st.session_state[edit_key]  = fresh
+        st.session_state[dirty_key] = False
+        st.rerun()
+
+
 # ── New-strategy dialog ───────────────────────────────────────────────────────
 
 @st.dialog("New Strategy")
 def _new_strategy_dialog() -> None:
     st.markdown(
         f'<div style="color:{COLORS["neutral"]};font-size:0.82rem;margin-bottom:12px;">'
-        "A new strategy file will be created from the momentum template. "
-        "You can customise it in the editor after creation."
+        "Creates a new strategy folder with a Python file and a README. "
+        "Customise both in the editor after creation."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -133,10 +302,10 @@ def _new_strategy_dialog() -> None:
     name = st.text_input("Strategy name", placeholder="e.g. Momentum Vol-Scaled")
     desc = st.text_input("Description",   placeholder="One-line summary of the strategy")
 
-    filename = _name_to_filename(name) if name else "strategy.py"
+    slug = _name_to_slug(name) if name else "strategy"
     st.markdown(
         f'<div style="color:{COLORS["text_muted"]};font-size:0.75rem;margin:4px 0 12px;">'
-        f'Will be saved as <code>strategies/{filename}</code></div>',
+        f'Will be saved as <code>strategies/{slug}/</code></div>',
         unsafe_allow_html=True,
     )
 
@@ -148,16 +317,21 @@ def _new_strategy_dialog() -> None:
             st.rerun()
 
     if create and name:
-        target = _STRAT_DIR / filename
-        if target.exists():
-            st.error(f"{filename} already exists. Choose a different name.")
+        target_dir = _STRAT_DIR / slug
+        if target_dir.exists():
+            st.error(f"strategies/{slug}/ already exists. Choose a different name.")
         else:
-            content = _TEMPLATE.format(
-                name=name,
-                description=desc or "No description provided.",
+            target_dir.mkdir(parents=True)
+            description = desc or "No description provided."
+            (target_dir / f"{slug}.py").write_text(
+                _PY_TEMPLATE.format(name=name, description=description),
+                encoding="utf-8",
             )
-            target.write_text(content, encoding="utf-8")
-            st.session_state["selected_strategy"] = str(target)
+            (target_dir / "README.md").write_text(
+                _README_TEMPLATE.format(name=name, description=description),
+                encoding="utf-8",
+            )
+            st.session_state["selected_strategy"] = str(target_dir)
             st.rerun()
 
 
@@ -187,7 +361,6 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
     sharpe   = float(metrics.get("sharpe") or 0)
 
     with results_ph.container():
-        # Banner
         if sharpe >= 0.8:
             bc, bt = COLORS["positive"], f"Backtest complete — Sharpe {sharpe:.2f}"
         elif sharpe >= 0.4:
@@ -196,7 +369,6 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
             bc, bt = COLORS["negative"], f"Backtest complete — Sharpe {sharpe:.2f} (low)"
         st.markdown(status_banner(bt, bc), unsafe_allow_html=True)
 
-        # Params row
         p_period = f"{metrics.get('start','?')} → {metrics.get('end','?')} ({metrics.get('years','?')}y)"
         p_cfg    = (
             f"Top-{params.get('top_n','?')} · "
@@ -210,7 +382,6 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
             unsafe_allow_html=True,
         )
 
-        # KPI cards
         def _pct(v):  return f"{v:+.1%}" if isinstance(v, float) else "—"
         def _f(v):    return f"{v:.3f}"  if isinstance(v, float) else "—"
         def _cost(v): return f"${v:,.0f}" if isinstance(v, (int, float)) else "—"
@@ -232,7 +403,6 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
                 with col:
                     st.markdown(kpi_card(label, val, accent=accent), unsafe_allow_html=True)
 
-        # Equity chart
         if equity.get("dates"):
             eq_dates = pd.to_datetime(equity["dates"])
             eq_vals  = equity["values"]
@@ -246,9 +416,9 @@ def _show_results(results_ph, console_ph, data: dict) -> None:
                 hovertemplate="%{x|%b %d %Y}<br>$%{y:,.0f}<extra></extra>",
             ))
             if bench.get("dates") and eq_vals:
-                b_dates  = pd.to_datetime(bench["dates"])
-                b_vals   = bench["values"]
-                scale    = eq_vals[0] / b_vals[0] if b_vals and b_vals[0] else 1
+                b_dates = pd.to_datetime(bench["dates"])
+                b_vals  = bench["values"]
+                scale   = eq_vals[0] / b_vals[0] if b_vals and b_vals[0] else 1
                 fig.add_trace(go.Scatter(
                     x=b_dates, y=[v * scale for v in b_vals],
                     mode="lines", name="SPY (benchmark)",
@@ -277,8 +447,8 @@ st.markdown(page_header(
 
 st.markdown(section_label("Strategy"), unsafe_allow_html=True)
 
-strategy_paths   = _list_strategies()
-strategy_options = _strategy_options(strategy_paths)  # label -> Path
+strategy_dirs    = _list_strategies()
+strategy_options = _strategy_options(strategy_dirs)   # label -> dir Path
 
 sel_col, new_col = st.columns([5, 1])
 
@@ -295,8 +465,8 @@ _saved_path = st.session_state.get("selected_strategy")
 default_idx = 0
 labels      = list(strategy_options.keys())
 if _saved_path:
-    for i, p in enumerate(strategy_options.values()):
-        if str(p) == _saved_path:
+    for i, d in enumerate(strategy_options.values()):
+        if str(d) == _saved_path:
             default_idx = i
             break
 
@@ -308,112 +478,40 @@ with sel_col:
         label_visibility="collapsed",
     )
 
-selected_path = strategy_options[selected_label]
-st.session_state["selected_strategy"] = str(selected_path)
+selected_dir = strategy_options[selected_label]
+st.session_state["selected_strategy"] = str(selected_dir)
 
 st.markdown(
     f'<div style="color:{COLORS["text_muted"]};font-size:0.72rem;margin:-4px 0 12px;">'
-    f'strategies/{selected_path.name}</div>',
+    f'strategies/{selected_dir.name}/</div>',
     unsafe_allow_html=True,
 )
 
 st.divider()
 
-# ── Main layout ────────────────────────────────────────────────────────────────
+# ── Main layout ───────────────────────────────────────────────────────────────
 
 left, right = st.columns([3, 2], gap="large")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LEFT — Code editor
+# LEFT — Code editor (with per-file tabs if multiple files exist)
 # ══════════════════════════════════════════════════════════════════════════════
 
 with left:
     st.markdown(section_label("Code Editor"), unsafe_allow_html=True)
 
-    disk_key  = f"disk__{selected_path}"
-    edit_key  = f"edit__{selected_path}"
-    dirty_key = f"dirty_{selected_path}"
+    strat_files = _strategy_files(selected_dir)
 
-    if disk_key not in st.session_state:
-        content = _load_file(selected_path)
-        st.session_state[disk_key]  = content
-        st.session_state[edit_key]  = content
-        st.session_state[dirty_key] = False
-
-    new_content = st_ace(
-        value=st.session_state[edit_key],
-        language="python",
-        theme=_ACE_THEME,
-        font_size=14,
-        tab_size=4,
-        show_gutter=True,
-        show_print_margin=False,
-        wrap=False,
-        auto_update=True,
-        min_lines=30,
-        max_lines=55,
-        key=f"ace_{selected_path}",
-    )
-
-    if new_content is not None:
-        st.session_state[edit_key]  = new_content
-        st.session_state[dirty_key] = (new_content != st.session_state[disk_key])
-
-    dirty = st.session_state[dirty_key]
-
-    # Action bar
-    ab1, ab2, ab3, ab4 = st.columns([2, 2, 2, 4])
-
-    with ab1:
-        save_clicked = st.button(
-            "💾 Save", use_container_width=True,
-            disabled=not dirty,
-            type="primary" if dirty else "secondary",
-        )
-    with ab2:
-        discard_clicked = st.button(
-            "↩ Discard", use_container_width=True, disabled=not dirty,
-        )
-    with ab3:
-        reload_clicked = st.button(
-            "🔄 Reload", use_container_width=True,
-            help="Re-read from disk (discards unsaved edits)",
-        )
-    with ab4:
-        if dirty:
-            st.markdown(
-                f'<div style="padding:8px 0;color:{COLORS["warning"]};'
-                f'font-size:0.80rem;font-weight:600;">● Unsaved changes</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f'<div style="padding:8px 0;color:{COLORS["positive"]};font-size:0.80rem;">'
-                f'✓ Saved</div>',
-                unsafe_allow_html=True,
-            )
-
-    if save_clicked:
-        try:
-            selected_path.write_text(st.session_state[edit_key], encoding="utf-8")
-            st.session_state[disk_key]  = st.session_state[edit_key]
-            st.session_state[dirty_key] = False
-            st.success(f"Saved → strategies/{selected_path.name}")
-            st.rerun()
-        except Exception as exc:
-            st.error(f"Save failed: {exc}")
-
-    if discard_clicked:
-        st.session_state[edit_key]  = st.session_state[disk_key]
-        st.session_state[dirty_key] = False
-        st.rerun()
-
-    if reload_clicked:
-        fresh = _load_file(selected_path)
-        st.session_state[disk_key]  = fresh
-        st.session_state[edit_key]  = fresh
-        st.session_state[dirty_key] = False
-        st.rerun()
+    if not strat_files:
+        st.warning("No files found in this strategy folder.")
+    elif len(strat_files) == 1:
+        _render_editor(strat_files[0])
+    else:
+        tab_labels = [f.name for f in strat_files]
+        file_tabs  = st.tabs(tab_labels)
+        for tab, file_path in zip(file_tabs, strat_files):
+            with tab:
+                _render_editor(file_path)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # RIGHT — Backtest config + results
@@ -422,14 +520,18 @@ with left:
 with right:
     st.markdown(section_label("Backtest Configuration"), unsafe_allow_html=True)
 
+    main_py = _main_py(selected_dir)
+
     # Load strategy defaults to pre-fill UI
-    try:
-        _spec = importlib.util.spec_from_file_location("_strat_tmp", selected_path)
-        _mod  = importlib.util.module_from_spec(_spec)
-        _spec.loader.exec_module(_mod)
-        _defaults = getattr(_mod, "DEFAULT_PARAMS", {})
-    except Exception:
-        _defaults = {}
+    _defaults: dict = {}
+    if main_py:
+        try:
+            _spec = importlib.util.spec_from_file_location("_strat_tmp", main_py)
+            _mod  = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_mod)
+            _defaults = getattr(_mod, "DEFAULT_PARAMS", {})
+        except Exception:
+            pass
 
     cfg1, cfg2 = st.columns(2)
     with cfg1:
@@ -446,8 +548,8 @@ with right:
             "Top-N positions", min_value=1, max_value=20,
             value=int(_defaults.get("top_n", 5)), step=1,
         )
-        scheme_opts = ["equal", "vol_scaled"]
-        scheme_def  = _defaults.get("weight_scheme", "equal")
+        scheme_opts   = ["equal", "vol_scaled"]
+        scheme_def    = _defaults.get("weight_scheme", "equal")
         weight_scheme = st.selectbox(
             "Weighting",
             options=scheme_opts,
@@ -458,7 +560,8 @@ with right:
         "▶  Run Backtest",
         type="primary",
         use_container_width=True,
-        help=f"Backtest strategies/{selected_path.name}",
+        disabled=main_py is None,
+        help=f"Backtest strategies/{selected_dir.name}/{main_py.name if main_py else ''}",
     )
 
     st.divider()
@@ -466,16 +569,16 @@ with right:
     results_ph = st.empty()
     console_ph = st.empty()
 
-    result_key = f"lab_result_{selected_path.name}"
+    result_key = f"lab_result_{selected_dir.name}"
 
     if result_key in st.session_state and not run_btn:
         _show_results(results_ph, console_ph, st.session_state[result_key])
 
-    if run_btn:
+    if run_btn and main_py:
         runner = str(_ROOT / "tools" / "backtest_runner.py")
         cmd = [
             sys.executable, runner,
-            "--strategy",       str(selected_path),
+            "--strategy",       str(main_py),
             "--lookback-years", str(int(lookback_years)),
             "--top-n",          str(int(top_n)),
             "--cost-bps",       str(float(cost_bps)),
