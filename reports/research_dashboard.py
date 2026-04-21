@@ -723,20 +723,28 @@ with tab_mc:
             "• Equity curve — column named 'equity', 'value', 'nav', etc."
         ),
     )
-    mc_is_equity = st.checkbox("CSV is an equity curve (not trade/return series)", value=False)
+    ck_col1, ck_col2 = st.columns(2)
+    mc_is_equity  = ck_col1.checkbox("CSV is an equity curve (not return series)", value=False)
+    mc_pct_format = ck_col2.checkbox(
+        "Returns are in % format (÷ 100)",
+        value=False,
+        help="Check if your return column stores e.g. 5.0 for a 5 % gain instead of 0.05.",
+    )
 
     mc_run = st.button("▶ Run Monte Carlo", type="primary", disabled=mc_file is None)
-    _mc_key = f"mc_result_{mc_n_sims}_{mc_block}_{mc_ppyr}_{mc_capital}"
+    _mc_key = f"mc_result_{mc_n_sims}_{mc_block}_{mc_ppyr}_{mc_capital}_{mc_is_equity}_{mc_pct_format}"
 
     if mc_run and mc_file is not None:
         with st.spinner(f"Running {mc_n_sims:,} bootstrap simulations…"):
             try:
-                import io, tempfile, os
+                import tempfile, os
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
                     tmp.write(mc_file.getvalue())
                     tmp_path = tmp.name
                 rets = load_returns_csv(tmp_path, from_equity=mc_is_equity, initial_capital=float(mc_capital))
                 os.unlink(tmp_path)
+                if mc_pct_format:
+                    rets = rets / 100.0
 
                 cfg = MCConfig(
                     n_simulations   = mc_n_sims,

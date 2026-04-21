@@ -199,9 +199,14 @@ def _block_bootstrap(returns: np.ndarray, n_out: int, block_size: int, rng: np.r
 
 
 def _build_equity(rets: np.ndarray, capital: float) -> np.ndarray:
-    eq = np.empty(len(rets) + 1)
-    eq[0] = capital
-    eq[1:] = capital * np.cumprod(1.0 + rets)
+    # Use log-cumsum to prevent float64 overflow from cumprod.
+    # Cap at exp(100) ≈ 2.7e43 × capital — effectively caps runaway paths
+    # while preserving all realistic outcomes.
+    log_gross = np.log(np.clip(1.0 + rets, 1e-10, None))
+    log_cum   = np.clip(np.cumsum(log_gross), None, 100.0)
+    eq        = np.empty(len(rets) + 1)
+    eq[0]     = capital
+    eq[1:]    = capital * np.exp(log_cum)
     return eq
 
 
@@ -273,10 +278,22 @@ def run(returns: np.ndarray, config: MCConfig) -> MCResult:
     MCResult with all pre-computed data for dashboard rendering.
     """
     returns = np.asarray(returns, dtype=float)
-    returns = returns[~np.isnan(returns)]
+    returns = returns[np.isfinite(returns)]
     n       = len(returns)
     if n < 10:
         raise ValueError(f"Need at least 10 return observations, got {n}.")
+
+    # Detect percentage-format returns early (e.g. 5.0 instead of 0.05).
+    # Returns > 2.0 in absolute value are physically impossible for a
+    # diversified portfolio in a single period and cause cumprod overflow.
+    max_abs = float(np.abs(returns).max())
+    if max_abs > 2.0:
+        raise ValueError(
+            f"Largest |return| = {max_abs:.2f}, which suggests the data is in "
+            f"percentage format (e.g. 5.0 for 5 %). "
+            f"Check 'Returns are in % format (÷ 100)' to auto-convert, "
+            f"or divide your CSV column by 100 before uploading."
+        )
 
     C      = config
     capital = C.initial_capital

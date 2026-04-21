@@ -4,7 +4,7 @@ An end-to-end quantitative finance pipeline for systematic equity and crypto tra
 
 **Stack:** Python 3.13 · Polars · DuckDB · Parquet · VectorBT · cvxpy · PyPortfolioOpt · Streamlit · streamlit-ace · reportlab · kaleido · IBKR · CCXT · `uv`
 
-**Status:** Phases 0–6 complete. Pipeline running with live data. 145 tests passing.
+**Status:** Phases 0–6 complete + Research tools + RADA strategy. Pipeline running with live data. 145 tests passing.
 
 **Live results (canary, 6-year backtest):** Sharpe 1.036 · CAGR 17.1% · Max DD −14.3%
 
@@ -64,9 +64,11 @@ Data flows in one direction through clearly separated layers. No module reaches 
     ▼
 [execution]       ← BrokerAdapter protocol → IBKR, CCXT, PaperBroker
     ▼
-[reports]         ← Streamlit dashboards (ops health + P&L performance)
+[reports]         ← Streamlit dashboards (health · performance · strategy lab · research)
     │
 [orchestration]   ← cron-driven pipeline, alerting via Pushover/ntfy
+    │
+[research]        ← Monte Carlo, signal scanner, factor analysis, walk-forward (pure functions)
 ```
 
 **Key invariants:**
@@ -103,8 +105,10 @@ QuantPipe/
 │   └── compute.py              compute_and_store(), load_features() with gold-layer cache
 │
 ├── signals/
-│   └── momentum.py             cross_sectional_momentum(), momentum_weights(),
-│                               get_monthly_rebalance_dates()
+│   ├── momentum.py             cross_sectional_momentum(), momentum_weights(),
+│   │                           get_monthly_rebalance_dates()
+│   ├── composite.py            CompositeSignal — multi-factor blending with IC weighting
+│   └── analysis.py             signal_decay(), ic_series(), turnover_analysis()
 │
 ├── backtest/
 │   ├── engine.py               run_backtest() — VectorBT wrapper, cost model
@@ -120,8 +124,10 @@ QuantPipe/
 ├── risk/
 │   ├── engine.py               compute_exposures(), historical_var(), pre_trade_check(),
 │   │                           generate_risk_report(), print_risk_report()
-│   └── scenarios.py            4 stress scenarios (2008 GFC, 2020 COVID, 2022 rates,
-│                               2000 dot-com) + run_all_scenarios()
+│   ├── scenarios.py            4 stress scenarios (2008 GFC, 2020 COVID, 2022 rates,
+│   │                           2000 dot-com) + run_all_scenarios()
+│   ├── factor_model.py         FactorModel — OLS factor loadings, R², idiosyncratic risk
+│   └── attribution.py          performance_attribution() — factor vs. selection decomposition
 │
 ├── execution/
 │   ├── base.py                 BrokerAdapter protocol, Order, Fill, Position types
@@ -140,7 +146,12 @@ QuantPipe/
 │
 ├── strategies/
 │   ├── __init__.py
-│   └── momentum_top5.py        Cross-sectional 12-1 momentum, equal-weight top-5 (template)
+│   ├── momentum_top5/
+│   │   ├── momentum_top5.py    Cross-sectional 12-1 momentum, equal-weight top-5 (template)
+│   │   └── README.md
+│   └── regime_adaptive_dynamic_allocation/
+│       ├── regime_adaptive_dynamic_allocation.py   RADA — 4-component regime score + skip-month momentum
+│       └── README.md
 │
 ├── tools/
 │   ├── __init__.py
@@ -149,10 +160,15 @@ QuantPipe/
 ├── reports/
 │   ├── health_dashboard.py     Dashboard #1: ops health, ingestion status, log viewer
 │   ├── performance_dashboard.py Dashboard #2: equity curve, drawdown, Sharpe, exposures, PDF export
-│   ├── strategy_lab.py         Dashboard #3: in-browser strategy editor + backtest runner
+│   ├── strategy_lab.py         Dashboard #3: folder-based strategy editor + backtest runner
+│   ├── research_dashboard.py   Dashboard #4: signal scanner, factor analysis, walk-forward, Monte Carlo
 │   └── pdf_export.py           ReportLab PDF builder — charts via kaleido, no Streamlit deps
 │
-├── research/                   Jupyter notebooks (exploration only, never production)
+├── research/
+│   ├── signal_scanner.py       scan_signals() — cross-sectional IC, autocorrelation, decay
+│   ├── factor_analysis.py      factor_returns(), cumulative_factor_performance()
+│   ├── walk_forward_runner.py  run_walk_forward() — expanding-window OOS result builder
+│   └── monte_carlo.py          MCConfig, run() — circular block bootstrap, fan chart data
 │
 ├── tests/
 │   ├── test_adapters.py        Adapter schema + date range (hits network)
@@ -265,7 +281,7 @@ Snapshot tests in `tests/test_features.py` pin output to a fixed fixture. Any ac
 
 ### `signals`
 
-Cross-sectional momentum signal pipeline in `signals/momentum.py`.
+Cross-sectional signal pipeline. `signals/momentum.py` provides the baseline implementation; `signals/composite.py` blends multiple factors; `signals/analysis.py` diagnoses signal quality.
 
 ```python
 from signals.momentum import cross_sectional_momentum, momentum_weights, get_monthly_rebalance_dates
@@ -276,6 +292,20 @@ signal = cross_sectional_momentum(features_df, rebalance_dates, top_n=5)
 # Convert signal to equal-weight or vol-scaled weights
 weights = momentum_weights(signal, weight_scheme="equal")
 weights = momentum_weights(signal, weight_scheme="vol_scaled", vol_series=vol_df)
+```
+
+```python
+from signals.composite import CompositeSignal
+from signals.analysis import ic_series, signal_decay, turnover_analysis
+
+# Blend momentum + reversal with IC-based weights
+cs = CompositeSignal([("momentum", 0.7), ("reversal", 0.3)])
+blended = cs.blend(features_df, rebalance_dates)
+
+# Diagnose signal quality
+ic = ic_series(signal, forward_returns)          # Information Coefficient over time
+decay = signal_decay(signal, forward_returns)    # IC by holding period
+turnover = turnover_analysis(weights_history)    # Average portfolio turnover
 ```
 
 ---
@@ -360,6 +390,21 @@ print_risk_report(report)
 | `var_limit_pct` | None (uncapped by default) |
 
 **Stress scenarios** in `risk/scenarios.py`: `2008_GFC`, `2020_COVID`, `2022_RATES`, `2000_DOTCOM`.
+
+**Factor model** (`risk/factor_model.py`) — OLS factor loadings, R², and idiosyncratic risk for any portfolio against a configurable factor set (SPY, sectors, style boxes).
+
+**Attribution** (`risk/attribution.py`) — decomposes realized P&L into factor-driven and stock-selection components:
+
+```python
+from risk.factor_model import FactorModel
+from risk.attribution import performance_attribution
+
+fm = FactorModel(factors=["SPY", "TLT", "GLD"])
+loadings = fm.fit(portfolio_returns, factor_returns)
+
+attr = performance_attribution(weights_history, price_history, factor_returns)
+# attr.factor_return, attr.selection_return, attr.total_return
+```
 
 ---
 
@@ -466,7 +511,7 @@ Exit codes: `0` = success, `1` = partial failure, `2` = total failure. Pushover/
 
 ### `reports`
 
-All three dashboards are wired together in `app.py` and launched via a single command:
+All four dashboards are wired together in `app.py` and launched via a single command:
 
 ```bash
 streamlit run app.py
@@ -481,33 +526,54 @@ Shows: last ingestion time per asset class, signal freshness, universe sizes, pe
 Shows: equity curve with benchmark overlay, trailing returns bar, rolling Sharpe/Sortino, monthly returns heatmap, return distribution with VaR markers, current portfolio positions + sector breakdown, stress scenario bars, top drawdown table.
 
 Download bar at the top of the page:
-- **📄 PDF Report** — full multi-section report (executive summary, performance charts, portfolio, risk, analytics) as a print-ready PDF generated with ReportLab + kaleido.
-- **📊 Trade History** — every backtest transaction (entry, exit, size, P&L) as CSV.
+- **PDF Report** — full multi-section report (executive summary, performance charts, portfolio, risk, analytics) as a print-ready PDF generated with ReportLab + kaleido.
+- **Trade History** — every backtest transaction (entry, exit, size, P&L) as CSV.
 
 **Dashboard #3 — Strategy Lab** (`reports/strategy_lab.py`):
 
 In-browser strategy development environment backed by the `strategies/` folder.
 
-- Strategy selector dropdown auto-discovers all `strategies/*.py` files.
-- **➕ New Strategy** button scaffolds a new file from the standard template.
-- Ace editor (via `streamlit-ace`) for in-browser Python editing with syntax highlighting.
+- Strategy selector dropdown auto-discovers all strategy folders under `strategies/`.
+- **➕ New Strategy** button scaffolds a new folder with a `.py` stub and `README.md`.
+- Ace editor (via `streamlit-ace`) with per-file tabs for every file in the strategy folder.
 - Save / Discard / Reload action bar with per-file dirty state tracking.
 - Backtest config panel (lookback, top-N, cost bps, weight scheme) pre-filled from `DEFAULT_PARAMS`.
 - **▶ Run Backtest** fires `tools/backtest_runner.py` as a subprocess, streams progress, and displays full tearsheet results in-page.
 
+**Dashboard #4 — Research** (`reports/research_dashboard.py`):
+
+Quantitative research workbench with five tabs:
+
+| Tab | Tool | Purpose |
+|---|---|---|
+| Signal Scanner | `research/signal_scanner.py` | IC series, signal decay by holding period, autocorrelation |
+| Factor Analysis | `research/factor_analysis.py` | Factor return series, cumulative performance, correlation heatmap |
+| Walk-Forward | `research/walk_forward_runner.py` | Expanding-window OOS Sharpe, rolling performance, parameter stability |
+| Monte Carlo | `research/monte_carlo.py` | Circular block bootstrap, fan chart, terminal wealth distribution, P(ruin/doubling) |
+| (More coming) | — | — |
+
 ### `strategies`
 
-User-defined strategy files. Each file must expose:
+Each strategy lives in its own subfolder: `strategies/<slug>/<slug>.py` + `README.md`. The Strategy Lab auto-discovers all subfolders and the backtest runner resolves the primary `.py` by name match.
+
+Every strategy module must expose:
 
 | Attribute | Type | Description |
 |---|---|---|
 | `NAME` | `str` | Display name in Strategy Lab selector |
 | `DESCRIPTION` | `str` | One-line summary |
 | `DEFAULT_PARAMS` | `dict` | Fallback values for `lookback_years`, `top_n`, `cost_bps`, `weight_scheme` |
-| `get_signal(features, rebal_dates, **kwargs)` | function | Returns signal `pl.DataFrame` |
-| `get_weights(signal, **kwargs)` | function | Returns weights `pl.DataFrame` |
+| `get_signal(features, rebal_dates, **kwargs)` | `pl.DataFrame` | Columns: `rebalance_date, symbol, score, rank, selected` |
+| `get_weights(signal, **kwargs)` | `pl.DataFrame` | Columns: `rebalance_date, symbol, weight` |
 
-New strategies can be created from the Strategy Lab UI or by copying `strategies/momentum_top5.py`.
+**Included strategies:**
+
+| Strategy | File | Description |
+|---|---|---|
+| Momentum Top-5 | `momentum_top5/momentum_top5.py` | 12-1 skip-month momentum, equal-weight top-5 (baseline template) |
+| RADA | `regime_adaptive_dynamic_allocation/regime_adaptive_dynamic_allocation.py` | 4-component regime score (trend · breadth · vol · macro) sets equity/cash split; skip-month momentum selects top-N ETFs within that allocation |
+
+New strategies can be created from the Strategy Lab UI (scaffolds folder + stub + README) or by copying the `momentum_top5/` folder.
 
 ### `tools`
 
@@ -515,7 +581,7 @@ New strategies can be created from the Strategy Lab UI or by copying `strategies
 
 ```bash
 uv run python tools/backtest_runner.py \
-    --strategy strategies/momentum_top5.py \
+    --strategy strategies/momentum_top5/momentum_top5.py \
     --lookback-years 6 \
     --top-n 5 \
     --cost-bps 5.0 \
@@ -534,12 +600,28 @@ Progress lines stream to stderr for display in the Strategy Lab console expander
 
 ### `research`
 
-Jupyter notebooks for exploratory work. Naming convention: `YYYY-MM-DD_short-description.ipynb`.
+Python module providing the analytical backend for the Research dashboard. Each tool is a pure function — no I/O, no Streamlit dependencies — and can be called from notebooks or scripts.
+
+| Module | Key functions | Description |
+|---|---|---|
+| `signal_scanner.py` | `scan_signals()` | IC series, autocorrelation, decay by holding period |
+| `factor_analysis.py` | `factor_returns()`, `cumulative_factor_performance()` | Long/short factor portfolios, cumulative returns, correlation |
+| `walk_forward_runner.py` | `run_walk_forward()` | Expanding-window OOS result builder, rolling Sharpe surface |
+| `monte_carlo.py` | `MCConfig`, `run()`, `load_returns_csv()` | Circular block bootstrap, fan chart percentiles, terminal wealth stats, P(ruin) / P(doubling) |
+
+```python
+from research.monte_carlo import MCConfig, load_returns_csv, run as run_mc
+
+rets, meta = load_returns_csv("backtest_returns.csv", from_equity=False)
+result = run_mc(rets, MCConfig(n_sims=5000, horizon_years=5.0, initial_capital=100_000))
+print(f"Median terminal wealth: ${result.med_final:,.0f}")
+print(f"P(doubling): {result.prob_doubling:.1%}")
+```
 
 Rules:
-- Notebooks are exploration only — logic that matters migrates to a module.
+- Research modules contain only pure analysis functions — logic that matters migrates to a production module.
 - Never use `data.shift(-1)` or any future-looking operation.
-- Track every hypothesis in the notebook header: what you expected, what you found.
+- Track every hypothesis: what you expected, what you found.
 
 ---
 
@@ -649,7 +731,7 @@ uv run python orchestration/run_pipeline.py
 # 2. Paper rebalance at market close (automated via Task Scheduler at 16:30)
 uv run python orchestration/rebalance.py --broker paper
 
-# 3. All dashboards (Health · Performance · Strategy Lab)
+# 3. All dashboards (Health · Performance · Strategy Lab · Research)
 streamlit run app.py
 ```
 
