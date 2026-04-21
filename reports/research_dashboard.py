@@ -814,7 +814,7 @@ with tab_mc:
     fig_fan.add_trace(go.Scatter(
         x=_px, y=_py,
         mode="lines",
-        line=dict(color="rgba(160,160,160,0.05)", width=0.5),
+        line=dict(color="rgba(160,160,160,0.22)", width=0.7),
         showlegend=False, hoverinfo="skip", name="_sim_paths",
     ))
 
@@ -837,10 +837,20 @@ with tab_mc:
         hovertemplate="Period %{x}: $%{y:,.0f}<extra>Original</extra>",
     ))
 
+    # Clamp y-axis to P5–P95 range with 5% padding so outlier paths don't
+    # distort the scale. The original path is allowed to exceed this window.
+    _y_lo = min(r.fan_p5)
+    _y_hi = max(r.fan_p95)
+    _orig_min = min(r.orig_equity)
+    _orig_max = max(r.orig_equity)
+    _pad = (_y_hi - _y_lo) * 0.05
+    _range_lo = min(_y_lo, _orig_min) - _pad
+    _range_hi = max(_y_hi, _orig_max) + _pad
+
     apply_theme(fig_fan, legend_inside=False)
     fig_fan.update_layout(
         height=360,
-        yaxis=dict(tickprefix="$", tickformat=",.0f"),
+        yaxis=dict(tickprefix="$", tickformat=",.0f", range=[_range_lo, _range_hi]),
         xaxis=dict(title="Period"),
     )
     st.plotly_chart(fig_fan, width="stretch", config=PLOTLY_CONFIG)
