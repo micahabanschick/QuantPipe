@@ -277,6 +277,20 @@ def run_rebalance(
         log.info(format_reconcile_report(recon))
         write_reconcile_log(recon, RECONCILE_LOG_PATH)
 
+        # Persist NAV snapshot for the trading dashboards
+        if not dry_run:
+            try:
+                from execution.trading_log import append_nav_snapshot
+                TRADING_HISTORY_PATH = DATA_DIR / "gold" / "equity" / "trading_history.parquet"
+                append_nav_snapshot(
+                    TRADING_HISTORY_PATH, today, broker_name,
+                    nav=recon.nav,
+                    cash=broker.get_cash() if hasattr(broker, "get_cash") else 0.0,
+                    n_positions=len([p for p in broker_positions_after if abs(p.qty) > 1e-9]),
+                )
+            except Exception as exc:
+                log.warning(f"Could not write NAV snapshot: {exc}")
+
         if has_material_drift(recon):
             _send_alert(f"[{today}] Material position drift detected! Check reconcile log.")
             return 1

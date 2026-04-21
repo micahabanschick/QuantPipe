@@ -287,16 +287,35 @@ def read_deployment_config() -> Optional[DeploymentConfig]:
         return None
 
 
+_DEPLOYMENT_HISTORY_PATH = DATA_DIR / "gold" / "equity" / "deployment_history.jsonl"
+
+
 def write_deployment_config(config: DeploymentConfig) -> None:
     _DEPLOYMENT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    new_version = config.version + 1
     payload = {
-        "version": config.version + 1,
-        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "version": new_version,
+        "updated_at": now,
         "strategies": [asdict(s) for s in config.strategies],
     }
     tmp = _DEPLOYMENT_CONFIG_PATH.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     os.replace(tmp, _DEPLOYMENT_CONFIG_PATH)
+
+    # Append to immutable deployment history for the trading dashboards
+    active = [s for s in config.strategies if s.active]
+    history_entry = {
+        "timestamp": now,
+        "version": new_version,
+        "strategies": [
+            {"slug": s.slug, "name": s.name, "allocation_weight": s.allocation_weight}
+            for s in active
+        ],
+    }
+    _DEPLOYMENT_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _DEPLOYMENT_HISTORY_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(history_entry) + "\n")
 
 
 def deployment_target_weights(
