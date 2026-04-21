@@ -93,10 +93,12 @@ st.markdown(
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab_overview, tab_perf, tab_health, tab_glossary, tab_ops = st.tabs([
+tab_overview, tab_perf, tab_health, tab_lab, tab_trading, tab_glossary, tab_ops = st.tabs([
     "  Overview  ",
-    "  Performance Dashboard  ",
+    "  Performance  ",
     "  Health Dashboard  ",
+    "  Strategy Lab  ",
+    "  Paper & Live Trading  ",
     "  Metrics Glossary  ",
     "  Pipeline & Ops  ",
 ])
@@ -146,9 +148,14 @@ from raw price ingestion to paper-trade execution:
     with col_b:
         st.markdown(section_label("Navigation"), unsafe_allow_html=True)
         nav_items = [
-            ("🔧", "Pipeline Health", "System status, data freshness, log viewer"),
-            ("📈", "Performance",     "Backtest tearsheet, portfolio analytics, risk"),
-            ("📖", "Guide & Glossary","This page — metric definitions and how-to"),
+            ("🔧", "Pipeline Health",  "System status, data freshness, log viewer"),
+            ("📈", "Performance",      "Backtest tearsheet, portfolio analytics, risk"),
+            ("⚗️", "Strategy Lab",     "Code editor, backtester, parameter sweep, walk-forward"),
+            ("🔬", "Research",         "Signal scanner, factor analysis, walk-forward folds"),
+            ("💼", "Portfolio",        "Multi-strategy overview, optimizer, deployment control"),
+            ("📄", "Paper Trading",    "Live equity curve and order history for the paper account"),
+            ("⚡", "Live Trading",     "Real-money IBKR account monitoring"),
+            ("📖", "Guide & Glossary", "This page — metric definitions and how-to"),
         ]
         for icon, title, desc in nav_items:
             st.markdown(
@@ -163,18 +170,17 @@ from raw price ingestion to paper-trade execution:
                 unsafe_allow_html=True,
             )
 
-        st.markdown(section_label("Strategy Summary"), unsafe_allow_html=True)
+        st.markdown(section_label("Default Strategy"), unsafe_allow_html=True)
         st.markdown(
             f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'
             f'border-radius:8px;padding:14px 16px;font-size:0.82rem;'
             f'color:{COLORS["neutral"]};line-height:1.8;">'
             f'<b style="color:{COLORS["text"]};">Canary</b> — Cross-sectional 12-1 momentum<br/>'
-            f'Universe: 26 equity ETFs<br/>'
-            f'Selection: Top-5 by momentum score<br/>'
-            f'Weighting: Equal weight (20% each)<br/>'
-            f'Rebalance: Monthly<br/>'
-            f'Cost: 5 bps per trade<br/>'
-            f'<b style="color:{COLORS["positive"]};">Sharpe 1.04 · CAGR 17.1% · Max DD −14.3%</b>'
+            f'Universe: 26 equity ETFs · Selection: Top-5<br/>'
+            f'Weighting: Equal weight · Rebalance: Monthly<br/>'
+            f'Cost: 5 bps/trade<br/>'
+            f'<span style="font-size:0.78rem;color:{COLORS["text_muted"]};">'
+            f'Backtest results visible in the Performance and Strategy Lab tabs.</span>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -184,9 +190,12 @@ from raw price ingestion to paper-trade execution:
         ("1", COLORS["blue"],     "Launch", f"Run {cmd('streamlit run app.py')} and open the browser URL shown."),
         ("2", COLORS["positive"], "Check Health", "Open <b>Pipeline Health</b> → Status tab. Verify all components are green."),
         ("3", COLORS["warning"],  "Review Performance", "Open <b>Performance</b> → Overview tab. Check equity curve and KPIs against benchmarks."),
-        ("4", COLORS["purple"],   "Inspect Portfolio", "Performance → Portfolio tab shows current weights, sector exposure, and rebalance history."),
-        ("5", COLORS["neutral"],  "Monitor Risk", "Performance → Risk tab shows VaR, stress scenarios, and top drawdown periods."),
-        ("6", COLORS["teal"],     "Run Pipeline", f"Execute {cmd('uv run python orchestration/run_pipeline.py')} daily (or let Task Scheduler handle it)."),
+        ("4", COLORS["purple"],   "Inspect Portfolio", "Open <b>Portfolio</b> to review multi-strategy allocation, optimizer, and deployment config."),
+        ("5", COLORS["neutral"],  "Research / Lab", "Use <b>Strategy Lab</b> to edit and backtest strategies. Run a parameter sweep or walk-forward to validate."),
+        ("6", COLORS["teal"],     "Deploy Strategy", "In Portfolio → Deployment tab, toggle active strategies and save config."),
+        ("7", COLORS["orange"],   "Paper Trade", f"Run {cmd('uv run python orchestration/rebalance.py --broker paper')} or let the scheduler handle it."),
+        ("8", COLORS["blue"],     "Monitor Paper", "Open <b>Paper Trading</b> to track the live equity curve, NAV, and order history."),
+        ("9", COLORS["teal"],     "Run Pipeline", f"Execute {cmd('uv run python orchestration/run_pipeline.py')} daily (or let Task Scheduler handle it)."),
     ]
     cols = st.columns(3)
     for idx, (num, color, title, desc) in enumerate(steps):
@@ -565,7 +574,257 @@ The expander is auto-opened when errors are present. Look for lines containing:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — METRICS GLOSSARY
+# TAB 4 — STRATEGY LAB
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_lab:
+    st.markdown(
+        info("The Strategy Lab is where you write, edit, and backtest strategy code entirely within the browser. "
+             "All changes are saved to the <code>strategies/</code> directory."),
+        unsafe_allow_html=True,
+    )
+
+    subtab_editor, subtab_bt, subtab_sweep, subtab_wf = st.tabs([
+        "Code Editor", "Backtesting", "Parameter Sweep", "Walk-Forward",
+    ])
+
+    with subtab_editor:
+        st.markdown(section_label("Strategy File Structure"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+Each strategy lives in its own folder under <code>strategies/&lt;slug&gt;/</code>
+and must contain at minimum a Python file with the following interface:
+</div>
+""", unsafe_allow_html=True)
+        st.code("""NAME        = "My Strategy"
+DESCRIPTION = "One-line description"
+DEFAULT_PARAMS = {
+    "lookback_years": 6,
+    "top_n":          5,
+    "cost_bps":       5.0,
+    "weight_scheme":  "equal",   # or "vol_scaled"
+}
+
+def get_signal(features, rebal_dates, top_n, **kwargs):
+    ...  # return a Polars DataFrame [rebalance_date, symbol, rank/score]
+
+def get_weights(signal, weight_scheme, **kwargs):
+    ...  # return a Polars DataFrame [rebalance_date, symbol, weight]""", language="python")
+        st.markdown(
+            tip("Click <b>➕ New</b> in the Strategy Lab to create a pre-filled template, then "
+                "customise the <code>get_signal()</code> function to implement your logic."),
+            unsafe_allow_html=True,
+        )
+        st.markdown(section_label("Validate Button"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+Clicking <b style="color:{COLORS['text']};">✔ Validate</b> runs three checks without executing a full backtest:
+<ul style="margin:8px 0;padding-left:20px;">
+  <li><b>Syntax</b> — Python compile check; reports line number on error.</li>
+  <li><b>Import</b> — Attempts to load the module; catches missing dependencies or bad imports.</li>
+  <li><b>Interface</b> — Verifies that <code>get_signal</code>, <code>get_weights</code>,
+      <code>NAME</code>, <code>DESCRIPTION</code>, and all required <code>DEFAULT_PARAMS</code>
+      keys are present.</li>
+</ul>
+All checks must pass before running a backtest.
+</div>
+""", unsafe_allow_html=True)
+
+    with subtab_bt:
+        st.markdown(section_label("Running a Backtest"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+Click <b style="color:{COLORS['text']};">▶ Run Backtest</b> with the desired configuration:
+<ul style="margin:8px 0;padding-left:20px;">
+  <li><b>Lookback (years)</b> — History window for the simulation. Longer windows improve statistical
+      confidence but may include stale regimes.</li>
+  <li><b>Top-N positions</b> — Number of ETFs held at each rebalance.</li>
+  <li><b>Cost (bps)</b> — Round-trip transaction cost per trade (5 bps ≈ 0.05% each way).</li>
+  <li><b>Weighting</b> — <code>equal</code> assigns uniform weight; <code>vol_scaled</code>
+      gives more weight to lower-volatility holdings.</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+        st.markdown(section_label("Result Tabs"), unsafe_allow_html=True)
+        result_tabs = [
+            ("Equity Curve", "Strategy NAV vs. SPY (scaled to same starting value). Hover for daily values."),
+            ("Rolling Analytics", "Rolling Sharpe and drawdown charts over a sliding window. Identifies regime changes."),
+            ("Monthly Returns", "Year × month heatmap. Red cells = negative months, green = positive."),
+            ("Trade Log", "Every simulated order with date, symbol, quantity, price, value, cost, and direction."),
+        ]
+        for tab_name, desc in result_tabs:
+            st.markdown(
+                f'<div style="display:flex;gap:10px;padding:8px 0;'
+                f'border-bottom:1px solid {COLORS["border_dim"]};">'
+                f'<div style="min-width:140px;color:{COLORS["text"]};font-size:0.85rem;'
+                f'font-weight:600;">{tab_name}</div>'
+                f'<div style="color:{COLORS["neutral"]};font-size:0.82rem;">{desc}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown(
+            tip("Use the <b>⬇ Equity Curve (CSV)</b> and <b>⬇ Trade Log (CSV)</b> download buttons "
+                "to export results for further analysis in Excel or a Jupyter notebook."),
+            unsafe_allow_html=True,
+        )
+
+    with subtab_sweep:
+        st.markdown(section_label("Parameter Sweep"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+The parameter sweep runs a full backtest for every combination of
+<b style="color:{COLORS['text']};">Top-N</b> and <b style="color:{COLORS['text']};">Lookback</b>
+values you specify. Results are shown as a Sharpe ratio heatmap.
+</div>
+""", unsafe_allow_html=True)
+        st.markdown(
+            warn("Each cell is a separate backtest. A 4×3 grid = 12 backtests. Keep the grid small "
+                 "(≤ 20 cells) to avoid long runtimes. The computation runs in-process, so the "
+                 "browser will appear frozen until it completes."),
+            unsafe_allow_html=True,
+        )
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;margin-top:8px;">
+<b style="color:{COLORS['text']};">Interpreting the heatmap:</b>
+<ul style="margin:8px 0;padding-left:20px;">
+  <li>Green cells → high Sharpe for that combination.</li>
+  <li>Red cells → poor fit; avoid those parameters.</li>
+  <li>Prefer parameter regions where a <i>cluster</i> of cells is green — a single bright cell
+      surrounded by red suggests overfitting.</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+
+    with subtab_wf:
+        st.markdown(section_label("Walk-Forward Validation"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+Walk-forward splits the historical data into an
+<b style="color:{COLORS['text']};">In-Sample (IS)</b> period used to develop the strategy
+and an <b style="color:{COLORS['text']};">Out-of-Sample (OOS)</b> period used to test whether
+the strategy holds up on unseen data.
+</div>
+""", unsafe_allow_html=True)
+        st.markdown(
+            warn("If OOS Sharpe drops sharply relative to IS Sharpe, the strategy is likely overfit. "
+                 "A robust strategy should show OOS Sharpe within ~30% of its IS Sharpe."),
+            unsafe_allow_html=True,
+        )
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;margin-top:8px;">
+The <b style="color:{COLORS['text']};">OOS fraction slider</b> controls how much of the data
+is held out. A value of 0.30 means the last 30% of the history is the test set.
+The equity curves are indexed to 100 so both periods start at the same point for easy comparison.
+</div>
+""", unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — PAPER & LIVE TRADING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_trading:
+    st.markdown(
+        info("Paper trading simulates real execution using a $100,000 virtual account. "
+             "Live trading connects to IBKR TWS/Gateway for real-money execution."),
+        unsafe_allow_html=True,
+    )
+
+    subtab_paper, subtab_live, subtab_setup = st.tabs([
+        "Paper Trading", "Live Trading", "IBKR Setup",
+    ])
+
+    with subtab_paper:
+        st.markdown(section_label("Paper Trading Dashboard"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+The Paper Trading dashboard shows the live performance of the deployed strategy configuration
+using a virtual $100,000 account:
+<ul style="margin:8px 0;padding-left:20px;">
+  <li><b style="color:{COLORS['text']};">Equity Curve</b> — Daily NAV computed from
+      target weights × live prices, anchored to actual NAV snapshots after each rebalance.</li>
+  <li><b style="color:{COLORS['text']};">Rebalance dots</b> — Markers on the curve showing
+      each rebalance event.</li>
+  <li><b style="color:{COLORS['text']};">Deployment markers</b> — Vertical dotted lines
+      whenever the active strategy configuration changed.</li>
+  <li><b style="color:{COLORS['text']};">Current Positions</b> — Latest target weights with
+      estimated dollar values and a pie chart.</li>
+  <li><b style="color:{COLORS['text']};">Trade History</b> — All order attempts with status
+      (FILLED / REJECTED / PENDING).</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+        st.markdown(section_label("Running a Paper Rebalance"), unsafe_allow_html=True)
+        st.code("uv run python orchestration/rebalance.py --broker paper", language="bash")
+        st.markdown(
+            tip("The Task Scheduler runs this automatically at 16:30 Mon–Fri. "
+                "Click <b>Refresh</b> on the dashboard after the rebalance completes to see updated data."),
+            unsafe_allow_html=True,
+        )
+
+    with subtab_live:
+        st.markdown(section_label("Live Trading Dashboard"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+The Live Trading dashboard connects to IBKR TWS/Gateway and displays:
+<ul style="margin:8px 0;padding-left:20px;">
+  <li><b style="color:{COLORS['text']};">Connection status</b> — Shows whether TWS/Gateway
+      is reachable on the configured host and port.</li>
+  <li><b style="color:{COLORS['text']};">Current NAV</b> — Net Liquidation Value pulled
+      directly from the IBKR account.</li>
+  <li><b style="color:{COLORS['text']};">Open positions</b> — Current holdings with quantity
+      and average cost.</li>
+  <li><b style="color:{COLORS['text']};">NAV history</b> — Snapshots recorded after each
+      live rebalance.</li>
+</ul>
+</div>
+""", unsafe_allow_html=True)
+        st.markdown(
+            warn("Live trading is intentionally minimal. The paper trading tab is the primary "
+                 "monitoring tool. The live tab requires TWS or IB Gateway to be running and "
+                 "accessible on the network."),
+            unsafe_allow_html=True,
+        )
+
+    with subtab_setup:
+        st.markdown(section_label("IBKR Connection Settings"), unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="color:{COLORS['neutral']};font-size:0.85rem;line-height:1.75;">
+Configure the IBKR connection in <code>config/settings.py</code>:
+</div>
+""", unsafe_allow_html=True)
+        st.code("""IBKR_HOST      = "127.0.0.1"   # TWS/Gateway host
+IBKR_PORT      = 7497          # 7497 = paper, 7496 = live
+IBKR_CLIENT_ID = 1             # Unique ID per connected client""", language="python")
+        st.markdown(
+            warn("Always test with paper trading (port 7497) before switching to live (port 7496). "
+                 "Set <code>IBKR_PORT = 7496</code> only when you are ready for real-money execution."),
+            unsafe_allow_html=True,
+        )
+        st.markdown(section_label("Troubleshooting IBKR"), unsafe_allow_html=True)
+        ib_issues = [
+            ("Connection refused / timeout",
+             "Ensure TWS or IB Gateway is running and 'Allow API connections' is checked in "
+             "TWS → Configuration → API → Settings."),
+            ("Wrong client ID error",
+             "Each client connection needs a unique clientId. If another script or the dashboard "
+             "is already connected, increment IBKR_CLIENT_ID."),
+            ("Market data frozen / no prices",
+             "IB paper accounts require a market data subscription. Check TWS → Account → Market Data."),
+            ("Rebalance fails for live broker",
+             "Run with --broker paper first to verify the order flow, then switch to --broker ibkr."),
+        ]
+        for problem, solution in ib_issues:
+            with st.expander(problem):
+                st.markdown(
+                    f'<div style="color:{COLORS["neutral"]};font-size:0.83rem;'
+                    f'line-height:1.6;">{solution}</div>',
+                    unsafe_allow_html=True,
+                )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 6 — METRICS GLOSSARY
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_glossary:
@@ -764,7 +1023,7 @@ schtasks /Query /TN "QuantPipe\\DailyPipeline" /FO LIST""", language="bash")
             ("Health dashboard shows NO DATA",
              "Run the backfill and generate_signals scripts from the First-Time Setup sequence above."),
             ("Equity curve won't load",
-             "Ensure the backtest extra is installed: uv sync --extra backtest"),
+             "Check that prices are present in data/bronze/equity/daily/. Run the ingest script if needed."),
             ("Pre-trade check fails",
              "Check portfolio_log.parquet for the failure reason. Likely VaR or concentration limit. "
              "For the 5-position strategy, ensure RiskLimits(max_top5_concentration=1.0) is passed."),
@@ -773,6 +1032,12 @@ schtasks /Query /TN "QuantPipe\\DailyPipeline" /FO LIST""", language="bash")
              "Run the .bat file manually to confirm it works before relying on the scheduler."),
             ("Crypto symbol not found (POL/USDT)",
              "Kraken uses MATIC/USDT for Polygon. The universe config maps this correctly."),
+            ("Strategy Lab backtest fails",
+             "Click ✔ Validate first to catch syntax/import errors. Ensure the strategy file exports "
+             "get_signal(), get_weights(), NAME, DESCRIPTION, and DEFAULT_PARAMS."),
+            ("IBKR connection refused",
+             "TWS or IB Gateway must be running. Enable 'Allow API connections' in TWS Settings → API. "
+             "Paper port is 7497; live port is 7496."),
         ]
         for problem, solution in issues:
             with st.expander(problem):
