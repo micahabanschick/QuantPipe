@@ -14,10 +14,13 @@ Start with "vol_scaled" — it often beats mean-variance once costs are real.
 Graduate to "mean_variance" / "max_sharpe" once the signal has proven edge.
 """
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 import polars as pl
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -164,8 +167,11 @@ def _mean_variance_weights(
         prob.solve(solver=cp.CLARABEL, verbose=False)
 
         if prob.status not in ("optimal", "optimal_inaccurate") or w.value is None:
-            # Fall back to equal weight on solver failure
-            raw = np.ones(n) / n
+            raise RuntimeError(
+                f"mean_variance solver failed for rebalance {rebal_date}: "
+                f"status={prob.status!r}. Check covariance matrix conditioning and "
+                f"expected returns. Do NOT silently fall back to equal weight."
+            )
         else:
             raw = np.clip(w.value, 0.0, None)
             raw /= raw.sum() if raw.sum() > 0 else 1.0
@@ -202,8 +208,11 @@ def _min_variance_weights(
         try:
             ef.min_volatility()
             raw_vals = list(ef.clean_weights().values())
-        except Exception:
-            raw_vals = [1.0 / len(syms)] * len(syms)
+        except Exception as exc:
+            raise RuntimeError(
+                f"min_variance optimisation failed for rebalance {rebal_date}: {exc}. "
+                "Check covariance matrix conditioning."
+            ) from exc
 
         for sym, wt in zip(syms, raw_vals):
             rows.append({"rebalance_date": rebal_date[0], "symbol": sym, "weight": float(wt)})
@@ -239,8 +248,11 @@ def _max_sharpe_weights(
         try:
             ef.max_sharpe(risk_free_rate=0.0)
             raw_vals = list(ef.clean_weights().values())
-        except Exception:
-            raw_vals = [1.0 / len(syms)] * len(syms)
+        except Exception as exc:
+            raise RuntimeError(
+                f"max_sharpe optimisation failed for rebalance {rebal_date}: {exc}. "
+                "Check covariance matrix conditioning and expected returns."
+            ) from exc
 
         for sym, wt in zip(syms, raw_vals):
             rows.append({"rebalance_date": rebal_date[0], "symbol": sym, "weight": float(wt)})

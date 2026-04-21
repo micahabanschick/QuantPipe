@@ -18,6 +18,8 @@ dependencies = [
     "plotly>=5.20.0",
     "requests>=2.31.0",
     "python-dotenv>=1.0.0",
+    "python-dateutil>=2.9.0",
+    "filelock>=3.14.0",
     "scikit-learn>=1.5.0",
     "streamlit-ace>=0.1.1",
     "reportlab>=4.4.10",
@@ -58,6 +60,9 @@ target-version = ["py312"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "network: marks tests that require live network access (deselect with -m 'not network')",
+]
 
 # Run tests via: .venv/Scripts/python.exe -m pytest
 # (uv run pytest may resolve to system Python on Windows if VIRTUAL_ENV is set externally)

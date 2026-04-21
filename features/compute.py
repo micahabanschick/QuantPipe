@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date, timedelta
 
@@ -100,7 +101,10 @@ def compute_and_store(
                 )
             else:
                 merged = year_df.sort("date")
-            merged.write_parquet(path, compression="snappy")
+            # Atomic write: .tmp + os.replace() so a crash never corrupts the partition
+            tmp_path = path.with_suffix(".tmp")
+            merged.write_parquet(tmp_path, compression="snappy")
+            os.replace(tmp_path, path)
             total_written += len(year_df)
 
     log.info(f"Feature compute complete: {total_written} rows written to gold layer")

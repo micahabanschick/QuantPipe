@@ -24,10 +24,13 @@ import polars as pl
 #   single-ETF  : (ETF,)      → daily pct-change of that ETF
 #   two-ETF     : (A, B)      → daily pct-change of A minus daily pct-change of B
 FACTOR_PROXIES: dict[str, tuple] = {
-    "Market": ("SPY",),
-    "Size":   ("IWM", "IWB"),   # small-cap minus large-cap
-    "Value":  ("IWD", "IWF"),   # value minus growth (large-cap Russell)
-    "LowVol": ("IWS", "IWP"),   # mid-cap value minus mid-cap growth (vol proxy)
+    "Market":   ("SPY",),
+    "Size":     ("IWM", "IWB"),   # small-cap minus large-cap (Russell 2000 vs 1000)
+    "Value":    ("IWD", "IWF"),   # value minus growth, large-cap Russell
+    "ValueMid": ("IWS", "IWP"),   # value minus growth, mid-cap Russell
+    # Note: a true LowVol factor requires USMV or SPLV which may not be in the
+    # equity universe. ValueMid is kept as a style proxy; do not label it LowVol
+    # in any external report.
 }
 
 

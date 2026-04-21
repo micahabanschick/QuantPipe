@@ -1,10 +1,14 @@
 """Tests for data adapter interfaces.
 
-These tests hit the network — mark slow with pytest.mark.network if you
-want to separate them from fast unit tests in CI.
+These tests hit the live network and are marked @pytest.mark.network.
+They are excluded from the fast CI suite by default.
 
-Run:
+Run all:
     uv run pytest tests/test_adapters.py -v
+Run only network tests:
+    uv run pytest tests/test_adapters.py -v -m network
+Skip network tests:
+    uv run pytest -m "not network"
 """
 
 from datetime import date
@@ -19,6 +23,8 @@ from data_adapters.yfinance_adapter import YFinanceAdapter
 REQUIRED_COLS = list(OHLCV_SCHEMA.keys())
 START = date(2024, 1, 2)
 END = date(2024, 1, 31)
+
+pytestmark = pytest.mark.network   # all tests in this file require live network
 
 
 class TestYFinanceAdapter:

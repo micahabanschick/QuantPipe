@@ -28,6 +28,7 @@ ALPACA_BASE_URL: str = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.ma
 # ── Crypto exchanges ───────────────────────────────────────────────────────────
 KRAKEN_API_KEY: str = os.getenv("KRAKEN_API_KEY", "")
 KRAKEN_SECRET: str = os.getenv("KRAKEN_SECRET", "")
+KRAKEN_API_SECRET = KRAKEN_SECRET  # alias — rebalance.py imports this name
 COINBASE_API_KEY: str = os.getenv("COINBASE_API_KEY", "")
 COINBASE_SECRET: str = os.getenv("COINBASE_SECRET", "")
 

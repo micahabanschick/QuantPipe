@@ -6,14 +6,24 @@ Design choices:
 - Partition by symbol then year — optimises single-symbol time-range queries.
 - DuckDB reads with hive partitioning for fast multi-symbol scans.
 - write_bars is idempotent: it merges new rows with existing data (upsert by date).
+- Writes are atomic: data goes to a .tmp file then os.replace() renames it so a
+  crash mid-write never leaves a corrupt partition.
+- A per-file lock (filelock) prevents concurrent pipeline runs from clobbering each other.
 - Bronze layer (raw) is write-once. Silver/gold are derived and may be overwritten.
 """
 
+import os
 from datetime import date
 from pathlib import Path
 
 import duckdb
 import polars as pl
+
+try:
+    from filelock import FileLock
+    _HAS_FILELOCK = True
+except ImportError:
+    _HAS_FILELOCK = False
 
 from config.settings import DATA_DIR
 
@@ -43,21 +53,35 @@ def write_bars(df: pl.DataFrame, asset_class: str, symbol: str, layer: str = "br
     for year in years:
         year_df = df.filter(pl.col("date").dt.year() == year)
         path = _parquet_path(f"{layer}/{asset_class}", symbol, year)
+        lock_path = path.with_suffix(".lock")
 
-        if path.exists():
-            existing = pl.read_parquet(path)
-            merged = (
-                pl.concat([existing, year_df])
-                .unique(subset=["date", "symbol"], keep="last")
-                .sort("date")
-            )
-        else:
-            merged = year_df.sort("date")
+        # Acquire file lock so concurrent pipeline runs don't clobber each other.
+        lock = FileLock(str(lock_path), timeout=30) if _HAS_FILELOCK else None
+        ctx = lock if lock else _NullContext()
+        with ctx:
+            if path.exists():
+                existing = pl.read_parquet(path)
+                merged = (
+                    pl.concat([existing, year_df])
+                    .unique(subset=["date", "symbol"], keep="last")
+                    .sort("date")
+                )
+            else:
+                merged = year_df.sort("date")
 
-        merged.write_parquet(path, compression="snappy")
+            # Atomic write: write to .tmp then rename so a crash never corrupts the partition.
+            tmp_path = path.with_suffix(".tmp")
+            merged.write_parquet(tmp_path, compression="snappy")
+            os.replace(tmp_path, path)
         total_written += len(year_df)
 
     return total_written
+
+
+class _NullContext:
+    """No-op context manager used when filelock is not installed."""
+    def __enter__(self): return self
+    def __exit__(self, *_): pass
 
 
 def load_bars(

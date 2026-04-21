@@ -15,17 +15,38 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timezone
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-from config.settings import LOGS_DIR
+from config.settings import LOGS_DIR, PROJECT_ROOT
+from orchestration._halt import check_halt
 from orchestration.generate_signals import run_generate_signals
+
+_HEARTBEAT_PATH = PROJECT_ROOT / ".pipeline_heartbeat.json"
+
+
+def _write_heartbeat(status: str, failures: list[str], elapsed: float, as_of: date) -> None:
+    """Write a machine-readable heartbeat so dashboards don't need to grep logs."""
+    payload = {
+        "ts_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "date": str(as_of),
+        "status": status,           # "ok" | "partial" | "failed"
+        "failures": failures,
+        "elapsed_s": round(elapsed, 1),
+    }
+    try:
+        tmp = _HEARTBEAT_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        import os; os.replace(tmp, _HEARTBEAT_PATH)
+    except Exception as exc:
+        log.warning(f"Failed to write pipeline heartbeat: {exc}")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,6 +98,8 @@ def _run_step(name: str, fn, *args, **kwargs) -> tuple[int, float]:
 
 
 def run_pipeline(skip_ingest: bool = False, as_of: date | None = None) -> int:
+    check_halt()   # abort immediately if QP_HALT file exists
+
     today = as_of or date.today()
     t_start = time.monotonic()
     failures: list[str] = []
@@ -108,9 +131,11 @@ def run_pipeline(skip_ingest: bool = False, as_of: date | None = None) -> int:
 
     if failures:
         summary = ", ".join(failures)
+        _write_heartbeat("partial" if len(failures) < 2 else "failed", failures, total_elapsed, today)
         _send_alert(f"[{today}] Pipeline finished with failures: {summary}. Check logs.")
         return 1
 
+    _write_heartbeat("ok", [], total_elapsed, today)
     _send_alert_success(today, total_elapsed)
     return 0
 

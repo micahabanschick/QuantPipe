@@ -16,6 +16,7 @@ Usage:
 """
 
 import logging
+import os
 import sys
 
 if sys.platform == "win32":
@@ -63,6 +64,13 @@ def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _atomic_write(path: Path, df: pl.DataFrame) -> None:
+    """Write df to path atomically via a .tmp sibling + os.replace()."""
+    tmp = path.with_suffix(".tmp")
+    df.write_parquet(tmp)
+    os.replace(tmp, path)
+
+
 def _upsert_target_weights(new_rows: pl.DataFrame) -> None:
     """Append new_rows to target_weights.parquet, replacing any rows for the same dates."""
     _ensure_parent(TARGET_WEIGHTS_PATH)
@@ -73,7 +81,7 @@ def _upsert_target_weights(new_rows: pl.DataFrame) -> None:
         combined = pl.concat([existing, new_rows]).sort(["date", "symbol"])
     else:
         combined = new_rows.sort(["date", "symbol"])
-    combined.write_parquet(TARGET_WEIGHTS_PATH)
+    _atomic_write(TARGET_WEIGHTS_PATH, combined)
 
 
 def _upsert_portfolio_log(new_row: dict) -> None:
@@ -86,7 +94,7 @@ def _upsert_portfolio_log(new_row: dict) -> None:
         combined = pl.concat([existing, new_df]).sort("date")
     else:
         combined = new_df
-    combined.write_parquet(PORTFOLIO_LOG_PATH)
+    _atomic_write(PORTFOLIO_LOG_PATH, combined)
 
 
 def run_generate_signals(as_of: date | None = None) -> int:
@@ -161,10 +169,26 @@ def run_generate_signals(as_of: date | None = None) -> int:
                                 symbol_order=sym_order)
 
         if not check.passed:
-            log.warning(f"Pre-trade check FAILED: {check.violations}")
-            # Log but do not block — in paper mode, record the failure; live mode should block
+            log.error("Pre-trade check FAILED — target weights will NOT be written.")
             for v in check.violations:
-                log.warning(f"  VIOLATION: {v}")
+                log.error(f"  VIOLATION: {v}")
+            # Persist snapshot with failure flag so the dashboard reflects reality,
+            # then abort without publishing weights.
+            snapshot = {
+                "date": as_of,
+                "n_positions": len(current_weights),
+                "gross_exposure": 0.0,
+                "net_exposure": 0.0,
+                "top5_concentration": 0.0,
+                "var_1d_95": 0.0,
+                "var_1d_99": 0.0,
+                "pre_trade_passed": False,
+                "worst_stress_scenario": "",
+                "worst_stress_pnl": 0.0,
+                "rebalance_date": latest_rebal,
+            }
+            _upsert_portfolio_log(snapshot)
+            return 1
         else:
             log.info("Pre-trade check PASSED")
     except Exception as exc:

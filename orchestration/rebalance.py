@@ -34,6 +34,8 @@ from pathlib import Path
 import polars as pl
 
 from config.settings import DATA_DIR, LOGS_DIR
+from orchestration._halt import check_halt
+from execution.order_journal import append_order
 from execution.reconciler import (
     format_reconcile_report,
     has_material_drift,
@@ -54,7 +56,8 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 TARGET_WEIGHTS_PATH = DATA_DIR / "gold" / "equity" / "target_weights.parquet"
-RECONCILE_LOG_PATH = DATA_DIR / "gold" / "equity" / "reconcile_log.parquet"
+RECONCILE_LOG_PATH  = DATA_DIR / "gold" / "equity" / "reconcile_log.parquet"
+ORDER_JOURNAL_PATH  = DATA_DIR / "gold" / "equity" / "order_journal.parquet"
 
 # Seconds to wait after placing orders before reconciling
 RECONCILE_DELAY = 5
@@ -145,6 +148,8 @@ def run_rebalance(
     dry_run: bool = False,
     as_of: date | None = None,
 ) -> int:
+    check_halt()   # abort immediately if QP_HALT file exists
+
     today = as_of or date.today()
     log.info(f"======== Rebalance | {today} | broker={broker_name} | dry_run={dry_run} ========")
 
@@ -200,17 +205,34 @@ def run_rebalance(
             log.info("No orders needed — portfolio already at target")
             return 0
 
-        # 6. Place orders
+        # 6. Place orders — journal every attempt before and after the broker call
         if dry_run:
             log.info("DRY RUN — skipping order placement")
+            for order in orders:
+                append_order(
+                    ORDER_JOURNAL_PATH, today, broker_name,
+                    order.symbol, order.qty,
+                    est_price=prices.get(order.symbol, 0.0),
+                    order_id="dry-run",
+                    status="skipped",
+                )
         else:
             placed = 0
             for order in orders:
+                est_price = prices.get(order.symbol, 0.0)
                 try:
                     order_id = broker.place_order(order)
+                    append_order(
+                        ORDER_JOURNAL_PATH, today, broker_name,
+                        order.symbol, order.qty, est_price, order_id, "placed",
+                    )
                     log.info(f"Placed order {order_id}: {order.symbol} qty={order.qty:+.0f}")
                     placed += 1
                 except Exception as exc:
+                    append_order(
+                        ORDER_JOURNAL_PATH, today, broker_name,
+                        order.symbol, order.qty, est_price, "failed", "failed",
+                    )
                     log.error(f"Failed to place order for {order.symbol}: {exc}")
             log.info(f"Placed {placed}/{len(orders)} orders")
 

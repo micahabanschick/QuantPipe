@@ -14,7 +14,9 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from config.settings import DATA_DIR, LOGS_DIR
+import json
+
+from config.settings import DATA_DIR, LOGS_DIR, PROJECT_ROOT
 from reports._theme import (
     CSS, COLORS, PLOTLY_CONFIG,
     apply_theme, apply_subplot_theme,
@@ -32,6 +34,7 @@ PORTFOLIO_LOG     = DATA_DIR / "gold" / "equity" / "portfolio_log.parquet"
 PIPELINE_LOG      = LOGS_DIR / "pipeline.log"
 INGEST_LOG        = LOGS_DIR / "ingest.log"
 SIGNALS_LOG       = LOGS_DIR / "signals.log"
+_HEARTBEAT_PATH   = PROJECT_ROOT / ".pipeline_heartbeat.json"
 
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
@@ -59,6 +62,25 @@ def _signals_freshness() -> tuple[str, float, bool]:
 
 
 def _last_log_run(log_path: Path) -> tuple[str, float, bool]:
+    """Read pipeline status from the structured heartbeat file.
+
+    Falls back to log-grep if the heartbeat doesn't exist yet (first run).
+    """
+    if _HEARTBEAT_PATH.exists():
+        try:
+            hb = json.loads(_HEARTBEAT_PATH.read_text(encoding="utf-8"))
+            ts = hb.get("ts_utc", "unknown")
+            ok = hb.get("status") == "ok"
+            try:
+                dt    = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                age_h = (datetime.now() - dt).total_seconds() / 3600
+            except Exception:
+                age_h = float("inf")
+            return ts, age_h, ok
+        except Exception:
+            pass  # fall through to log-grep
+
+    # Legacy fallback: grep the log file
     if not log_path.exists():
         return "No log file", float("inf"), False
     try:

@@ -94,7 +94,9 @@ def run(
         rebal_dates   = get_monthly_rebalance_dates(start, end, trading_dates)
         _progress(f"  {len(rebal_dates)} rebalance dates")
 
-        signal  = strategy.get_signal(features, rebal_dates, top_n=_top_n)
+        # Pass prices_df so strategies can use it directly instead of loading from storage.
+        # This decouples get_signal() from the storage layer and makes it unit-testable.
+        signal  = strategy.get_signal(features, rebal_dates, top_n=_top_n, prices_df=prices)
         weights = strategy.get_weights(signal, weight_scheme=_weight_scheme)
 
         _progress("Running backtest engine…")

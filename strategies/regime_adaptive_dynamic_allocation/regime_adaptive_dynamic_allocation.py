@@ -141,6 +141,7 @@ def get_signal(
     features: pl.DataFrame,
     rebal_dates: list,
     top_n: int = DEFAULT_PARAMS["top_n"],
+    prices_df: pl.DataFrame | None = None,   # injected by backtest_runner; avoids storage I/O
     **kwargs,
 ) -> pl.DataFrame:
     """Regime-filtered, skip-month momentum signal.
@@ -164,25 +165,35 @@ def get_signal(
         return pl.DataFrame()
 
     # ── Load prices for regime score + trend filter ────────────────────────────
+    # Prefer the injected prices_df (provided by backtest_runner) so this
+    # function stays pure and unit-testable without a storage layer present.
+    # Fall back to storage.parquet_store only when running outside the runner.
     need_syms = list(set(_INVESTABLE + _BREADTH_UNIV + [REGIME_REF]))
     prices_pd = pd.DataFrame()
-    try:
-        from storage.parquet_store import load_bars
-        history_start = (
-            pd.Timestamp(min(rebal_dates)) - pd.Timedelta(days=420)
-        ).date()
-        bars_pl = load_bars(need_syms, history_start, pd.Timestamp(max(rebal_dates)).date(), "equity")
-        if not bars_pl.is_empty():
-            pc = "adj_close" if "adj_close" in bars_pl.columns else "close"
-            prices_pd = (
-                bars_pl.select(["date", "symbol", pc])
-                .to_pandas()
-                .pivot(index="date", columns="symbol", values=pc)
-                .sort_index()
+
+    source_df: pl.DataFrame | None = prices_df   # injected by caller
+    if source_df is None:
+        try:
+            from storage.parquet_store import load_bars
+            history_start = (
+                pd.Timestamp(min(rebal_dates)) - pd.Timedelta(days=420)
+            ).date()
+            source_df = load_bars(
+                need_syms, history_start,
+                pd.Timestamp(max(rebal_dates)).date(), "equity",
             )
-            prices_pd.index = pd.to_datetime(prices_pd.index)
-    except Exception:
-        pass
+        except Exception:
+            source_df = None
+
+    if source_df is not None and not source_df.is_empty():
+        pc = "adj_close" if "adj_close" in source_df.columns else "close"
+        prices_pd = (
+            source_df.select(["date", "symbol", pc])
+            .to_pandas()
+            .pivot(index="date", columns="symbol", values=pc)
+            .sort_index()
+        )
+        prices_pd.index = pd.to_datetime(prices_pd.index)
 
     # ── Available investable symbols (must be in features) ─────────────────────
     feat_syms  = set(features["symbol"].unique().to_list())

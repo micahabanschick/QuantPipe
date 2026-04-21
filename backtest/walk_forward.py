@@ -16,6 +16,8 @@ Aggregate the OOS equity curves to get a clean walk-forward equity curve.
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from dateutil.relativedelta import relativedelta
+
 import pandas as pd
 import polars as pl
 
@@ -177,11 +179,8 @@ def _stitch_equity_curves(folds: list[WalkForwardFold]) -> pd.Series:
 
 
 def _add_months(d: date, months: int) -> date:
-    month = d.month - 1 + months
-    year = d.year + month // 12
-    month = month % 12 + 1
-    day = min(d.day, [31,28,29,30,31,30,31,31,30,31,30,31][month-1])
-    return date(year, month, day)
+    """Add calendar months to a date, correctly handling month-end and Feb-29."""
+    return (date(d.year, d.month, d.day) + relativedelta(months=months))
 
 
 def _add_years(d: date, years: int) -> date:
