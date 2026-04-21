@@ -22,6 +22,7 @@ from reports._theme import (
     apply_theme, apply_subplot_theme, range_selector,
     kpi_card, section_label, badge, page_header, status_banner,
 )
+from reports.pdf_export import build_performance_pdf
 from risk.scenarios import run_all_scenarios
 from storage.parquet_store import load_bars
 
@@ -252,6 +253,27 @@ if target_weights_df is not None and not target_weights_df.is_empty():
     current_weights = dict(zip(lw_df["symbol"].to_list(), lw_df["weight"].to_list()))
     exposures   = compute_exposures(current_weights)
 
+# Page-level pre-computations (needed by PDF export and individual tabs)
+stress: dict = run_all_scenarios(current_weights) if current_weights else {}
+
+monthly_pivot: pd.DataFrame | None = None
+if eq_pd is not None:
+    try:
+        _monthly = eq_pd["portfolio_value"].resample("ME").last().pct_change().dropna()
+        _mdf = _monthly.to_frame()
+        _mdf["Year"]  = _mdf.index.year
+        _mdf["Month"] = _mdf.index.strftime("%b")
+        monthly_pivot = _mdf.pivot_table(
+            values="portfolio_value", index="Year", columns="Month"
+        )
+    except Exception:
+        monthly_pivot = None
+
+portfolio_log_pd: pd.DataFrame | None = (
+    portfolio_log.to_pandas() if portfolio_log is not None and not portfolio_log.is_empty()
+    else None
+)
+
 # ── Page header ───────────────────────────────────────────────────────────────
 
 st.markdown(
@@ -262,6 +284,156 @@ st.markdown(
     ),
     unsafe_allow_html=True,
 )
+
+# ── Download bar ─────────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _build_pdf(
+    stats_frozen,        # tuple of (k,v) pairs  — hashable
+    trailing_frozen,
+    drawdowns_frozen,
+    weights_frozen,
+    stress_frozen,
+    monthly_csv: str | None,
+    log_csv: str | None,
+    lookback_years: int,
+    benchmark_sym: str,
+    as_of_str: str,
+    eq_json: str | None,   # equity curve as JSON for chart re-creation
+) -> bytes:
+    import json as _json
+    from datetime import date as _date
+
+    # Reconstruct lightweight objects for PDF
+    _stats    = dict(stats_frozen)   if stats_frozen    else {}
+    _trailing = dict(trailing_frozen) if trailing_frozen else {}
+    _draws    = list(drawdowns_frozen) if drawdowns_frozen else []
+    _weights  = dict(weights_frozen)  if weights_frozen   else {}
+    _stress   = dict(stress_frozen)   if stress_frozen    else {}
+    _monthly  = (pd.read_csv(__import__("io").StringIO(monthly_csv))
+                 .set_index("Year") if monthly_csv else None)
+    _log_pd   = (pd.read_csv(__import__("io").StringIO(log_csv))
+                 if log_csv else None)
+
+    # Reconstruct equity figure for chart embedding
+    _fig_eq = None
+    if eq_json:
+        try:
+            import plotly.graph_objects as _go
+            eq_data = _json.loads(eq_json)
+            _fig_eq = _go.Figure()
+            _fig_eq.add_trace(_go.Scatter(
+                x=pd.to_datetime(eq_data["dates"]),
+                y=eq_data["values"],
+                mode="lines",
+                line=dict(color="#00d4aa", width=2),
+                fill="tozeroy",
+                fillcolor="rgba(0,212,170,0.07)",
+            ))
+            _fig_eq.update_layout(
+                paper_bgcolor="white", plot_bgcolor="#f8fafc",
+                font=dict(color="#1e293b"),
+                margin=dict(l=50, r=20, t=20, b=40),
+                xaxis=dict(showgrid=True, gridcolor="#e2e8f0"),
+                yaxis=dict(showgrid=True, gridcolor="#e2e8f0", tickformat="$,.0f"),
+                showlegend=False,
+            )
+        except Exception:
+            _fig_eq = None
+
+    _as_of = _date.fromisoformat(as_of_str)
+
+    from risk.engine import EQUITY_SECTOR_MAP as _SECTOR_MAP
+    return build_performance_pdf(
+        stats=_stats,
+        trailing=_trailing,
+        drawdowns=_draws,
+        current_weights=_weights,
+        exposures=None,           # exposures can't be pickled; computed inline in PDF
+        sector_map=_SECTOR_MAP,
+        stress=_stress,
+        monthly_pivot=_monthly,
+        portfolio_log_pd=_log_pd,
+        lookback_years=lookback_years,
+        benchmark_sym=benchmark_sym,
+        as_of=_as_of,
+        fig_equity=_fig_eq,
+    )
+
+
+# Prepare hashable/serialisable inputs for cache key
+_stats_frozen    = tuple(sorted(stats.items())) if stats else ()
+_trailing_frozen = tuple(sorted((k, v if v else 0.0) for k, v in trailing.items())) if trailing else ()
+_draws_frozen    = tuple(tuple(sorted(d.items())) for d in (drawdowns or []))
+_weights_frozen  = tuple(sorted(current_weights.items()))
+_stress_frozen   = tuple(sorted(stress.items()))
+
+_monthly_csv: str | None = None
+if monthly_pivot is not None:
+    try:
+        _monthly_csv = monthly_pivot.reset_index().to_csv(index=False)
+    except Exception:
+        pass
+
+_log_csv: str | None = None
+if portfolio_log_pd is not None:
+    try:
+        _log_csv = portfolio_log_pd.to_csv(index=False)
+    except Exception:
+        pass
+
+_eq_json: str | None = None
+if eq_pd is not None:
+    try:
+        import json as _json_mod
+        _eq_json = _json_mod.dumps({
+            "dates":  [str(d.date()) for d in eq_pd.index],
+            "values": eq_pd["portfolio_value"].tolist(),
+        })
+    except Exception:
+        pass
+
+_dl1, _dl2, _dl3 = st.columns([1, 1, 6])
+
+with _dl1:
+    try:
+        _pdf_bytes = _build_pdf(
+            stats_frozen    = _stats_frozen,
+            trailing_frozen = _trailing_frozen,
+            drawdowns_frozen= _draws_frozen,
+            weights_frozen  = _weights_frozen,
+            stress_frozen   = _stress_frozen,
+            monthly_csv     = _monthly_csv,
+            log_csv         = _log_csv,
+            lookback_years  = lookback_years,
+            benchmark_sym   = benchmark_sym,
+            as_of_str       = date.today().isoformat(),
+            eq_json         = _eq_json,
+        )
+        st.download_button(
+            label="📄 PDF Report",
+            data=_pdf_bytes,
+            file_name=f"quantpipe_performance_{date.today().isoformat()}.pdf",
+            mime="application/pdf",
+            help="Download full performance report (all tabs) as PDF",
+        )
+    except Exception as _pdf_err:
+        st.button("📄 PDF Report", disabled=True, help=f"PDF unavailable: {_pdf_err}")
+
+with _dl2:
+    if portfolio_log_pd is not None:
+        st.download_button(
+            label="📊 Trade History",
+            data=portfolio_log_pd.to_csv(index=False).encode(),
+            file_name=f"quantpipe_trades_{date.today().isoformat()}.csv",
+            mime="text/csv",
+            help="Download full portfolio log as CSV",
+        )
+    else:
+        st.button("📊 Trade History", disabled=True,
+                  help="No portfolio log available")
+
+st.markdown("<div style='height:6px'/>", unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
@@ -554,7 +726,6 @@ with tab_risk:
         # ── Stress scenario waterfall ──────────────────────────────────────────
         with col_stress:
             st.markdown(section_label("Stress Scenarios"), unsafe_allow_html=True)
-            stress = run_all_scenarios(current_weights) if current_weights else {}
             if stress:
                 s_names = list(stress.keys())
                 s_vals  = [v * 100 for v in stress.values()]
@@ -649,35 +820,33 @@ with tab_analytics:
     else:
         # ── Monthly returns heatmap ────────────────────────────────────────────
         st.markdown(section_label("Monthly Returns"), unsafe_allow_html=True)
-        monthly = eq_pd["portfolio_value"].resample("ME").last().pct_change().dropna()
-        m_df = monthly.to_frame()
-        m_df["Year"]  = m_df.index.year
-        m_df["Month"] = m_df.index.strftime("%b")
-        pivot = m_df.pivot_table(values="portfolio_value", index="Year", columns="Month")
         mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-        pivot = pivot.reindex(columns=[m for m in mo if m in pivot.columns])
-        z    = pivot.values
-        text = [[f"{v:.1%}" if not np.isnan(v) else "" for v in row] for row in z]
+        pivot = (monthly_pivot.reindex(columns=[m for m in mo if m in monthly_pivot.columns])
+                 if monthly_pivot is not None else None)
 
-        fig_hm = go.Figure(go.Heatmap(
-            z=z,
-            x=pivot.columns.tolist(),
-            y=[str(y) for y in pivot.index.tolist()],
-            text=text,
-            texttemplate="%{text}",
-            textfont=dict(size=11),
-            colorscale="RdYlGn",
-            zmid=0,
-            showscale=True,
-            colorbar=dict(tickformat=".0%", len=0.8, thickness=14),
-            hovertemplate="<b>%{y} %{x}</b>: %{text}<extra></extra>",
-        ))
-        apply_theme(fig_hm)
-        fig_hm.update_layout(
-            height=max(180, 38 * len(pivot)),
-            yaxis=dict(autorange="reversed"),
-        )
-        st.plotly_chart(fig_hm, width="stretch", config=PLOTLY_CONFIG)
+        if pivot is not None and not pivot.empty:
+            z    = pivot.values
+            text = [[f"{v:.1%}" if not np.isnan(v) else "" for v in row] for row in z]
+
+            fig_hm = go.Figure(go.Heatmap(
+                z=z,
+                x=pivot.columns.tolist(),
+                y=[str(y) for y in pivot.index.tolist()],
+                text=text,
+                texttemplate="%{text}",
+                textfont=dict(size=11),
+                colorscale="RdYlGn",
+                zmid=0,
+                showscale=True,
+                colorbar=dict(tickformat=".0%", len=0.8, thickness=14),
+                hovertemplate="<b>%{y} %{x}</b>: %{text}<extra></extra>",
+            ))
+            apply_theme(fig_hm)
+            fig_hm.update_layout(
+                height=max(180, 38 * len(pivot)),
+                yaxis=dict(autorange="reversed"),
+            )
+            st.plotly_chart(fig_hm, width="stretch", config=PLOTLY_CONFIG)
 
         col_dist, col_corr = st.columns([1, 1])
 
