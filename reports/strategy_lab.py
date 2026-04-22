@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -172,7 +173,7 @@ def _load_file(path: Path) -> str:
 
 # ── Editor ────────────────────────────────────────────────────────────────────
 
-def _render_editor(file_path: Path) -> None:
+def _render_editor(file_path: Path, strat_dir: Path | None = None) -> None:
     disk_key  = f"disk__{file_path}"
     edit_key  = f"edit__{file_path}"
     dirty_key = f"dirty_{file_path}"
@@ -184,6 +185,12 @@ def _render_editor(file_path: Path) -> None:
         st.session_state[dirty_key] = False
 
     lang = _ACE_LANG.get(file_path.suffix, "text")
+
+    # Include AI apply-version in the key so the widget re-mounts with new content
+    # when the assistant's "Apply to Editor" button is pressed.
+    apply_ver = st.session_state.get(
+        f"ai_apply_ver_{strat_dir.name}" if strat_dir else "_noop", 0
+    )
 
     new_content = st_ace(
         value=st.session_state[edit_key],
@@ -197,7 +204,7 @@ def _render_editor(file_path: Path) -> None:
         auto_update=True,
         min_lines=30,
         max_lines=55,
-        key=f"ace_{file_path}",
+        key=f"ace_{file_path}_v{apply_ver}",
     )
 
     if new_content is not None:
@@ -330,6 +337,206 @@ def _discard_strategy_dialog(strategy_dir: Path) -> None:
     with col_cancel:
         if st.button("Cancel", use_container_width=True):
             st.rerun()
+
+
+# ── AI coding assistant ───────────────────────────────────────────────────────
+
+_AI_SYSTEM = """\
+You are an expert quantitative finance developer embedded in QuantPipe's Strategy Lab.
+Your job is to write, refactor, debug, and explain Python strategy code that runs inside QuantPipe.
+
+## QuantPipe strategy interface
+
+Every strategy is a plain Python module with these top-level attributes:
+
+```python
+NAME        : str          # display name shown in the UI
+DESCRIPTION : str          # one-line summary
+DEFAULT_PARAMS : dict      # must contain: lookback_years, top_n, cost_bps, weight_scheme
+
+def get_signal(
+    features    : pl.DataFrame,       # columns: rebalance_date | date, symbol,
+                                      #   momentum_12m_1m, realized_vol_21d
+    rebal_dates : list,               # monthly rebalance timestamps
+    top_n       : int,
+    prices_df   : pl.DataFrame | None,# columns: date, symbol, adj_close (or close)
+    **kwargs,
+) -> pl.DataFrame:
+    # Must return columns: rebalance_date, symbol, score, rank, selected (bool), equity_pct (float 0-1)
+    # When NO candidates pass filters → emit a __CASH__ row:
+    #   {"rebalance_date": rd, "symbol": "__CASH__", "score": 0.0,
+    #    "rank": 0, "selected": False, "equity_pct": 0.0}
+
+def get_weights(
+    signal       : pl.DataFrame,
+    weight_scheme: str,
+    **kwargs,
+) -> pl.DataFrame:
+    # Must return columns: rebalance_date, symbol, weight (float)
+    # When selected is empty for a date → emit:
+    #   {"rebalance_date": rd, "symbol": "__CASH__", "weight": 0.0}
+    # equity_pct MUST be clipped: float(np.clip(equity_pct, 0.0, 1.0))
+```
+
+## Hard rules
+- Long-only (no short selling, no negative weights)
+- Monthly rebalancing only (rebal_dates is provided; do not generate your own dates)
+- Use Polars DataFrames throughout; use pandas only for intermediate window math if needed
+- The backtest engine forward-fills weights, so every rebalance date must appear in the
+  weights output — even if the target is 100% cash (emit the __CASH__ sentinel)
+- equity_pct < 1 means partial equity allocation; the engine preserves uninvested NAV as cash
+
+## Style
+- No docstrings beyond the module-level triple-quote block
+- No inline comments unless the logic would surprise a reader
+- Return pl.DataFrame() (empty) early if inputs are empty or missing required columns
+"""
+
+
+def _ai_api_key() -> str | None:
+    try:
+        key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        if key:
+            return key
+    except Exception:
+        pass
+    return os.environ.get("ANTHROPIC_API_KEY") or None
+
+
+def _render_ai_assistant(main_py: Path | None, strat_dir: Path) -> None:
+    """Full-width Claude chat panel for in-lab strategy coding help."""
+    try:
+        import anthropic as _anthropic
+    except ImportError:
+        st.warning(
+            "Install the Anthropic SDK to enable the AI assistant: "
+            "`pip install anthropic`"
+        )
+        return
+
+    api_key = _ai_api_key()
+    if not api_key:
+        st.info(
+            "Add your Anthropic API key to `.streamlit/secrets.toml` as "
+            "`ANTHROPIC_API_KEY = \"sk-...\"` to enable the AI assistant."
+        )
+        return
+
+    chat_key  = f"ai_chat_{strat_dir.name}"
+    apply_ver = f"ai_apply_ver_{strat_dir.name}"
+    if chat_key not in st.session_state:
+        st.session_state[chat_key] = []
+    if apply_ver not in st.session_state:
+        st.session_state[apply_ver] = 0
+
+    messages: list[dict] = st.session_state[chat_key]
+
+    # ── Current code injected as context ─────────────────────────────────────
+    current_code = ""
+    if main_py:
+        edit_key = f"edit__{main_py}"
+        current_code = st.session_state.get(edit_key) or _load_file(main_py)
+
+    context_block = (
+        f"\n\n## Current strategy file (`{main_py.name if main_py else 'none'}`)\n\n"
+        f"```python\n{current_code}\n```"
+        if current_code else ""
+    )
+
+    # ── Chat history display ──────────────────────────────────────────────────
+    history_container = st.container()
+    with history_container:
+        for idx, msg in enumerate(messages):
+            with st.chat_message(msg["role"]):
+                content = msg["content"]
+                # Render markdown — code blocks come through naturally
+                st.markdown(content)
+
+                # "Apply to editor" button on assistant messages containing code
+                if msg["role"] == "assistant" and main_py:
+                    code_blocks = re.findall(
+                        r"```python\n([\s\S]*?)```", content
+                    )
+                    if code_blocks:
+                        if st.button(
+                            "Apply to Editor",
+                            key=f"ai_apply_{strat_dir.name}_{idx}",
+                            help="Replace the editor content with the code above",
+                        ):
+                            edit_key  = f"edit__{main_py}"
+                            dirty_key = f"dirty_{main_py}"
+                            st.session_state[edit_key]  = code_blocks[-1]
+                            st.session_state[dirty_key] = True
+                            # Bump version so st_ace picks up the new value
+                            st.session_state[apply_ver] += 1
+                            st.rerun()
+
+    # ── Clear button ─────────────────────────────────────────────────────────
+    if messages:
+        if st.button("Clear conversation", key=f"ai_clear_{strat_dir.name}"):
+            st.session_state[chat_key] = []
+            st.rerun()
+
+    # ── Input ─────────────────────────────────────────────────────────────────
+    prompt = st.chat_input(
+        "Ask Claude to write, fix, or explain the strategy code...",
+        key=f"ai_input_{strat_dir.name}",
+    )
+    if not prompt:
+        return
+
+    messages.append({"role": "user", "content": prompt})
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Build API messages — inject fresh code context into each user turn
+    api_msgs: list[dict] = []
+    for i, m in enumerate(messages):
+        role    = m["role"]
+        content = m["content"]
+        # Append code context to the last user message only
+        if role == "user" and i == len(messages) - 1:
+            content = content + context_block
+        api_msgs.append({"role": role, "content": content})
+
+    client = _anthropic.Anthropic(api_key=api_key)
+
+    with st.chat_message("assistant"):
+        placeholder   = st.empty()
+        full_response = ""
+        try:
+            with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=8192,
+                system=_AI_SYSTEM,
+                messages=api_msgs,
+            ) as stream:
+                for text in stream.text_stream:
+                    full_response += text
+                    placeholder.markdown(full_response + "▌")
+            placeholder.markdown(full_response)
+        except Exception as exc:
+            placeholder.error(f"API error: {exc}")
+            return
+
+        # Apply button for the freshly generated response
+        code_blocks = re.findall(r"```python\n([\s\S]*?)```", full_response)
+        if code_blocks and main_py:
+            if st.button(
+                "Apply to Editor",
+                key=f"ai_apply_{strat_dir.name}_latest",
+                help="Replace the editor content with the generated code",
+                type="primary",
+            ):
+                edit_key  = f"edit__{main_py}"
+                dirty_key = f"dirty_{main_py}"
+                st.session_state[edit_key]  = code_blocks[-1]
+                st.session_state[dirty_key] = True
+                st.session_state[apply_ver] += 1
+                st.rerun()
+
+    messages.append({"role": "assistant", "content": full_response})
+    st.session_state[chat_key] = messages
 
 
 # ── Strategy validator ────────────────────────────────────────────────────────
@@ -933,12 +1140,12 @@ with left:
     if not strat_files:
         st.warning("No files found in this strategy folder.")
     elif len(strat_files) == 1:
-        _render_editor(strat_files[0])
+        _render_editor(strat_files[0], strat_dir=selected_dir)
     else:
         file_tabs = st.tabs([f.name for f in strat_files])
         for tab, file_path in zip(file_tabs, strat_files):
             with tab:
-                _render_editor(file_path)
+                _render_editor(file_path, strat_dir=selected_dir)
 
 with right:
     st.markdown(section_label("Backtest Configuration"), unsafe_allow_html=True)
@@ -1080,6 +1287,20 @@ result_data = st.session_state.get(result_key, {})
 if result_data and result_data.get("ok"):
     st.divider()
     _show_result_tabs(result_data, result_key)
+
+# ── AI Coding Assistant ───────────────────────────────────────────────────────
+
+st.divider()
+st.markdown(section_label("AI Coding Assistant"), unsafe_allow_html=True)
+st.markdown(
+    f'<div style="color:{COLORS["text_muted"]};font-size:0.80rem;margin:-6px 0 14px;">'
+    f'Claude has full context of the current strategy file. Ask it to write, '
+    f'fix, or explain code — then click <strong>Apply to Editor</strong> to '
+    f'insert the result directly into the editor above.'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+_render_ai_assistant(main_py, selected_dir)
 
 # ── Advanced analysis ─────────────────────────────────────────────────────────
 
