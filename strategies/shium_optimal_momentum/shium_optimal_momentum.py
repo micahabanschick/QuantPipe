@@ -3,14 +3,21 @@
 QuantPipe adaptation of the HQG ShiumOptimalMomentum strategy.
 
 Signal pipeline (per rebalance date):
-  1. For each asset, count how many of 4 horizons [21, 63, 126, 252] show
-     price_t > price_{t-h}  (positive trend at that lookback).
-  2. ensemble_score = count / 4  -> values in {0, 0.25, 0.50, 0.75, 1.00}.
-  3. equity_pct = mean(ensemble_scores across all universe assets)
-     reflecting overall market-momentum "temperature".
-  4. Select assets with score > 0; weight_i ∝ score_i (high-conviction
-     assets get larger allocations within the invested sleeve).
-  5. If no asset scores > 0 (all horizons negative) -> go fully to cash.
+  1. Asymmetric weighted ensemble: horizons [21, 63, 126, 252] carry weights
+     [0.10, 0.20, 0.30, 0.40] — longer horizons trusted more.
+  2. weighted_score_i = sum(w_h * [price_t > price_{t-h}]) in [0, 1].
+  3. Cross-sectional z-score of weighted_scores blended with time-series score:
+     final_score = 0.6 * ts_score + 0.4 * z_score (normalised to [0,1]).
+  4. Vol-scaling: final_score divided by asset's 63-day realised vol so that
+     equal-scoring high-vol assets receive smaller allocations.
+  5. SPY drawdown filter: if SPY is >10% below its 252-day peak, equity_pct
+     is halved — reacts faster than waiting for SPY's own score to drop.
+  6. equity_pct = mean(weighted_scores across universe) * spy_multiplier.
+  7. Select top_n assets by final_score with score > 0.
+  8. Transaction-cost dampening: a per-asset score is only updated when it
+     changes by >= MIN_SCORE_CHANGE (0.10) vs the previous rebalance; otherwise
+     last period's score is carried forward, cutting unnecessary turnover.
+  9. If no asset passes filters -> __CASH__ sentinel (go fully to cash).
 
 HQG -> QuantPipe changes:
   - Removed hqg_algorithms class framework -> functional get_signal / get_weights.
@@ -18,8 +25,9 @@ HQG -> QuantPipe changes:
     QuantPipe growth / size ETFs: SPY QQQ IWF IWB IWP IWS IWM IWO IWN.
     IWF is the closest single-asset proxy for VUG (Russell 1000 Growth).
   - Single-asset fixed allocation replaced with cross-sectional score-weighted
-    multi-asset allocation; equity_pct derived from universe-average score so
-    position sizing degrades gracefully when momentum breadth is weak.
+    multi-asset allocation.
+  - Five improvements over the original: asymmetric horizon weights, vol scaling,
+    SPY drawdown regime filter, transaction-cost dampening, cross-sectional blend.
   - Added __CASH__ sentinel so the backtest engine correctly resets to cash
     rather than forward-filling old weights.
 """
@@ -30,9 +38,9 @@ import polars as pl
 
 NAME        = "Shium Optimal Momentum"
 DESCRIPTION = (
-    "Multi-horizon time-series momentum ensemble: 4 lookbacks [21,63,126,252] "
-    "score each asset {0,0.25,0.5,0.75,1.0}; weights ∝ score, equity_pct = "
-    "universe mean score. Goes to cash when all scores are 0."
+    "Multi-horizon momentum ensemble with asymmetric horizon weights, vol-scaling, "
+    "SPY drawdown regime filter, cross-sectional blending, and turnover dampening. "
+    "equity_pct = universe breadth score; positions ∝ vol-adjusted final score."
 )
 DEFAULT_PARAMS = {
     "lookback_years": 2,
@@ -41,17 +49,42 @@ DEFAULT_PARAMS = {
     "weight_scheme":  "score_weighted",
 }
 
-_HORIZONS  = [21, 63, 126, 252]
-_MAX_LB    = max(_HORIZONS)
+_HORIZONS      = [21, 63, 126, 252]
+_HOR_WEIGHTS   = [0.10, 0.20, 0.30, 0.40]   # longer horizons carry more weight
+_MAX_LB        = max(_HORIZONS)
+_VOL_WINDOW    = 63                           # days for realised vol estimate
+_SPY_DD_THRESH = 0.10                         # SPY drawdown threshold
+_CS_BLEND      = 0.40                         # cross-sectional share in final score
+_MIN_SCORE_CHG = 0.10                         # min score delta to trigger rebalance
 
-_UNIVERSE  = ["SPY", "QQQ", "IWF", "IWB", "IWP", "IWS", "IWM", "IWO", "IWN"]
+_UNIVERSE = ["SPY", "QQQ", "IWF", "IWB", "IWP", "IWS", "IWM", "IWO", "IWN"]
 
 
-def _ensemble_score(prices: np.ndarray) -> float:
-    """Return count of horizons where current price > h-days-ago price, / 4."""
+def _weighted_ts_score(prices: np.ndarray) -> float:
+    """Asymmetric-weighted time-series momentum score in [0, 1]."""
     current = prices[-1]
-    count = sum(1 for h in _HORIZONS if len(prices) > h and current > prices[-(h + 1)])
-    return count / len(_HORIZONS)
+    score = 0.0
+    for h, w in zip(_HORIZONS, _HOR_WEIGHTS):
+        if len(prices) > h and current > prices[-(h + 1)]:
+            score += w
+    return score
+
+
+def _realised_vol(prices: np.ndarray, window: int) -> float:
+    """Annualised realised vol from daily returns over last `window` days."""
+    if len(prices) < window + 1:
+        return 1.0
+    rets = np.diff(np.log(prices[-window - 1:]))
+    return float(rets.std() * np.sqrt(252)) or 1.0
+
+
+def _spy_multiplier(spy_prices: np.ndarray) -> float:
+    """1.0 normally; 0.5 if SPY is >10% below its 252-day peak."""
+    if len(spy_prices) < 2:
+        return 1.0
+    peak = spy_prices[-min(252, len(spy_prices)):].max()
+    drawdown = (spy_prices[-1] - peak) / peak
+    return 0.5 if drawdown < -_SPY_DD_THRESH else 1.0
 
 
 def get_signal(
@@ -82,45 +115,84 @@ def get_signal(
                 "rank": 0, "selected": False, "equity_pct": 0.0}
 
     rows: list[dict] = []
+    prev_scores: dict[str, float] = {}   # dampening: last committed score per asset
 
     for rd in rebal_dates:
         rd_ts = pd.Timestamp(rd)
         hist  = price_wide.loc[price_wide.index <= rd_ts, avail].ffill()
 
-        scores: dict[str, float] = {}
+        # --- 1. Time-series weighted scores ---
+        ts_scores: dict[str, float] = {}
+        vols: dict[str, float] = {}
         for sym in avail:
             col = hist[sym].dropna().values
             if len(col) >= _MAX_LB + 1:
-                scores[sym] = _ensemble_score(col)
+                ts_scores[sym] = _weighted_ts_score(col)
+                vols[sym]      = _realised_vol(col, _VOL_WINDOW)
 
-        if not scores:
+        if not ts_scores:
             rows.append(_cash_row(rd))
             continue
 
-        equity_pct = float(np.mean(list(scores.values())))
+        # --- 2. Cross-sectional z-score of ts_scores, normalised to [0,1] ---
+        sym_list = list(ts_scores.keys())
+        ts_arr   = np.array([ts_scores[s] for s in sym_list])
+        z        = (ts_arr - ts_arr.mean()) / (ts_arr.std() + 1e-8)
+        z_norm   = (z - z.min()) / (z.max() - z.min() + 1e-8)
 
-        positive = {s: v for s, v in scores.items() if v > 0.0}
+        # --- 3. Blend ts + cross-sectional ---
+        blended: dict[str, float] = {}
+        for i, sym in enumerate(sym_list):
+            blended[sym] = (1.0 - _CS_BLEND) * ts_scores[sym] + _CS_BLEND * float(z_norm[i])
 
+        # --- 4. Vol-adjust: score / vol (then re-normalise within universe) ---
+        vol_adj: dict[str, float] = {}
+        for sym in sym_list:
+            vol_adj[sym] = blended[sym] / vols.get(sym, 1.0)
+        va_arr  = np.array([vol_adj[sym] for sym in sym_list])
+        va_min, va_max = va_arr.min(), va_arr.max()
+        va_norm = (va_arr - va_min) / (va_max - va_min + 1e-8)
+        final_scores: dict[str, float] = {sym_list[i]: float(va_norm[i]) for i in range(len(sym_list))}
+
+        # --- 5. Turnover dampening: carry forward if change < MIN_SCORE_CHG ---
+        dampened: dict[str, float] = {}
+        for sym in sym_list:
+            new  = final_scores[sym]
+            prev = prev_scores.get(sym, -999.0)
+            dampened[sym] = new if abs(new - prev) >= _MIN_SCORE_CHG else prev
+        prev_scores = dampened.copy()
+
+        # --- 6. SPY drawdown regime filter -> equity_pct multiplier ---
+        spy_mult = 1.0
+        if "SPY" in hist.columns:
+            spy_col = hist["SPY"].dropna().values
+            spy_mult = _spy_multiplier(spy_col)
+
+        equity_pct = float(np.mean(list(ts_scores.values()))) * spy_mult
+
+        # --- 7. Select top_n by dampened score, require score > 0 ---
+        positive = {s: v for s, v in dampened.items() if v > 1e-8}
         if not positive:
             rows.append(_cash_row(rd))
+            prev_scores = {}
             continue
 
-        sorted_syms = sorted(positive, key=lambda s: -positive[s])
+        sorted_syms   = sorted(positive, key=lambda s: -positive[s])
         selected_syms = set(sorted_syms[:top_n])
 
-        score_arr = np.array([scores[s] for s in avail])
+        score_arr  = np.array([dampened.get(s, 0.0) for s in avail])
         rank_order = np.argsort(-score_arr)
-        rank_of = {avail[i]: int(np.where(rank_order == i)[0][0]) + 1
-                   for i in range(len(avail))}
+        rank_of    = {avail[i]: int(np.where(rank_order == i)[0][0]) + 1
+                      for i in range(len(avail))}
 
         for sym in avail:
             rows.append({
                 "rebalance_date": rd,
                 "symbol":         sym,
-                "score":          round(scores.get(sym, 0.0), 4),
+                "score":          round(dampened.get(sym, 0.0), 6),
                 "rank":           rank_of[sym],
                 "selected":       sym in selected_syms,
-                "equity_pct":     round(equity_pct, 4),
+                "equity_pct":     round(float(np.clip(equity_pct, 0.0, 1.0)), 4),
             })
 
     return pl.DataFrame(rows) if rows else pl.DataFrame()
