@@ -138,9 +138,7 @@ pg = st.navigation(
         ],
         "Trading": [
             st.Page("reports/paper_trading_dashboard.py",
-                    title="Paper Trading",     icon="📄"),
-            st.Page("reports/live_trading_dashboard.py",
-                    title="Live Trading",      icon="⚡"),
+                    title="Paper / Live Trading", icon="📄"),
         ],
         "Reference": [
             st.Page("reports/instructions.py",

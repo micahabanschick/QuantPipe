@@ -33,7 +33,6 @@ _OJ_PATH    = _GOLD / "order_journal.parquet"
 _DEPLOY_PATH = _GOLD / "deployment_history.jsonl"
 
 _INITIAL_NAV = 100_000.0   # paper broker starting cash
-_BROKER = "paper"
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
@@ -234,14 +233,19 @@ st.markdown("## Paper Trading")
 st.caption("Live portfolio monitoring — equity curve updates after each rebalance.")
 
 # ── Refresh controls ──────────────────────────────────────────────────────────
-hdr_left, hdr_right = st.columns([4, 1])
+hdr_left, hdr_mid, hdr_right = st.columns([3, 2, 1])
 with hdr_left:
     show_deployments = st.toggle("Show deployment markers", value=True,
                                  key="pt_show_deploy")
+with hdr_mid:
+    _mode = st.radio("Mode", ["Paper", "Live"], index=0, horizontal=True, key="pt_mode",
+                     help="Switch between paper and live account view")
 with hdr_right:
     if st.button("Refresh", key="pt_refresh", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+
+_BROKER = "paper" if _mode == "Paper" else "live"
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 with st.spinner("Computing equity curve…"):
@@ -285,10 +289,33 @@ st.markdown("---")
 if not eq.empty:
     fig = go.Figure()
 
+    # Optional backtest overlay from portfolio_log.parquet
+    _pl_path = _GOLD / "portfolio_log.parquet"
+    if _pl_path.exists():
+        try:
+            import polars as _pl
+            _pl_df = _pl.read_parquet(_pl_path).sort("date")
+            if "portfolio_value" in _pl_df.columns:
+                _pl_pd = _pl_df.select(["date", "portfolio_value"]).to_pandas()
+                _pl_pd["date"] = pd.to_datetime(_pl_pd["date"])
+                _pl_pd = _pl_pd.set_index("date")
+                # Scale to same starting NAV as paper portfolio
+                if not _pl_pd.empty and not eq.empty:
+                    _scale = eq.iloc[0] / _pl_pd["portfolio_value"].iloc[0]
+                    fig.add_trace(go.Scatter(
+                        x=_pl_pd.index, y=(_pl_pd["portfolio_value"] * _scale).values,
+                        name="Backtest (scaled)",
+                        line=dict(color=COLORS["neutral"], width=1.5, dash="dot"),
+                        opacity=0.6,
+                        hovertemplate="Backtest: $%{y:,.0f}<extra></extra>",
+                    ))
+        except Exception:
+            pass
+
     # Main equity curve
     fig.add_trace(go.Scatter(
         x=eq.index, y=eq.values,
-        name="Paper Portfolio",
+        name=f"{_mode} Portfolio",
         line=dict(color=COLORS["positive"], width=2.5),
         hovertemplate="$%{y:,.0f}<extra></extra>",
     ))
@@ -418,3 +445,60 @@ if deploy_evt:
             "Active strategies": strategies_str,
         })
     st.table(pd.DataFrame(rows))
+
+# ── Slippage Tracking ─────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### Slippage Analysis")
+if not orders.empty and "est_price" in orders.columns:
+    _slippage_df = orders.copy()
+    fill_col = next((c for c in ["fill_price", "actual_price", "avg_fill_px"] if c in _slippage_df.columns), None)
+    if fill_col:
+        _slippage_df["slippage_bps"] = ((_slippage_df[fill_col] - _slippage_df["est_price"]) / _slippage_df["est_price"].replace(0, np.nan) * 10_000).round(2)
+        _slippage_df["abs_slip_bps"] = _slippage_df["slippage_bps"].abs()
+        _sdisp = _slippage_df[["rebalance_date", "symbol", "qty", "est_price", fill_col, "slippage_bps", "status"]].copy()
+        _sdisp.columns = ["Date", "Symbol", "Qty", "Est. Price", "Fill Price", "Slip (bps)", "Status"]
+        _smean = float(_slippage_df["abs_slip_bps"].mean())
+        _smax  = float(_slippage_df["abs_slip_bps"].max())
+        _sc1, _sc2 = st.columns(2)
+        _sc1.metric("Mean |Slippage|", f"{_smean:.1f} bps")
+        _sc2.metric("Max |Slippage|", f"{_smax:.1f} bps")
+        st.dataframe(_sdisp, hide_index=True, use_container_width=True, height=200)
+    else:
+        st.info("No fill price column in order journal — slippage cannot be computed yet.")
+        st.caption("Expected column name: `fill_price`, `actual_price`, or `avg_fill_px`")
+else:
+    st.info("No orders in journal yet.")
+
+# ── Position Reconciliation ───────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("### Position Reconciliation")
+st.caption("Compares target weights (last rebalance) against estimated current exposure based on price drift.")
+if not tw.empty and metrics:
+    tw["date"] = pd.to_datetime(tw["date"]).dt.date
+    _latest_tw_date = tw["date"].max()
+    _latest_tw = tw[tw["date"] == _latest_tw_date][["symbol", "weight"]].set_index("symbol")["weight"]
+
+    # Estimate current weights via price drift
+    _current_est = _latest_tw.copy()
+    try:
+        from storage.parquet_store import load_bars as _lb
+        _rec_prices = _lb(_latest_tw.index.tolist(), _latest_tw_date, date.today(), "equity")
+        if not _rec_prices.is_empty():
+            _rec_wide = _rec_prices.sort("date").to_pandas().pivot(index="date", columns="symbol", values="close")
+            if len(_rec_wide) >= 2:
+                _growth = _rec_wide.iloc[-1] / _rec_wide.iloc[0]
+                _drifted = _latest_tw * _growth.reindex(_latest_tw.index).fillna(1.0)
+                _current_est = _drifted / _drifted.sum()
+    except Exception:
+        pass
+
+    _recon_df = pd.DataFrame({
+        "Symbol":  _latest_tw.index.tolist(),
+        "Target":  [f"{_latest_tw.get(s, 0):.2%}" for s in _latest_tw.index],
+        "Estimated": [f"{_current_est.get(s, 0):.2%}" for s in _latest_tw.index],
+        "Drift":   [f"{(_current_est.get(s, 0) - _latest_tw.get(s, 0)):+.2%}" for s in _latest_tw.index],
+    })
+    st.caption(f"Target as of {_latest_tw_date}")
+    st.dataframe(_recon_df, hide_index=True, use_container_width=True)
+else:
+    st.info("No target weights available for reconciliation.")

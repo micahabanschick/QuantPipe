@@ -141,17 +141,17 @@ def _rolling_metric(ret_series: pd.Series, window: int, metric: str) -> pd.Serie
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_portfolio_log() -> pl.DataFrame | None:
     return pl.read_parquet(PORTFOLIO_LOG).sort("date") if PORTFOLIO_LOG.exists() else None
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_target_weights() -> pl.DataFrame | None:
     return pl.read_parquet(TARGET_WEIGHTS).sort(["date", "symbol"]) if TARGET_WEIGHTS.exists() else None
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_equity_curve(lookback_years: int) -> tuple[pl.DataFrame, pd.DataFrame] | None:
     """Returns (equity_pl, trades_pd) or None on failure."""
     try:
@@ -190,7 +190,7 @@ def _load_equity_curve(lookback_years: int) -> tuple[pl.DataFrame, pd.DataFrame]
         return None
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_benchmark(sym: str, start_str: str, end_str: str) -> pd.Series | None:
     try:
         prices = load_bars([sym], date.fromisoformat(start_str), date.fromisoformat(end_str), "equity")
@@ -229,6 +229,27 @@ def _load_correlation(symbols: list[str], lookback: int = 252) -> pd.DataFrame |
             return None
         pivot = prices.sort("date").to_pandas().pivot(index="date", columns="symbol", values="close")
         return pivot.pct_change().dropna().tail(lookback).corr()
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=1800)
+def _load_contribution_data(
+    symbols: tuple,
+    start_str: str,
+    end_str: str,
+    weights: tuple,
+) -> pd.DataFrame | None:
+    """Per-symbol daily contribution = weight × daily return over the backtest window."""
+    try:
+        prices = load_bars(list(symbols), date.fromisoformat(start_str), date.fromisoformat(end_str), "equity")
+        if prices.is_empty():
+            return None
+        pivot = prices.sort("date").to_pandas().pivot(index="date", columns="symbol", values="close")
+        rets  = pivot.pct_change().dropna()
+        wt    = dict(weights)
+        contrib = pd.DataFrame({s: rets[s] * wt.get(s, 0.0) for s in symbols if s in rets.columns})
+        return contrib
     except Exception:
         return None
 
@@ -467,7 +488,29 @@ if daily_rets is not None:
     except Exception:
         pass
 
-_dl1, _dl2, _dl3 = st.columns([1, 1, 6])
+# ── Information Ratio & Tracking Error (vs benchmark) ────────────────────────
+_ir: float | None = None
+_te: float | None = None
+if daily_rets is not None and benchmark_sym != "None" and eq_pd is not None:
+    try:
+        _bench_for_ir = _load_benchmark(
+            benchmark_sym,
+            eq_pd.index[0].date().isoformat(),
+            eq_pd.index[-1].date().isoformat(),
+        )
+        if _bench_for_ir is not None:
+            _bench_for_ir.index = pd.to_datetime(_bench_for_ir.index)
+            _bench_for_ir = _bench_for_ir.reindex(eq_pd.index, method="ffill").dropna()
+            _bench_rets   = _bench_for_ir.pct_change().dropna()
+            _active       = daily_rets.reindex(_bench_rets.index).dropna()
+            _bench_rets   = _bench_rets.reindex(_active.index).dropna()
+            _diff         = _active - _bench_rets
+            _te           = float(_diff.std() * np.sqrt(252))
+            _ir           = float(_diff.mean() / _diff.std() * np.sqrt(252)) if _diff.std() > 1e-10 else 0.0
+    except Exception:
+        pass
+
+_dl1, _dl2, _dl3, _dl4 = st.columns([1, 1, 1, 5])
 
 with _dl1:
     try:
@@ -508,6 +551,19 @@ with _dl2:
         st.button("📊 Trade History", disabled=True,
                   help="No backtest trades available — run the pipeline first")
 
+with _dl3:
+    if eq_pd is not None:
+        _eq_csv = eq_pd.reset_index().rename(columns={"index": "date"}).to_csv(index=False)
+        st.download_button(
+            label="📈 Equity Curve",
+            data=_eq_csv.encode(),
+            file_name=f"quantpipe_equity_{date.today().isoformat()}.csv",
+            mime="text/csv",
+            help="Daily portfolio value as CSV",
+        )
+    else:
+        st.button("📈 Equity Curve", disabled=True, help="No equity curve available")
+
 st.markdown("<div style='height:6px'/>", unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
@@ -546,7 +602,17 @@ with tab_ov:
         ]:
             col.markdown(kpi_card(label, val, accent=accent), unsafe_allow_html=True)
 
-        st.markdown("<div style='height:16px'/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+
+        # ── KPI row 3: benchmark-relative metrics (only when benchmark selected) ─
+        if benchmark_sym != "None" and (_ir is not None or _te is not None):
+            c1, c2, c3, c4 = st.columns(4)
+            ir_val = f"{_ir:.2f}" if _ir is not None else "N/A"
+            te_val = f"{_te:.1%}" if _te is not None else "N/A"
+            ir_accent = COLORS["positive"] if (_ir or 0) >= 0 else COLORS["negative"]
+            c1.markdown(kpi_card("Information Ratio", ir_val, accent=ir_accent), unsafe_allow_html=True)
+            c2.markdown(kpi_card("Tracking Error", te_val, accent=COLORS["blue"]), unsafe_allow_html=True)
+            st.markdown("<div style='height:16px'/>", unsafe_allow_html=True)
 
         # ── Equity curve ──────────────────────────────────────────────────────
         st.markdown(section_label("Equity Curve"), unsafe_allow_html=True)
@@ -763,6 +829,62 @@ with tab_port:
                     hovermode="x unified",
                 )
                 st.plotly_chart(fig_hist, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Contribution Analysis ──────────────────────────────────────────────
+        if eq_pd is not None:
+            st.markdown(section_label("Contribution Analysis"), unsafe_allow_html=True)
+            _contrib = _load_contribution_data(
+                tuple(sorted(current_weights.keys())),
+                eq_pd.index[0].date().isoformat(),
+                eq_pd.index[-1].date().isoformat(),
+                tuple(sorted(current_weights.items())),
+            )
+            if _contrib is not None and not _contrib.empty:
+                _total  = _contrib.sum().sort_values(ascending=False)
+                _avgd   = _contrib.mean()
+                _best5  = _contrib.sum(axis=1).nlargest(5).index
+                _worst5 = _contrib.sum(axis=1).nsmallest(5).index
+
+                col_ct, col_cb = st.columns([1, 1])
+                with col_ct:
+                    _ctbl = pd.DataFrame({
+                        "Symbol":      _total.index.tolist(),
+                        "Total Contrib": [f"{v:.2%}" for v in _total.values],
+                        "Avg Daily":    [f"{_avgd.get(s, 0):.4%}" for s in _total.index],
+                    })
+                    st.dataframe(_ctbl, hide_index=True, width="stretch", height=220)
+                with col_cb:
+                    _ccolors = [COLORS["positive"] if v >= 0 else COLORS["negative"] for v in _total.values]
+                    fig_cb = go.Figure(go.Bar(
+                        x=_total.values, y=_total.index,
+                        orientation="h",
+                        marker=dict(color=_ccolors, line=dict(width=0)),
+                        text=[f"{v:.2%}" for v in _total.values],
+                        textposition="outside",
+                        textfont=dict(size=11, color=COLORS["text"]),
+                        hovertemplate="<b>%{y}</b>: %{x:.2%}<extra></extra>",
+                    ))
+                    fig_cb.add_vline(x=0, line=dict(color=COLORS["border"], width=1))
+                    apply_theme(fig_cb)
+                    fig_cb.update_layout(
+                        height=max(160, 38 * len(_total)),
+                        xaxis=dict(tickformat=".1%", showgrid=False),
+                        yaxis=dict(showgrid=False),
+                        showlegend=False,
+                    )
+                    st.plotly_chart(fig_cb, width="stretch", config=PLOTLY_CONFIG)
+
+                with st.expander("Best / Worst days breakdown"):
+                    _bd = _contrib.loc[_best5].T
+                    _bd.columns = [str(d.date()) if hasattr(d, "date") else str(d) for d in _bd.columns]
+                    st.caption("Top-5 Best Days — per-position contribution")
+                    st.dataframe(_bd.style.format("{:.4%}"), width="stretch")
+                    _wd = _contrib.loc[_worst5].T
+                    _wd.columns = [str(d.date()) if hasattr(d, "date") else str(d) for d in _wd.columns]
+                    st.caption("Top-5 Worst Days — per-position contribution")
+                    st.dataframe(_wd.style.format("{:.4%}"), width="stretch")
+            else:
+                st.info("Price data unavailable for contribution analysis.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

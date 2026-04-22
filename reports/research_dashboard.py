@@ -113,121 +113,77 @@ if _symbols:
     with st.spinner("Loading features…"):
         features_df = _features(_symbols, str(_start), str(_end))
 
-tab_scanner, tab_factor, tab_signal_analysis, tab_wfv, tab_mc = st.tabs(
-    ["  Signal Scanner  ", "  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  "]
+tab_wfv, tab_mc, tab_factor, tab_signal_analysis = st.tabs(
+    ["  Walk-Forward  ", "  Monte Carlo  ", "  Factor Analysis  ", "  Signal Analysis  "]
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 1 — SIGNAL SCANNER
-# ═══════════════════════════════════════════════════════════════════════════════
-
-with tab_scanner:
-    if features_df is None:
-        st.warning("No features available. Run: `uv run python features/compute.py`")
-    else:
-        snap = get_snapshot(features_df)
-
-        # ── KPI row ───────────────────────────────────────────────────────────
-        st.markdown(
-            page_header("", f"Universe snapshot · {snap.latest_date}", ""),
-            unsafe_allow_html=True,
-        )
-        c1, c2, c3, c4 = st.columns(4)
-        c1.markdown(kpi_card("Universe Size",        str(snap.n_universe),        accent=COLORS["teal"]),     unsafe_allow_html=True)
-        c2.markdown(kpi_card("Symbols w/ Momentum",  str(snap.n_valid_momentum),  accent=COLORS["blue"]),     unsafe_allow_html=True)
-        c3.markdown(kpi_card("Current Top-1",         snap.top5_momentum[0] if snap.top5_momentum else "—", accent=COLORS["positive"]), unsafe_allow_html=True)
-        c4.markdown(kpi_card("As-of Date",            snap.latest_date,            accent=COLORS["neutral"]), unsafe_allow_html=True)
-
-        st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
-
-        col_rank, col_heat = st.columns(2)
-
-        # ── Momentum ranking bar ──────────────────────────────────────────────
-        with col_rank:
-            st.markdown(section_label("12-1 Momentum Ranking"), unsafe_allow_html=True)
-            mom = momentum_ranked(snap.snap_pd)
-            if not mom.empty:
-                bar_colors = [COLORS["positive"] if v >= 0 else COLORS["negative"] for v in mom.values]
-                fig_rank = go.Figure(go.Bar(
-                    x=mom.values,
-                    y=mom.index.tolist(),
-                    orientation="h",
-                    marker=dict(color=bar_colors, line=dict(width=0)),
-                    text=[f"{v:.1%}" for v in mom.values],
-                    textposition="outside",
-                    textfont=dict(size=10, color=COLORS["text"]),
-                    hovertemplate="<b>%{y}</b>: %{x:.2%}<extra></extra>",
-                ))
-                fig_rank.add_vline(x=0, line=dict(color=COLORS["border"], width=1))
-                apply_theme(fig_rank)
-                fig_rank.update_layout(
-                    height=max(300, 26 * len(mom)),
-                    xaxis=dict(tickformat=".0%", showgrid=False),
-                    yaxis=dict(showgrid=False),
-                    showlegend=False,
-                )
-                st.plotly_chart(fig_rank, width="stretch", config=PLOTLY_CONFIG)
-
-        # ── Factor z-score heatmap ────────────────────────────────────────────
-        with col_heat:
-            st.markdown(section_label("Factor Z-Scores"), unsafe_allow_html=True)
-            z = snap.z_scores
-            z_cols = [c for c in z.columns if z[c].notna().any()]
-            if z_cols:
-                z_sorted = z[z_cols].sort_values("momentum_12m_1m", ascending=False) \
-                    if "momentum_12m_1m" in z_cols else z[z_cols]
-                col_labels = [FEATURE_LABELS.get(c, c) for c in z_cols]
-                text_ann = [[f"{v:.2f}" if pd.notna(v) else "" for v in row] for row in z_sorted.values]
-                fig_heat = go.Figure(go.Heatmap(
-                    z=z_sorted.values,
-                    x=col_labels,
-                    y=z_sorted.index.tolist(),
-                    text=text_ann,
-                    texttemplate="%{text}",
-                    textfont=dict(size=9),
-                    colorscale="RdYlGn",
-                    zmid=0,
-                    showscale=True,
-                    colorbar=dict(thickness=12, len=0.85),
-                    hovertemplate="<b>%{y}</b> · %{x}: %{z:.2f}σ<extra></extra>",
-                ))
-                apply_theme(fig_heat)
-                fig_heat.update_layout(
-                    height=max(300, 26 * len(z_sorted)),
-                    xaxis=dict(side="top"),
-                )
-                st.plotly_chart(fig_heat, width="stretch", config=PLOTLY_CONFIG)
-
-        # ── Full factor snapshot table ────────────────────────────────────────
-        st.markdown(section_label("Full Factor Snapshot"), unsafe_allow_html=True)
-        pf = snap.present_features
-        if pf:
-            display = snap.snap_pd[pf].copy()
-            display.index.name = "Symbol"
-            display.columns = [FEATURE_LABELS.get(c, c) for c in display.columns]
-            if "12-1 Momentum" in display.columns:
-                display = display.sort_values("12-1 Momentum", ascending=False)
-            gradient_cols = [FEATURE_LABELS.get(f, f) for f in pf if f != "dollar_volume_63d"
-                             and FEATURE_LABELS.get(f, f) in display.columns]
-            fmt = {FEATURE_LABELS.get(f, f): ("${:,.0f}" if f == "dollar_volume_63d" else "{:.3f}") for f in pf}
-            st.dataframe(
-                display.style.background_gradient(cmap="RdYlGn", axis=0, subset=gradient_cols).format(fmt),
-                width="stretch",
-                height=min(600, 38 * (len(display) + 1)),
-            )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — FACTOR ANALYSIS
+# TAB 3 — FACTOR ANALYSIS  (merges former Signal Scanner)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_factor:
     if features_df is None:
-        st.warning("No features available.")
+        st.warning("No features available. Run: `uv run python features/compute.py`")
     else:
+        # ── Universe Snapshot (formerly Signal Scanner) ───────────────────────
+        snap = get_snapshot(features_df)
+        with st.expander(f"Universe Snapshot · {snap.latest_date}", expanded=False):
+            _sc1, _sc2, _sc3, _sc4 = st.columns(4)
+            _sc1.markdown(kpi_card("Universe Size",       str(snap.n_universe),       accent=COLORS["teal"]),     unsafe_allow_html=True)
+            _sc2.markdown(kpi_card("Symbols w/ Momentum", str(snap.n_valid_momentum), accent=COLORS["blue"]),     unsafe_allow_html=True)
+            _sc3.markdown(kpi_card("Current Top-1", snap.top5_momentum[0] if snap.top5_momentum else "—", accent=COLORS["positive"]), unsafe_allow_html=True)
+            _sc4.markdown(kpi_card("As-of Date",          snap.latest_date,           accent=COLORS["neutral"]), unsafe_allow_html=True)
+            st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+            _col_rank, _col_zheat = st.columns(2)
+            with _col_rank:
+                st.markdown(section_label("12-1 Momentum Ranking"), unsafe_allow_html=True)
+                _mom = momentum_ranked(snap.snap_pd)
+                if not _mom.empty:
+                    _bar_c = [COLORS["positive"] if v >= 0 else COLORS["negative"] for v in _mom.values]
+                    _fig_rank = go.Figure(go.Bar(
+                        x=_mom.values, y=_mom.index.tolist(), orientation="h",
+                        marker=dict(color=_bar_c, line=dict(width=0)),
+                        text=[f"{v:.1%}" for v in _mom.values], textposition="outside",
+                        textfont=dict(size=10, color=COLORS["text"]),
+                        hovertemplate="<b>%{y}</b>: %{x:.2%}<extra></extra>",
+                    ))
+                    _fig_rank.add_vline(x=0, line=dict(color=COLORS["border"], width=1))
+                    apply_theme(_fig_rank)
+                    _fig_rank.update_layout(height=max(280, 26 * len(_mom)), xaxis=dict(tickformat=".0%", showgrid=False), yaxis=dict(showgrid=False), showlegend=False)
+                    st.plotly_chart(_fig_rank, width="stretch", config=PLOTLY_CONFIG)
+            with _col_zheat:
+                st.markdown(section_label("Factor Z-Scores"), unsafe_allow_html=True)
+                _z = snap.z_scores
+                _z_cols = [c for c in _z.columns if _z[c].notna().any()]
+                if _z_cols:
+                    _z_sorted = _z[_z_cols].sort_values("momentum_12m_1m", ascending=False) if "momentum_12m_1m" in _z_cols else _z[_z_cols]
+                    _z_xlabels = [FEATURE_LABELS.get(c, c) for c in _z_cols]
+                    _z_text = [[f"{v:.2f}" if pd.notna(v) else "" for v in row] for row in _z_sorted.values]
+                    _fig_zheat = go.Figure(go.Heatmap(
+                        z=_z_sorted.values, x=_z_xlabels, y=_z_sorted.index.tolist(),
+                        text=_z_text, texttemplate="%{text}", textfont=dict(size=9),
+                        colorscale="RdYlGn", zmid=0, showscale=True,
+                        colorbar=dict(thickness=12, len=0.85),
+                        hovertemplate="<b>%{y}</b> · %{x}: %{z:.2f}σ<extra></extra>",
+                    ))
+                    apply_theme(_fig_zheat)
+                    _fig_zheat.update_layout(height=max(280, 26 * len(_z_sorted)), xaxis=dict(side="top"))
+                    st.plotly_chart(_fig_zheat, width="stretch", config=PLOTLY_CONFIG)
+            # Full snapshot table
+            _pf = snap.present_features
+            if _pf:
+                _display = snap.snap_pd[_pf].copy()
+                _display.index.name = "Symbol"
+                _display.columns = [FEATURE_LABELS.get(c, c) for c in _display.columns]
+                if "12-1 Momentum" in _display.columns:
+                    _display = _display.sort_values("12-1 Momentum", ascending=False)
+                _grad_cols = [FEATURE_LABELS.get(f, f) for f in _pf if f != "dollar_volume_63d" and FEATURE_LABELS.get(f, f) in _display.columns]
+                _fmt = {FEATURE_LABELS.get(f, f): ("${:,.0f}" if f == "dollar_volume_63d" else "{:.3f}") for f in _pf}
+                st.dataframe(_display.style.background_gradient(cmap="RdYlGn", axis=0, subset=_grad_cols).format(_fmt), width="stretch", height=min(500, 38 * (len(_display) + 1)))
+        st.markdown("<div style='height:6px'/>", unsafe_allow_html=True)
         present = [f for f in ALL_FEATURES if f in features_df.columns]
 
-        col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1, 2, 1])
+        col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4 = st.columns([1, 2, 1, 1])
         with col_ctrl1:
             selected_factor = st.selectbox("Factor", present, format_func=lambda x: FEATURE_LABELS.get(x, x))
         with col_ctrl2:
@@ -236,6 +192,8 @@ with tab_factor:
         with col_ctrl3:
             ic_window = st.selectbox("IC window (days)", [21, 63, 126], index=0,
                                      format_func=lambda x: f"{x}d fwd")
+        with col_ctrl4:
+            spy_overlay = st.checkbox("SPY regime overlay", value=False, help="Shade bear-market periods on the IC chart")
 
         if not selected_syms:
             st.info("Select at least one symbol.")
@@ -314,6 +272,30 @@ with tab_factor:
                 if ic_result and ic_result.values:
                     bar_colors = [COLORS["positive"] if v >= 0 else COLORS["negative"] for v in ic_result.values]
                     fig_ic = go.Figure()
+
+                    # SPY regime overlay: shade periods where SPY 252d rolling return < 0
+                    if spy_overlay and prices_pl is not None:
+                        try:
+                            _spy_px = prices_pl.filter(pl.col("symbol") == "SPY").sort("date").to_pandas().set_index("date")["close"]
+                            _spy_px.index = pd.to_datetime(_spy_px.index)
+                            _spy_roll = _spy_px.rolling(252).apply(lambda x: x[-1] / x[0] - 1, raw=True)
+                            _bear = _spy_roll < 0
+                            _in_bear = False
+                            _bear_start = None
+                            for _dt, _is_bear in _bear.items():
+                                if _is_bear and not _in_bear:
+                                    _bear_start = _dt
+                                    _in_bear = True
+                                elif not _is_bear and _in_bear:
+                                    fig_ic.add_vrect(x0=str(_bear_start.date()), x1=str(_dt.date()),
+                                                     fillcolor="rgba(255,75,75,0.08)", layer="below", line_width=0)
+                                    _in_bear = False
+                            if _in_bear and _bear_start:
+                                fig_ic.add_vrect(x0=str(_bear_start.date()), x1=str(ic_result.dates[-1]),
+                                                 fillcolor="rgba(255,75,75,0.08)", layer="below", line_width=0)
+                        except Exception:
+                            pass
+
                     fig_ic.add_trace(go.Bar(
                         x=ic_result.dates, y=ic_result.values,
                         marker=dict(color=bar_colors, line=dict(width=0)), opacity=0.55,
@@ -339,9 +321,37 @@ with tab_factor:
                 else:
                     st.info("Could not compute IC — price data unavailable.")
 
+            # ── Factor Correlation Heatmap ─────────────────────────────────────
+            if len(present) >= 2 and selected_syms:
+                st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+                st.markdown(section_label("Factor Correlation"), unsafe_allow_html=True)
+                try:
+                    _fcorr_frames = []
+                    for _f in present:
+                        _pv = factor_pivot_from_features(features_df, selected_syms, _f)
+                        _series = _pv.stack().rename(_f)
+                        _fcorr_frames.append(_series)
+                    _fcorr_df = pd.concat(_fcorr_frames, axis=1).dropna()
+                    _fcorr = _fcorr_df.corr()
+                    _flabels = [FEATURE_LABELS.get(f, f) for f in _fcorr.columns]
+                    _ftext = [[f"{v:.2f}" for v in row] for row in _fcorr.values]
+                    fig_fcorr = go.Figure(go.Heatmap(
+                        z=_fcorr.values, x=_flabels, y=_flabels,
+                        text=_ftext, texttemplate="%{text}", textfont=dict(size=11),
+                        colorscale=[[0.0, COLORS["negative"]], [0.5, COLORS["card_bg"]], [1.0, COLORS["positive"]]],
+                        zmin=-1, zmax=1, showscale=True,
+                        colorbar=dict(tickvals=[-1, 0, 1], thickness=14, len=0.9),
+                        hovertemplate="<b>%{y} / %{x}</b>: %{text}<extra></extra>",
+                    ))
+                    apply_theme(fig_fcorr)
+                    fig_fcorr.update_layout(height=max(220, 50 * len(_fcorr)), yaxis=dict(autorange="reversed"))
+                    st.plotly_chart(fig_fcorr, width="stretch", config=PLOTLY_CONFIG)
+                except Exception:
+                    st.info("Factor correlation unavailable.")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — SIGNAL ANALYSIS
+# TAB 4 — SIGNAL ANALYSIS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_signal_analysis:

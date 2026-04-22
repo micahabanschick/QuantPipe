@@ -263,6 +263,25 @@ def _tab_comparison(results: dict):
     if not df.empty:
         st.dataframe(df, use_container_width=True)
 
+    # Deploy to Paper button
+    _dp_col, _ = st.columns([2, 8])
+    with _dp_col:
+        if st.button("🚀 Deploy to Paper", type="primary", use_container_width=True,
+                     help="Run generate_signals then rebalance in paper trading mode"):
+            with st.spinner("Deploying to paper account…"):
+                try:
+                    import subprocess
+                    _gs = subprocess.run(
+                        [sys.executable, str(_ROOT / "orchestration" / "generate_signals.py")],
+                        capture_output=True, text=True, cwd=str(_ROOT), timeout=120,
+                    )
+                    if _gs.returncode != 0:
+                        st.error(f"generate_signals failed:\n{_gs.stderr[-500:]}")
+                    else:
+                        st.success("Signals generated. Ready to rebalance — go to the **Trade** tab to execute.")
+                except Exception as _de:
+                    st.error(f"Deploy failed: {_de}")
+
     st.markdown("### Equity Curves (normalised to $10,000)")
     fig_eq = go.Figure()
     for i, (slug, r) in enumerate(results.items()):
@@ -414,14 +433,38 @@ def _tab_optimizer(results: dict, config, metas: list):
         bar_names = [slug_to_name.get(s, s) for s in allocs]
         bar_vals = [v * 100 for v in allocs.values()]
         bar_colors = [_color(i) for i in range(len(allocs))]
+
+        # Bootstrap CI on allocations
+        _ci_low = [v * 100 for v in allocs.values()]
+        _ci_high = [v * 100 for v in allocs.values()]
+        try:
+            _n_boot = 200
+            _boot_allocs = {s: [] for s in allocs}
+            for _ in range(_n_boot):
+                _sample = ret_matrix.sample(n=len(ret_matrix), replace=True)
+                _boot_opt = optimize_allocations(_sample, method=method, max_weight=max_w)
+                for s in allocs:
+                    _boot_allocs[s].append(_boot_opt.get(s, 0.0) * 100)
+            _ci_low  = [float(np.percentile(_boot_allocs[s], 5))  for s in allocs]
+            _ci_high = [float(np.percentile(_boot_allocs[s], 95)) for s in allocs]
+        except Exception:
+            pass
+
+        _err_low  = [max(v - lo, 0) for v, lo in zip(bar_vals, _ci_low)]
+        _err_high = [max(hi - v, 0) for v, hi in zip(bar_vals, _ci_high)]
+
         fig_bar = go.Figure(go.Bar(
             x=bar_names, y=bar_vals,
             marker=dict(color=bar_colors, line=dict(color=COLORS["bg"], width=1)),
             text=[f"{v:.1f}%" for v in bar_vals], textposition="outside",
+            error_y=dict(type="data", symmetric=False,
+                         array=_err_high, arrayminus=_err_low,
+                         color=COLORS["neutral"], thickness=2, width=8),
         ))
-        apply_theme(fig_bar, height=260)
-        fig_bar.update_layout(yaxis=dict(ticksuffix="%", range=[0, 110]))
+        apply_theme(fig_bar, height=280)
+        fig_bar.update_layout(yaxis=dict(ticksuffix="%", range=[0, 115]))
         st.plotly_chart(fig_bar, use_container_width=True)
+        st.caption("Error bars show 5th–95th percentile from 200 bootstrap resamples.")
 
         if st.button("Deploy These Allocations", type="primary", key="deploy_opt"):
             _save_allocations(allocs, results, config, metas)
@@ -537,53 +580,87 @@ def _tab_deployment(metas: list, results: dict, config):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — Blended Preview
+# TAB 5 — Allocation Drift Monitor  (replaces Blended Preview)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _tab_blended(config, results: dict):
+def _tab_drift_monitor(config, results: dict):
     from config.settings import DATA_DIR
-    tw_path = DATA_DIR / "gold" / "equity" / "target_weights.parquet"
+    import polars as pl
 
-    st.markdown("### Live Target Weights")
-    if tw_path.exists():
-        import polars as pl
-        tw = pl.read_parquet(tw_path)
-        latest_date = tw["date"].max()
-        latest = tw.filter(pl.col("date") == latest_date).sort("weight", descending=True)
-        st.caption(f"As of {latest_date}")
-        st.dataframe(latest.to_pandas().reset_index(drop=True), use_container_width=True)
+    tw_path  = DATA_DIR / "gold" / "equity" / "target_weights.parquet"
+    log_path = DATA_DIR / "gold" / "equity" / "portfolio_log.parquet"
 
-        rows_pd = latest.to_pandas()
-        if not rows_pd.empty:
-            fig_pie = go.Figure(go.Pie(
-                labels=rows_pd["symbol"].tolist(),
-                values=rows_pd["weight"].tolist(),
-                marker=dict(colors=COLORS["series"], line=dict(color=COLORS["bg"], width=2)),
-                textinfo="label+percent", textfont=dict(size=11, color=COLORS["text"]),
-                hole=0.5,
-            ))
-            apply_theme(fig_pie, title="Live Position Weights", height=320)
-            fig_pie.update_layout(showlegend=False, paper_bgcolor=COLORS["card_bg"])
-            st.plotly_chart(fig_pie, use_container_width=True)
-    else:
+    st.markdown("### Allocation Drift Monitor")
+    st.caption("Compares the latest target weights against what would be the actual weights after price drift since last rebalance.")
+
+    if not tw_path.exists():
         st.info("No target weights found. Run `orchestration/generate_signals.py` first.")
+        return
 
-    if config:
-        st.markdown("### Active Deployment Config")
-        total = sum(s.allocation_weight for s in config.strategies if s.active) or 1.0
-        rows = [
-            {
-                "Strategy": s.name,
-                "Active": "Yes" if s.active else "No",
-                "Raw": f"{s.allocation_weight:.3f}",
-                "Normalised": f"{s.allocation_weight / total * 100:.1f}%" if s.active else "—",
-            }
-            for s in config.strategies
-        ]
-        st.table(pd.DataFrame(rows))
-        st.caption(f"Version {config.version} · updated {config.updated_at or 'unknown'}")
+    tw = pl.read_parquet(tw_path)
+    latest_date = tw["date"].max()
+    target = tw.filter(pl.col("date") == latest_date).sort("weight", descending=True)
+    target_pd = target.to_pandas().set_index("symbol")["weight"]
+
+    # Approximate actual weights using price drift since rebalance
+    actual_pd = target_pd.copy()
+    try:
+        from storage.parquet_store import load_bars
+        from datetime import date as _date, timedelta
+        syms = target_pd.index.tolist()
+        prices = load_bars(syms, latest_date, _date.today(), "equity")
+        if not prices.is_empty():
+            pivot = prices.sort("date").to_pandas().pivot(index="date", columns="symbol", values="close")
+            if len(pivot) >= 2:
+                first_row = pivot.iloc[0]
+                last_row  = pivot.iloc[-1]
+                growth = last_row / first_row
+                drifted = target_pd * growth.reindex(target_pd.index).fillna(1.0)
+                actual_pd = drifted / drifted.sum()
+    except Exception:
+        pass
+
+    drift = actual_pd - target_pd
+    drift_sorted = drift.sort_values()
+    colors = [COLORS["negative"] if v < -0.02 else COLORS["warning"] if v < 0 else COLORS["positive"] if v > 0.02 else COLORS["neutral"] for v in drift_sorted.values]
+
+    c_drift, c_weights = st.columns(2)
+    with c_drift:
+        st.markdown("**Drift (Actual − Target)**")
+        fig_d = go.Figure(go.Bar(
+            x=drift_sorted.values, y=drift_sorted.index.tolist(),
+            orientation="h",
+            marker=dict(color=colors, line=dict(width=0)),
+            text=[f"{v:+.2%}" for v in drift_sorted.values],
+            textposition="outside",
+            textfont=dict(size=11, color=COLORS["text"]),
+            hovertemplate="<b>%{y}</b>: %{x:+.2%}<extra></extra>",
+        ))
+        fig_d.add_vline(x=0, line=dict(color=COLORS["border"], width=1))
+        fig_d.add_vline(x=0.05, line=dict(color=COLORS["warning"], width=1, dash="dot"))
+        fig_d.add_vline(x=-0.05, line=dict(color=COLORS["warning"], width=1, dash="dot"))
+        apply_theme(fig_d)
+        fig_d.update_layout(height=max(200, 38 * len(drift)), xaxis=dict(tickformat=".1%", showgrid=False), yaxis=dict(showgrid=False), showlegend=False)
+        st.plotly_chart(fig_d, use_container_width=True)
+
+    with c_weights:
+        st.markdown("**Target vs Actual Weights**")
+        all_syms = sorted(set(target_pd.index) | set(actual_pd.index))
+        df_cmp = pd.DataFrame({
+            "Symbol": all_syms,
+            "Target":  [f"{target_pd.get(s, 0):.2%}" for s in all_syms],
+            "Actual":  [f"{actual_pd.get(s, 0):.2%}" for s in all_syms],
+            "Drift":   [f"{(actual_pd.get(s, 0) - target_pd.get(s, 0)):+.2%}" for s in all_syms],
+        })
+        st.dataframe(df_cmp, hide_index=True, use_container_width=True, height=max(200, 38 * len(all_syms)))
+
+    max_drift = float(drift.abs().max()) if not drift.empty else 0
+    if max_drift > 0.05:
+        st.warning(f"Maximum drift is {max_drift:.1%} — consider rebalancing.")
+    elif max_drift > 0.02:
+        st.info(f"Maximum drift is {max_drift:.1%} — within tolerance.")
     else:
-        st.info("No deployment config yet — go to the **Deployment** tab.")
+        st.success(f"Portfolio is on target (max drift {max_drift:.1%}).")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -857,9 +934,9 @@ with ctrl_right:
 st.markdown("---")
 
 (tab_overview, tab_compare, tab_optimizer,
- tab_deploy, tab_blended, tab_trade) = st.tabs([
+ tab_deploy, tab_drift, tab_trade) = st.tabs([
     "Overview", "Comparison", "Optimizer",
-    "Deployment", "Blended Preview", "Trade",
+    "Deployment", "Drift Monitor", "Trade",
 ])
 
 with tab_overview:
@@ -874,8 +951,8 @@ with tab_optimizer:
 with tab_deploy:
     _tab_deployment(metas, results, config)
 
-with tab_blended:
-    _tab_blended(config, results)
+with tab_drift:
+    _tab_drift_monitor(config, results)
 
 with tab_trade:
     _tab_trade()

@@ -403,7 +403,11 @@ def _ai_api_key() -> str | None:
     return os.environ.get("ANTHROPIC_API_KEY") or None
 
 
-def _render_ai_assistant(main_py: Path | None, strat_dir: Path) -> None:
+def _render_ai_assistant(
+    main_py: Path | None,
+    strat_dir: Path,
+    result_data: dict | None = None,
+) -> None:
     """Full-width Claude chat panel for in-lab strategy coding help."""
     try:
         import anthropic as _anthropic
@@ -442,6 +446,27 @@ def _render_ai_assistant(main_py: Path | None, strat_dir: Path) -> None:
         f"```python\n{current_code}\n```"
         if current_code else ""
     )
+
+    # ── Latest backtest result injected as context ────────────────────────────
+    if result_data and result_data.get("ok"):
+        m = result_data.get("metrics", {})
+        def _fmt(v, pct=False):
+            if v is None:
+                return "—"
+            return f"{float(v):+.2%}" if pct else f"{float(v):.3f}"
+        context_block += (
+            f"\n\n## Latest backtest result\n\n"
+            f"| Metric | Value |\n|---|---|\n"
+            f"| Sharpe | {_fmt(m.get('sharpe'))} |\n"
+            f"| CAGR | {_fmt(m.get('cagr'), pct=True)} |\n"
+            f"| Total Return | {_fmt(m.get('total_return'), pct=True)} |\n"
+            f"| Max Drawdown | {_fmt(m.get('max_drawdown'), pct=True)} |\n"
+            f"| Sortino | {_fmt(m.get('sortino'))} |\n"
+            f"| Calmar | {_fmt(m.get('calmar'))} |\n"
+            f"| Tracking Error | {_fmt(result_data.get('tracking_error'), pct=True)} |\n"
+            f"| Information Ratio | {_fmt(result_data.get('information_ratio'))} |\n"
+            f"| Trades | {m.get('n_trades', '—')} |\n"
+        )
 
     # ── Chat history display ──────────────────────────────────────────────────
     history_container = st.container()
@@ -1264,6 +1289,22 @@ with right:
         result_data["_console"] = stderr_lines
         st.session_state[result_key] = result_data
 
+        if result_data.get("ok"):
+            history_key = f"lab_history_{selected_dir.name}"
+            hist = st.session_state.get(history_key, [])
+            _m = result_data.get("metrics", {})
+            hist.append({
+                "Run #":    len(hist) + 1,
+                "Date":     date.today().isoformat(),
+                "Sharpe":   round(float(_m.get("sharpe") or 0), 3),
+                "CAGR":     f"{float(_m.get('cagr') or 0):+.1%}",
+                "Max DD":   f"{float(_m.get('max_drawdown') or 0):+.1%}",
+                "Top-N":    int(top_n),
+                "Lookback": int(lookback_years),
+                "Cost bps": float(cost_bps),
+            })
+            st.session_state[history_key] = hist[-5:]
+
         if not result_data.get("ok"):
             with results_ph.container():
                 err = result_data.get("error", "Unknown error")
@@ -1288,6 +1329,50 @@ if result_data and result_data.get("ok"):
     st.divider()
     _show_result_tabs(result_data, result_key)
 
+    # ── Promote to Portfolio button ───────────────────────────────────────────
+    _pm_col, _ = st.columns([3, 9])
+    with _pm_col:
+        if st.button(
+            "🚀 Promote to Portfolio",
+            type="primary",
+            use_container_width=True,
+            help="Write active_strategy.json — run the pipeline to apply",
+        ):
+            try:
+                _cfg_dir = _ROOT / "config"
+                _cfg_dir.mkdir(exist_ok=True)
+                _promo = {
+                    "strategy_name": selected_label,
+                    "strategy_path": str(main_py),
+                    "params": {
+                        "top_n": int(top_n),
+                        "lookback_years": int(lookback_years),
+                        "cost_bps": float(cost_bps),
+                        "weight_scheme": weight_scheme,
+                    },
+                    "promoted_at": date.today().isoformat(),
+                    "sharpe": float(result_data.get("metrics", {}).get("sharpe") or 0),
+                }
+                (_cfg_dir / "active_strategy.json").write_text(
+                    json.dumps(_promo, indent=2), encoding="utf-8"
+                )
+                st.success(
+                    f"Promoted **{selected_label}** → `config/active_strategy.json`. "
+                    "Run `uv run python orchestration/generate_signals.py` to apply."
+                )
+            except Exception as _pe:
+                st.error(f"Promote failed: {_pe}")
+
+# ── Backtest History ──────────────────────────────────────────────────────────
+
+_hist_key = f"lab_history_{selected_dir.name}"
+_hist     = st.session_state.get(_hist_key, [])
+if len(_hist) >= 2:
+    st.divider()
+    st.markdown(section_label(f"Backtest History — {selected_label}"), unsafe_allow_html=True)
+    _hist_df = pd.DataFrame(_hist)
+    st.dataframe(_hist_df, hide_index=True, width="stretch")
+
 # ── AI Coding Assistant ───────────────────────────────────────────────────────
 
 st.divider()
@@ -1300,7 +1385,7 @@ st.markdown(
     f'</div>',
     unsafe_allow_html=True,
 )
-_render_ai_assistant(main_py, selected_dir)
+_render_ai_assistant(main_py, selected_dir, result_data=result_data)
 
 # ── Advanced analysis ─────────────────────────────────────────────────────────
 
