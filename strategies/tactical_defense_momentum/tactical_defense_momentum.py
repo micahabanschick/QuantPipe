@@ -216,8 +216,15 @@ def get_signal(
             scores.append((sym, composite))
 
         if not scores:
+            # No eligible candidates — signal cash for this date
+            rows.append({
+                "rebalance_date": rd, "symbol": "__CASH__", "score": 0.0,
+                "rank": 0, "selected": False,
+                "regime_score": round(regime_score, 4), "equity_pct": 0.0,
+            })
             continue
 
+        equity_pct = float(np.clip(equity_pct, 0.0, 1.0))
         scores.sort(key=lambda x: -x[1])
         top_set = {s for s, _ in scores[:top_n]}
 
@@ -248,13 +255,17 @@ def get_weights(
 
     for rd in signal[date_col].unique().sort().to_list():
         day      = signal.filter(pl.col(date_col) == rd)
-        selected = day.filter(pl.col("selected"))
+        selected = day.filter(pl.col("selected")).filter(pl.col("symbol") != "__CASH__")
         if selected.is_empty():
+            rows.append({"rebalance_date": rd, "symbol": "__CASH__", "weight": 0.0})
             continue
 
-        equity_pct = float(selected["equity_pct"][0]) if "equity_pct" in selected.columns else 1.0
-        syms       = selected["symbol"].to_list()
-        n_sel      = len(syms)
+        equity_pct = float(np.clip(
+            selected["equity_pct"][0] if "equity_pct" in selected.columns else 1.0,
+            0.0, 1.0,
+        ))
+        syms  = selected["symbol"].to_list()
+        n_sel = len(syms)
 
         if weight_scheme == "vol_scaled" and "score" in selected.columns:
             raw_scores = [max(float(s), 1e-8) for s in selected["score"].to_list()]

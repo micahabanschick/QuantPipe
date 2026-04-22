@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 from datetime import date
@@ -24,9 +25,10 @@ from reports._theme import (
     status_banner,
 )
 
-_ROOT      = Path(__file__).parent.parent
-_STRAT_DIR = _ROOT / "strategies"
-_ACE_THEME = "tomorrow_night"
+_ROOT       = Path(__file__).parent.parent
+_STRAT_DIR  = _ROOT / "strategies"
+_FAILED_DIR = _STRAT_DIR / "_failed"
+_ACE_THEME  = "tomorrow_night"
 
 _ACE_LANG: dict[str, str] = {
     ".py":   "python",
@@ -112,7 +114,10 @@ def _migrate_legacy_strategies() -> None:
 def _list_strategies() -> list[Path]:
     _STRAT_DIR.mkdir(exist_ok=True)
     _migrate_legacy_strategies()
-    return [d for d in sorted(_STRAT_DIR.iterdir()) if d.is_dir() and any(d.glob("*.py"))]
+    return [
+        d for d in sorted(_STRAT_DIR.iterdir())
+        if d.is_dir() and not d.name.startswith("_") and any(d.glob("*.py"))
+    ]
 
 
 def _main_py(strategy_dir: Path) -> Path | None:
@@ -291,6 +296,39 @@ def _new_strategy_dialog() -> None:
                 _README_TEMPLATE.format(name=name, description=description), encoding="utf-8",
             )
             st.session_state["selected_strategy"] = str(target_dir)
+            st.rerun()
+
+
+# ── Discard dialog ────────────────────────────────────────────────────────────
+
+@st.dialog("Discard Strategy")
+def _discard_strategy_dialog(strategy_dir: Path) -> None:
+    display = _display_name(strategy_dir)
+    st.markdown(
+        f'<div style="color:{COLORS["warning"]};font-size:0.85rem;margin-bottom:10px;">'
+        f'Move <strong>{display}</strong> to the failed strategies archive?'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="color:{COLORS["text_muted"]};font-size:0.80rem;margin-bottom:16px;">'
+        f'The strategy folder will be moved to <code>strategies/_failed/{strategy_dir.name}/</code>. '
+        f'All files are preserved — you can restore it manually at any time.'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    col_confirm, col_cancel = st.columns(2)
+    with col_confirm:
+        if st.button("Move to Failed", type="primary", use_container_width=True):
+            _FAILED_DIR.mkdir(parents=True, exist_ok=True)
+            dest = _FAILED_DIR / strategy_dir.name
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.move(str(strategy_dir), str(dest))
+            st.session_state.pop("selected_strategy", None)
+            st.rerun()
+    with col_cancel:
+        if st.button("Cancel", use_container_width=True):
             st.rerun()
 
 
@@ -837,7 +875,7 @@ st.markdown(section_label("Strategy"), unsafe_allow_html=True)
 strategy_dirs    = _list_strategies()
 strategy_options = _strategy_options(strategy_dirs)
 
-sel_col, new_col = st.columns([5, 1])
+sel_col, new_col, disc_col = st.columns([5, 1, 1])
 
 with new_col:
     if st.button("➕ New", use_container_width=True, help="Create a new strategy from template"):
@@ -864,6 +902,13 @@ with sel_col:
 selected_dir = strategy_options[selected_label]
 st.session_state["selected_strategy"] = str(selected_dir)
 main_py = _main_py(selected_dir)
+
+with disc_col:
+    if st.button(
+        "🗑 Discard", use_container_width=True,
+        help="Move this strategy to strategies/_failed/ (preserved, not deleted)",
+    ):
+        _discard_strategy_dialog(selected_dir)
 
 st.markdown(
     f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'

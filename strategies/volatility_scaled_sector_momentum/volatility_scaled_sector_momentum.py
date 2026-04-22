@@ -171,27 +171,32 @@ def get_signal(
         if regime == "warning":
             # 1 sector + 75% to implicit cash
             if sector_vams:
-                best = max(sector_vams, key=lambda x: x[1])
                 effective_top_n = 1
                 equity_pct      = 0.25
             else:
                 rows.append({
-                    "rebalance_date": rd,
-                    "symbol":         candidates[0] if candidates else "SPY",
-                    "score":          0.0, "vams": 0.0, "rank": 1,
-                    "selected":       False, "regime": regime, "equity_pct": 0.0,
+                    "rebalance_date": rd, "symbol": "__CASH__",
+                    "score": 0.0, "vams": 0.0, "rank": 0,
+                    "selected": False, "regime": regime, "equity_pct": 0.0,
                 })
                 continue
-        else:
+        else:  # bull
+            if not sector_vams:
+                rows.append({
+                    "rebalance_date": rd, "symbol": "__CASH__",
+                    "score": 0.0, "vams": 0.0, "rank": 0,
+                    "selected": False, "regime": regime, "equity_pct": 0.0,
+                })
+                continue
             effective_top_n = top_n
             equity_pct      = 1.0
 
         # Sort by VAMS, take top effective_top_n
         sector_vams.sort(key=lambda x: -x[1])
-        ranked = sector_vams[:effective_top_n]
+        ranked  = sector_vams[:effective_top_n]
         top_set = {s for s, _, _ in ranked}
 
-        # Vol-targeting overlay
+        # Vol-targeting overlay — scale equity_pct to target annualised vol
         if ranked:
             vols_list    = [v for _, _, v in ranked]
             total_s      = sum(s for _, s, _ in ranked) or 1.0
@@ -199,7 +204,7 @@ def get_signal(
             pv = _portfolio_vol(vols_list, weights_list, _RHO_EST)
             if pv > 0.001:
                 scale      = min(_VOL_TARGET / pv, 1.0)
-                equity_pct = min(equity_pct * scale, 1.0)
+                equity_pct = float(np.clip(equity_pct * scale, 0.0, 1.0))
 
         for rank, (sym, vams, v) in enumerate(sector_vams, 1):
             rows.append({
@@ -229,13 +234,17 @@ def get_weights(
 
     for rd in signal[date_col].unique().sort().to_list():
         day      = signal.filter(pl.col(date_col) == rd)
-        selected = day.filter(pl.col("selected"))
+        selected = day.filter(pl.col("selected")).filter(pl.col("symbol") != "__CASH__")
         if selected.is_empty():
+            rows.append({"rebalance_date": rd, "symbol": "__CASH__", "weight": 0.0})
             continue
 
-        equity_pct = float(selected["equity_pct"][0]) if "equity_pct" in selected.columns else 1.0
-        syms       = selected["symbol"].to_list()
-        n_sel      = len(syms)
+        equity_pct = float(np.clip(
+            selected["equity_pct"][0] if "equity_pct" in selected.columns else 1.0,
+            0.0, 1.0,
+        ))
+        syms  = selected["symbol"].to_list()
+        n_sel = len(syms)
 
         if weight_scheme == "vol_scaled" and "score" in selected.columns:
             raw_scores = [max(float(s), 1e-8) for s in selected["score"].to_list()]

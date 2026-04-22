@@ -98,11 +98,17 @@ def get_signal(
         scored = [
             (sym, float(snap_pd[sym]))
             for sym in candidates
-            if sym in snap_pd.index
+            if sym in snap_pd.index and snap_pd[sym] > 0  # positive momentum only
         ]
         if not scored:
+            # No eligible candidates — signal cash for this date
+            rows.append({
+                "rebalance_date": rd, "symbol": "__CASH__", "score": 0.0,
+                "rank": 0, "selected": False, "regime_ok": regime_ok, "equity_pct": 0.0,
+            })
             continue
 
+        equity_pct = float(np.clip(equity_pct, 0.0, 1.0))
         scored.sort(key=lambda x: -x[1])
         top_set = {s for s, _ in scored[:effective_top_n]}
 
@@ -133,13 +139,17 @@ def get_weights(
 
     for rd in signal[date_col].unique().sort().to_list():
         day      = signal.filter(pl.col(date_col) == rd)
-        selected = day.filter(pl.col("selected"))
+        selected = day.filter(pl.col("selected")).filter(pl.col("symbol") != "__CASH__")
         if selected.is_empty():
+            rows.append({"rebalance_date": rd, "symbol": "__CASH__", "weight": 0.0})
             continue
 
-        equity_pct = float(selected["equity_pct"][0]) if "equity_pct" in selected.columns else 1.0
-        n_sel      = len(selected)
-        syms       = selected["symbol"].to_list()
+        equity_pct = float(np.clip(
+            selected["equity_pct"][0] if "equity_pct" in selected.columns else 1.0,
+            0.0, 1.0,
+        ))
+        n_sel = len(selected)
+        syms  = selected["symbol"].to_list()
 
         if weight_scheme == "vol_scaled" and "score" in selected.columns:
             scores = [max(float(s), 1e-8) for s in selected["score"].to_list()]
