@@ -119,7 +119,11 @@ def run_backtest(
                     })
 
             shares = target_sh
-            cash = 0.0
+            # Cash = whatever NAV wasn't deployed into shares.
+            # For fully-invested strategies (weights sum to 1) this is ~0.
+            # For partial allocations (equity_pct < 1) or cash-out (all zeros)
+            # this preserves the uninvested portion instead of destroying it.
+            cash = max(eff_nav - float(np.dot(target_sh, px)), 0.0)
             nav_arr[i] = nav_pre - actual_cost
         else:
             nav_arr[i] = nav_pre
