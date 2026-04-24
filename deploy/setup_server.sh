@@ -138,19 +138,22 @@ sudo -u "$APP_USER" bash -c '
 
 # ── 9. Clone and install QuantPipe ────────────────────────────────────────────
 log "Cloning QuantPipe from $REPO_URL..."
+# Ensure correct ownership before any git command (prevents dubious-ownership error)
+chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+git config --global --add safe.directory "$APP_DIR"
+
 if [[ -d "$APP_DIR/.git" ]]; then
     warn "$APP_DIR already has a repo — pulling latest"
     sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin
     sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/laptop-dev
 else
-    # Directory may already exist as the user home — init in place instead of clone
+    # Directory may already exist as user home — init in place rather than clone
     sudo -u "$APP_USER" git -C "$APP_DIR" init
-    sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$REPO_URL"
+    sudo -u "$APP_USER" git -C "$APP_DIR" remote add origin "$REPO_URL" 2>/dev/null || true
     sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin laptop-dev
     sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/laptop-dev
     sudo -u "$APP_USER" git -C "$APP_DIR" branch -M laptop-dev
 fi
-chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
 log "Installing Python dependencies..."
 sudo -u "$APP_USER" bash -c "
