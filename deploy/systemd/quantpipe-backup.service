@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantPipe Backblaze B2 Backup
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=quantpipe
+EnvironmentFile=/opt/quantpipe/.env
+ExecStart=/bin/bash /opt/quantpipe/deploy/backup/backup.sh
+StandardOutput=append:/var/log/quantpipe/backup.log
+StandardError=append:/var/log/quantpipe/backup.log
