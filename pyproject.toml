@@ -24,6 +24,7 @@ dependencies = [
     "streamlit-ace>=0.1.1",
     "reportlab>=4.4.10",
     "kaleido>=1.2.0",
+    "matplotlib>=3.10.8",
 ]
 
 [project.optional-dependencies]

@@ -48,7 +48,7 @@ CRYPTO_UNIVERSE: list[str] = [
     "LINK/USDT",
     "ADA/USDT",
     "DOT/USDT",
-    "MATIC/USDT",   # Polygon — Kraken still uses MATIC ticker
+    "ATOM/USDT",    # Cosmos (replaces MATIC/POL — not listed on Kraken as USDT)
     "BNB/USDT",
     "XRP/USDT",
 ]
