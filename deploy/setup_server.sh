@@ -55,7 +55,8 @@ AllowTcpForwarding no
 MaxAuthTries 3
 LoginGraceTime 20
 EOF
-systemctl reload sshd
+# Ubuntu 22.04+ uses ssh.service; older systems use sshd.service
+systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 
 # ── 4. Firewall (UFW) ─────────────────────────────────────────────────────────
 log "Configuring UFW firewall..."
