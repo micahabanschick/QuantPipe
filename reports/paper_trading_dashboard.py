@@ -94,9 +94,11 @@ def _build_equity_curve() -> pd.Series:
     if tw.empty:
         return pd.Series(dtype=float)
 
-    # Make date column consistent
-    tw["date"] = pd.to_datetime(tw["date"]).dt.date
-    rebal_dates = sorted(tw["date"].unique())
+    # Use rebalance_date (when the strategy actually traded) as the curve anchor,
+    # not date (when signals were computed, which may be today with no bronze data).
+    date_col = "rebalance_date" if "rebalance_date" in tw.columns else "date"
+    tw[date_col] = pd.to_datetime(tw[date_col]).dt.date
+    rebal_dates = sorted(tw[date_col].unique())
     all_symbols = tw["symbol"].unique().tolist()
 
     # Load prices from bronze layer
@@ -106,6 +108,7 @@ def _build_equity_curve() -> pd.Series:
         end = date.today()
         raw = load_bars(all_symbols, start, end, "equity")
         if raw.is_empty():
+            log.warning(f"No bronze prices found for {all_symbols} from {start} to {end}")
             return pd.Series(dtype=float)
         price_col = "adj_close" if "adj_close" in raw.columns else "close"
         prices_wide = (
@@ -135,8 +138,8 @@ def _build_equity_curve() -> pd.Series:
     for ts in prices_wide.index:
         d = ts.date()
 
-        # Check for rebalance on this date
-        tw_today = tw[tw["date"] == d]
+        # Check for rebalance on this date (matched against rebalance_date)
+        tw_today = tw[tw[date_col] == d]
         if not tw_today.empty:
             current_weights = dict(zip(tw_today["symbol"], tw_today["weight"]))
             # Use actual recorded NAV if available, else keep running estimate
