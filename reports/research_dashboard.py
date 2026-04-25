@@ -119,8 +119,8 @@ if _symbols:
     with st.spinner("Loading features…"):
         features_df = _features(_symbols, str(_start), str(_end))
 
-tab_wfv, tab_mc, tab_factor, tab_signal_analysis = st.tabs(
-    ["  Walk-Forward  ", "  Monte Carlo  ", "  Factor Analysis  ", "  Signal Analysis  "]
+tab_factor, tab_signal_analysis, tab_wfv, tab_mc = st.tabs(
+    ["  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  "]
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
