@@ -258,9 +258,11 @@ with tab_ingest:
 
         if not series_id:
             st.info("Pick a popular series or enter a custom series ID above.")
+            series_id = None
 
-        # Show series metadata
-        with st.spinner(f"Fetching metadata for {series_id}…"):
+        if series_id is not None:
+         # Show series metadata
+         with st.spinner(f"Fetching metadata for {series_id}…"):
             info = fred.get_series_info(series_id)
         st.markdown(
             f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'
