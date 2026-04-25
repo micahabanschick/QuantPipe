@@ -212,7 +212,7 @@ with st.sidebar:
 
     st.markdown(f"""
 <div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
-<div style="display:flex;align-items:center;gap:7px;padding:0 4px 4px;">
+<div style="display:flex;align-items:center;gap:7px;padding:0 4px 6px;">
   <span style="width:7px;height:7px;border-radius:50%;
                background:{status_color};display:inline-block;flex-shrink:0;"></span>
   <span style="color:{status_color};font-size:0.72rem;font-weight:700;
@@ -221,31 +221,9 @@ with st.sidebar:
     {last_run}
   </span>
 </div>
-<div style="padding:0 4px 8px;border-top:1px solid {COLORS['border']};margin-top:10px;">
-  <div style="color:{COLORS['neutral']};font-size:0.66rem;font-weight:700;
-              text-transform:uppercase;letter-spacing:0.09em;margin:10px 0 7px;">
-    Quick Commands
-  </div>
-  <div style="background:{COLORS['card_bg']};border:1px solid {COLORS['border']};
-              border-radius:7px;padding:9px 11px;line-height:2.1;">
-    <div style="font-size:0.66rem;color:{COLORS['text_muted']};
-                text-transform:uppercase;letter-spacing:0.07em;margin-bottom:1px;">
-      Run pipeline
-    </div>
-    <code style="font-size:0.66rem;color:{COLORS['gold']};
-                 font-family:monospace;">uv run python orchestration/run_pipeline.py</code>
-    <div style="border-top:1px solid {COLORS['border_dim']};margin:6px 0;"></div>
-    <div style="font-size:0.66rem;color:{COLORS['text_muted']};
-                text-transform:uppercase;letter-spacing:0.07em;margin-bottom:1px;">
-      Paper rebalance
-    </div>
-    <code style="font-size:0.66rem;color:{COLORS['gold']};
-                 font-family:monospace;">uv run python orchestration/rebalance.py --broker ibkr</code>
-  </div>
-  <div style="color:{COLORS['text_muted']};font-size:0.62rem;margin-top:10px;
-              text-align:center;letter-spacing:0.02em;">
-    v0.1 · Paper trading only · Not investment advice
-  </div>
+<div style="color:{COLORS['text_muted']};font-size:0.60rem;
+            text-align:center;letter-spacing:0.02em;padding:6px 0 8px;">
+  v0.1 · Paper trading only · Not investment advice
 </div>
 """, unsafe_allow_html=True)
 
