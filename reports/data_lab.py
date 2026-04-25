@@ -283,7 +283,7 @@ with tab_ingest:
                     }.get(_m.get("source", ""), "—")
                     _dr = f"{_m['date_from']} to {_m['date_to']}" if "date_from" in _m else "—"
                     _rc = f"{_m['rows']:,} rows" if "rows" in _m else ""
-                    _a, _b, _c, _d = st.columns([3, 2, 2, 1])
+                    _a, _b, _c, _d, _e = st.columns([3, 2, 2, 1, 1])
                     _a.markdown(
                         f'<span style="color:{COLORS["text"]};font-size:0.83rem;'
                         f'font-weight:600;">{_f.stem}</span><br>'
@@ -301,6 +301,33 @@ with tab_ingest:
                         f'{_rc} &middot; {_sz:.1f} KB<br>Last: {_ref}</span>',
                         unsafe_allow_html=True,
                     )
+                    # FRED auto-refresh
+                    if _m.get("source") == "FRED" and _m.get("series_id"):
+                        if _e.button("Refresh", key=f"ref_{_f.stem}",
+                                     help="Re-pull this series up to today"):
+                            try:
+                                _rfr = FREDAdapter(FRED_API_KEY)
+                                _new = _rfr.get_series(
+                                    _m["series_id"],
+                                    start=_m.get("date_from", "2015-01-01"),
+                                    end=str(date.today()),
+                                )
+                                if not _new.is_empty():
+                                    _new.write_parquet(_f)
+                                    _save_meta(_f.stem, {
+                                        **_m,
+                                        "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                                        "rows": len(_new),
+                                        "date_to": str(date.today()),
+                                    })
+                                    st.success(f"Refreshed {_f.stem} ({len(_new):,} rows)")
+                                    st.rerun()
+                                else:
+                                    st.warning("No new data returned.")
+                            except Exception as _rex:
+                                st.error(f"Refresh failed: {_rex}")
+                    else:
+                        _e.write("")  # spacer for non-FRED files
                     if _d.button("Delete", key=f"del_{_f.stem}"):
                         _f.unlink()
                         if _f.stem in _meta:
@@ -467,7 +494,7 @@ with tab_ingest:
         _mn = st.text_input("Save merged as",
                              value="composite_" + "_".join(_mf[:3]) if _mf else "composite",
                              key="ic_mn")
-        if len(_mf) >= 2 and st.button("Merge & Save", key="ic_mb"):
+        if len(_mf) >= 2 and st.button("Merge & Save", key="ic_mb_btn"):
             try:
                 _frames = []
                 for _stem in _mf:
@@ -493,6 +520,48 @@ with tab_ingest:
             except Exception as _exc:
                 st.error(f"Merge failed: {_exc}")
 
+    # ── Scheduled FRED pulls ───────────────────────────────────────────────────
+    _SCHED_FILE = ALT_DIR / ".fred_schedule.json"
+    def _load_sched() -> list:
+        if _SCHED_FILE.exists():
+            try: return json.loads(_SCHED_FILE.read_text(encoding="utf-8"))
+            except Exception: pass
+        return []
+
+    st.markdown(section_label("Scheduled FRED Pulls"), unsafe_allow_html=True)
+    st.caption(
+        "Series listed here are automatically refreshed when the daily pipeline runs. "
+        "Add a series ID and it will be pulled and saved to data/alt/ each weekday."
+    )
+    _sched = _load_sched()
+    _se1, _se2 = st.columns([3, 1])
+    with _se1:
+        _new_sid = st.text_input("Add FRED series ID to schedule",
+                                  placeholder="UNRATE, T10Y2Y, VIXCLS…",
+                                  key="sched_add")
+    with _se2:
+        st.markdown("<div style='height:28px'/>", unsafe_allow_html=True)
+        if st.button("Add to Schedule", key="sched_btn") and _new_sid.strip():
+            _sid_up = _new_sid.strip().upper()
+            if _sid_up not in _sched:
+                _sched.append(_sid_up)
+                _SCHED_FILE.write_text(json.dumps(_sched, indent=2), encoding="utf-8")
+                st.success(f"{_sid_up} added to schedule")
+                st.rerun()
+    if _sched:
+        for _ss in list(_sched):
+            _sa, _sb = st.columns([5, 1])
+            _sa.markdown(
+                f'<span style="color:{COLORS["gold"]};font-family:monospace;">{_ss}</span>',
+                unsafe_allow_html=True,
+            )
+            if _sb.button("Remove", key=f"rm_{_ss}"):
+                _sched.remove(_ss)
+                _SCHED_FILE.write_text(json.dumps(_sched, indent=2), encoding="utf-8")
+                st.rerun()
+    else:
+        st.caption("No series scheduled yet.")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — TRADABILITY CHECK
@@ -504,6 +573,45 @@ with tab_trade:
     if not _tfiles:
         st.info("No saved alt data yet. Pull from FRED or upload a file in Ingest & Clean.")
     else:
+        # ── Multi-signal comparison ────────────────────────────────────────────
+        with st.expander("Compare All Signals", expanded=False):
+            st.caption("Ranks every saved signal by best IC against the selected equity target.")
+            _cmp_eq = st.selectbox("Equity target for comparison",
+                                    ["SPY", "QQQ", "IWM"], key="cmp_eq")
+            if st.button("Run Comparison", key="cmp_run"):
+                _rows = []
+                _cmp_bars = load_bars([_cmp_eq], date(2015,1,1), date.today(), "equity")
+                _cmp_pc   = "adj_close" if "adj_close" in _cmp_bars.columns else "close"
+                _cmp_px   = _cmp_bars.to_pandas().set_index("date")[_cmp_pc]
+                _cmp_px.index = pd.to_datetime(_cmp_px.index)
+                for _cf in _tfiles:
+                    try:
+                        _cpd = pl.read_parquet(_cf).to_pandas()
+                        if "date" in _cpd.columns:
+                            _cpd["date"] = pd.to_datetime(_cpd["date"])
+                            _cpd = _cpd.set_index("date")
+                        _cnc = [c for c in _cpd.columns if pd.api.types.is_numeric_dtype(_cpd[c])]
+                        for _cc in _cnc[:1]:
+                            _cs = _cpd[_cc].dropna()
+                            _best_ic, _best_lag = 0.0, "—"
+                            for _cl in [1, 5, 21, 63]:
+                                _cf2 = _cmp_px.pct_change(_cl).shift(-_cl)
+                                _ca  = pd.concat([_cs.rename("s"), _cf2.rename("r")], axis=1).dropna()
+                                if len(_ca) >= 10:
+                                    _ci, _ = spearmanr(_ca["s"], _ca["r"])
+                                    if abs(float(_ci)) > abs(_best_ic):
+                                        _best_ic, _best_lag = float(_ci), f"{_cl}d"
+                            _rows.append({"signal": _cf.stem, "column": _cc,
+                                          "best_IC": round(_best_ic, 4), "best_lag": _best_lag})
+                    except Exception:
+                        pass
+                if _rows:
+                    _cdf2 = pd.DataFrame(_rows).sort_values("best_IC", key=abs, ascending=False)
+                    st.dataframe(_cdf2.style.format({"best_IC": "{:+.4f}"}),
+                                 use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Could not compute IC for any saved signal.")
+
         _tc1, _tc2, _tc3, _tc4 = st.columns([2, 1.5, 1.5, 1])
         with _tc1:
             _tsrc = st.selectbox("Alt data source", [f.stem for f in _tfiles], key="tc_src")
@@ -605,6 +713,30 @@ with tab_trade:
                         unsafe_allow_html=True,
                     )
 
+                    # Promote to feature pipeline
+                    _ALT_FEAT = DATA_DIR / "alt" / ".promoted.json"
+                    if st.button("Promote to Feature Pipeline", key="tc_promote",
+                                 help="Write this signal to config so it can be used as a feature"):
+                        try:
+                            _prom = json.loads(_ALT_FEAT.read_text()) if _ALT_FEAT.exists() else {}
+                            _prom[_tsrc] = {
+                                "signal_column": _tsig,
+                                "equity_target": _teq,
+                                "best_IC":       _bic,
+                                "best_lag":      str(_best["lag"]),
+                                "verdict":       _verdict,
+                                "promoted_at":   datetime.now().isoformat(timespec="seconds"),
+                                "source_file":   f"data/alt/{_tsrc}.parquet",
+                            }
+                            _ALT_FEAT.write_text(json.dumps(_prom, indent=2))
+                            st.success(
+                                f"Promoted! Entry written to `data/alt/.promoted.json`. "
+                                f"Reference this in `features/canonical.py` to include "
+                                f"`{_tsrc}/{_tsig}` as a formal feature."
+                            )
+                        except Exception as _pe:
+                            st.error(f"Promote failed: {_pe}")
+
                 st.markdown(section_label("IC at Multiple Forward Return Horizons"),
                             unsafe_allow_html=True)
                 _bc = [COLORS["positive"] if v > 0.05
@@ -688,3 +820,49 @@ with tab_trade:
                             yaxis=dict(tickformat=".1%"),
                         )
                         st.plotly_chart(_fig_s, use_container_width=True, config=PLOTLY_CONFIG)
+
+                # Signal lag scan — IC vs 21d fwd returns at different signal lags
+                st.markdown(section_label("Signal Lag Scan"), unsafe_allow_html=True)
+                st.caption(
+                    "Shifts the signal by different amounts before computing IC. "
+                    "A peak at -21 means the signal predicts returns 21 days ahead."
+                )
+                _scan_lags = [-63, -42, -21, -10, -5, -1, 0, 1, 5, 10, 21, 42, 63]
+                _scan_fwd  = _eqpx.pct_change(21).shift(-21)
+                _scan_res  = []
+                for _sl in _scan_lags:
+                    _ss = _sig.shift(_sl)
+                    _sa = pd.concat([_ss.rename("s"), _scan_fwd.rename("r")], axis=1).dropna()
+                    if len(_sa) >= 10:
+                        _sic, _spv = spearmanr(_sa["s"], _sa["r"])
+                        _scan_res.append({"signal_lag": _sl, "IC": round(float(_sic), 4),
+                                          "p_value": round(float(_spv), 4)})
+                if _scan_res:
+                    _sldf  = pd.DataFrame(_scan_res)
+                    _slc   = [COLORS["positive"] if v > 0.05
+                               else COLORS["negative"] if v < -0.05
+                               else COLORS["gold_dim"]
+                               for v in _sldf["IC"]]
+                    _fig_sl = go.Figure(go.Bar(
+                        x=_sldf["signal_lag"], y=_sldf["IC"],
+                        marker=dict(color=_slc, line=dict(width=0)),
+                        hovertemplate="Lag %{x}d: IC=%{y:.4f}<extra></extra>",
+                    ))
+                    _fig_sl.add_hline(y=0.05, line=dict(color=COLORS["positive"], width=1, dash="dot"))
+                    _fig_sl.add_hline(y=-0.05, line=dict(color=COLORS["positive"], width=1, dash="dot"))
+                    _fig_sl.add_hline(y=0, line=dict(color=COLORS["neutral"], width=1))
+                    apply_theme(_fig_sl,
+                                title="IC vs 21d Forward Return at Different Signal Lags",
+                                height=280)
+                    _fig_sl.update_layout(
+                        showlegend=False,
+                        xaxis_title="Signal lag (negative = signal leads returns)",
+                        yaxis_title="IC (Spearman)",
+                    )
+                    st.plotly_chart(_fig_sl, use_container_width=True, config=PLOTLY_CONFIG)
+                    _best_scan = _sldf.loc[_sldf["IC"].abs().idxmax()]
+                    st.caption(
+                        f"Optimal signal lag: **{int(_best_scan['signal_lag'])}d** "
+                        f"(IC = {_best_scan['IC']:+.4f}). "
+                        f"Negative = signal leads returns; positive = signal lags returns."
+                    )
