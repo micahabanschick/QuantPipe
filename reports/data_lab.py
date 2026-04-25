@@ -22,8 +22,27 @@ from plotly.subplots import make_subplots
 from scipy.stats import spearmanr
 import streamlit as st
 
+import json
+
 from config.settings import DATA_DIR, FRED_API_KEY
 from data_adapters.fred_adapter import FREDAdapter, POPULAR_SERIES
+
+_META_FILE = DATA_DIR / "alt" / ".meta.json"
+
+
+def _load_meta() -> dict:
+    if _META_FILE.exists():
+        try:
+            return json.loads(_META_FILE.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_meta(name: str, record: dict) -> None:
+    meta = _load_meta()
+    meta[name] = record
+    _META_FILE.write_text(json.dumps(meta, indent=2))
 from storage.parquet_store import load_bars
 from reports._theme import (
     CSS, COLORS, PLOTLY_CONFIG,
@@ -298,9 +317,20 @@ with tab_ingest:
             apply_theme(fig_fred, title=f"{info['title']} ({info['units']})", height=260)
             st.plotly_chart(fig_fred, use_container_width=True, config=PLOTLY_CONFIG)
 
-            # Save
+            # Save + record history
             out_path = ALT_DIR / f"{source_name}.parquet"
             raw_pl.write_parquet(out_path)
+            _save_meta(source_name, {
+                "source":         "FRED",
+                "series_id":      series_id,
+                "title":          info.get("title", ""),
+                "units":          info.get("units", ""),
+                "frequency":      info.get("frequency", ""),
+                "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                "rows":           len(raw_pd),
+                "date_from":      str(fred_start),
+                "date_to":        str(fred_end),
+            })
             st.success(f"Saved to `data/alt/{source_name}.parquet`")
             st.info("Open the **Tradability Check** tab to analyse this signal.")
 
@@ -320,28 +350,52 @@ with tab_ingest:
     )
 
     if uploaded is None:
-        # Show existing saved files
         saved = sorted(ALT_DIR.glob("*.parquet"))
+        meta  = _load_meta()
+
         if saved:
-            st.markdown(section_label("Saved Alt Data Files"), unsafe_allow_html=True)
+            st.markdown(section_label("Saved Alt Data — History"), unsafe_allow_html=True)
             for f in saved:
+                m    = meta.get(f.stem, {})
                 size = f.stat().st_size / 1024
-                c1, c2, c3 = st.columns([3, 1, 1])
+                refreshed = m.get("last_refreshed", "—")[:19].replace("T", " ")
+                src_label = {
+                    "FRED":   f"📡 FRED · {m.get('series_id', '')}",
+                    "merge":  f"🔗 Merge · {', '.join(m.get('components', []))}",
+                    "upload": f"📁 Upload · {m.get('filename', '')}",
+                }.get(m.get("source", ""), "📄")
+                date_range = (
+                    f"{m['date_from']} → {m['date_to']}"
+                    if "date_from" in m else "—"
+                )
+                rows_str = f"{m['rows']:,} rows" if "rows" in m else ""
+
+                c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
                 c1.markdown(
-                    f'<span style="color:{COLORS["text"]};font-size:0.84rem;">'
-                    f'📄 {f.stem}</span>',
+                    f'<span style="color:{COLORS["text"]};font-size:0.83rem;font-weight:600;">'
+                    f'{f.stem}</span><br>'
+                    f'<span style="color:{COLORS["text_muted"]};font-size:0.72rem;">{src_label}</span>',
                     unsafe_allow_html=True,
                 )
                 c2.markdown(
-                    f'<span style="color:{COLORS["text_muted"]};font-size:0.78rem;">'
-                    f'{size:.1f} KB</span>',
+                    f'<span style="color:{COLORS["neutral"]};font-size:0.75rem;">'
+                    f'{date_range}</span>',
                     unsafe_allow_html=True,
                 )
-                if c3.button("🗑 Delete", key=f"del_{f.stem}"):
+                c3.markdown(
+                    f'<span style="color:{COLORS["text_muted"]};font-size:0.75rem;">'
+                    f'{rows_str} · {size:.1f} KB<br>'
+                    f'Last: {refreshed}</span>',
+                    unsafe_allow_html=True,
+                )
+                if c4.button("🗑", key=f"del_{f.stem}", help=f"Delete {f.stem}"):
                     f.unlink()
+                    if f.stem in meta:
+                        del meta[f.stem]
+                        _META_FILE.write_text(json.dumps(meta, indent=2))
                     st.rerun()
         else:
-            st.info("No alt data files saved yet. Upload a file above to get started.")
+            st.info("No alt data files saved yet. Use FRED pull or upload a file above.")
         st.stop()
 
     # ── Parse ──────────────────────────────────────────────────────────────────
@@ -410,7 +464,7 @@ with tab_ingest:
 
     # ── Cleaning controls ──────────────────────────────────────────────────────
     st.markdown(section_label("Cleaning Options"), unsafe_allow_html=True)
-    cc1, cc2, cc3 = st.columns(3)
+    cc1, cc2, cc3, cc4 = st.columns(4)
     with cc1:
         fill_method = st.selectbox(
             "Fill nulls",
@@ -428,6 +482,14 @@ with tab_ingest:
             "Resample to frequency",
             ["none (keep as-is)", "daily (B)", "weekly (W-FRI)", "monthly (MS)"],
             key="dlab_freq",
+        )
+    with cc4:
+        normalise = st.selectbox(
+            "Normalise / transform",
+            ["none", "z-score (μ=0, σ=1)", "min-max [0, 1]",
+             "log (ln)", "pct_change (returns)"],
+            key="dlab_norm",
+            help="Applied after cleaning. z-score and min-max make signals comparable in Tradability Check.",
         )
 
     # ── Apply cleaning ─────────────────────────────────────────────────────────
@@ -471,6 +533,24 @@ with tab_ingest:
                 df = df.resample(rule)[signal_cols].last().reset_index()
                 df = df.rename(columns={"index": date_col})
 
+        # Normalise / transform
+        if normalise == "z-score (μ=0, σ=1)":
+            for c in signal_cols:
+                mu, sd = df[c].mean(), df[c].std()
+                if sd > 0:
+                    df[c] = (df[c] - mu) / sd
+        elif normalise == "min-max [0, 1]":
+            for c in signal_cols:
+                lo, hi = df[c].min(), df[c].max()
+                if hi > lo:
+                    df[c] = (df[c] - lo) / (hi - lo)
+        elif normalise == "log (ln)":
+            for c in signal_cols:
+                df[c] = np.log(df[c].clip(lower=1e-10))
+        elif normalise == "pct_change (returns)":
+            for c in signal_cols:
+                df[c] = df[c].pct_change()
+
         return df
 
     clean_df = _clean(raw_df)
@@ -506,9 +586,88 @@ with tab_ingest:
     # ── Save ───────────────────────────────────────────────────────────────────
     if st.button("💾 Save to Data Lab", key="dlab_save", use_container_width=False):
         out_path = ALT_DIR / f"{source_name}.parquet"
-        pl.from_pandas(clean_df.rename(columns={date_col: "date"})).write_parquet(out_path)
+        clean_renamed = clean_df.rename(columns={date_col: "date"})
+        pl.from_pandas(clean_renamed).write_parquet(out_path)
+        _save_meta(source_name, {
+            "source":       "upload",
+            "filename":     uploaded.name,
+            "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+            "rows":         len(clean_df),
+            "date_from":    str(clean_df[date_col].min())[:10] if date_col in clean_df else "—",
+            "date_to":      str(clean_df[date_col].max())[:10] if date_col in clean_df else "—",
+            "normalise":    normalise,
+        })
         st.success(f"Saved to `data/alt/{source_name}.parquet` ({len(clean_df):,} rows)")
         st.info("Open the **Tradability Check** tab to analyse this signal.")
+
+    # ── Merge / join ───────────────────────────────────────────────────────────
+    saved_for_merge = sorted(ALT_DIR.glob("*.parquet"))
+    if len(saved_for_merge) >= 2:
+        st.markdown(section_label("Merge Signals"), unsafe_allow_html=True)
+        st.caption("Join two or more saved signals into a composite dataset aligned by date.")
+
+        mg1, mg2, mg3 = st.columns([3, 1.5, 1.5])
+        with mg1:
+            merge_files = st.multiselect(
+                "Signals to merge",
+                [f.stem for f in saved_for_merge],
+                default=[f.stem for f in saved_for_merge[:2]],
+                key="merge_files",
+            )
+        with mg2:
+            merge_how = st.selectbox(
+                "Join type",
+                ["inner (dates in all)", "outer (fill missing)"],
+                key="merge_how",
+            )
+        with mg3:
+            merge_fill = st.selectbox(
+                "Fill missing (outer only)",
+                ["forward-fill", "none (NaN)"],
+                key="merge_fill",
+                disabled=(merge_how == "inner (dates in all)"),
+            )
+
+        merge_name = st.text_input(
+            "Save merged dataset as",
+            value="composite_" + "_".join(merge_files[:3]),
+            key="merge_name",
+        )
+
+        if len(merge_files) >= 2 and st.button("🔗 Merge & Save", key="merge_btn"):
+            try:
+                frames = []
+                for stem in merge_files:
+                    fp = ALT_DIR / f"{stem}.parquet"
+                    df_m = pl.read_parquet(fp).to_pandas()
+                    df_m["date"] = pd.to_datetime(df_m["date"])
+                    df_m = df_m.set_index("date")
+                    frames.append(df_m)
+
+                how = "inner" if merge_how.startswith("inner") else "outer"
+                merged = frames[0]
+                for f in frames[1:]:
+                    merged = merged.join(f, how=how, lsuffix="", rsuffix=f"_{f.columns[0]}")
+
+                if how == "outer" and merge_fill == "forward-fill":
+                    merged = merged.ffill()
+
+                merged = merged.reset_index().rename(columns={"index": "date"})
+                out = ALT_DIR / f"{merge_name}.parquet"
+                pl.from_pandas(merged).write_parquet(out)
+                _save_meta(merge_name, {
+                    "source":       "merge",
+                    "components":   merge_files,
+                    "join":         merge_how,
+                    "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                    "rows":         len(merged),
+                    "date_from":    str(merged["date"].min())[:10],
+                    "date_to":      str(merged["date"].max())[:10],
+                })
+                st.success(f"Merged {len(merge_files)} signals → `{merge_name}.parquet` ({len(merged):,} rows)")
+                st.dataframe(merged.head(5), use_container_width=True, hide_index=True)
+            except Exception as exc:
+                st.error(f"Merge failed: {exc}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
