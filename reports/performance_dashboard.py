@@ -254,15 +254,42 @@ def _load_contribution_data(
         return None
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
+# ── Page-level controls (horizontal strip above all tabs) ─────────────────────
 
-with st.sidebar:
-    st.header("Controls")
-    lookback_years  = st.slider("Backtest lookback (years)", 1, 7, 6)
-    rolling_window  = st.selectbox("Rolling window", [21, 63, 126, 252], index=1,
-                                   format_func=lambda x: f"{x}d")
-    benchmark_sym   = st.selectbox("Benchmark", ["None", "SPY", "QQQ", "IWM", "AGG"], index=1)
-    show_rebal_lines = st.checkbox("Show rebalance dates", value=True)
+_c1, _c2, _c3, _c4, _c5 = st.columns([2.5, 1.5, 1.5, 1, 1])
+with _c1:
+    lookback_years = st.select_slider(
+        "Lookback",
+        options=[1, 2, 3, 4, 5, 6, 7],
+        value=6,
+        format_func=lambda x: f"{x}yr",
+        key="perf_lookback",
+    )
+with _c2:
+    benchmark_sym = st.selectbox(
+        "Benchmark",
+        ["None", "SPY", "QQQ", "IWM", "AGG"],
+        index=1,
+        key="perf_benchmark",
+    )
+with _c3:
+    rolling_window = st.selectbox(
+        "Rolling window",
+        [21, 63, 126, 252],
+        index=1,
+        format_func=lambda x: f"{x}d",
+        key="perf_rolling",
+    )
+with _c4:
+    show_rebal_lines = st.toggle(
+        "Rebalances",
+        value=True,
+        key="perf_rebal",
+    )
+with _c5:
+    pass   # spacer — download buttons follow below
+
+st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
 # ── Load & pre-process data ───────────────────────────────────────────────────
 
