@@ -14,6 +14,7 @@ from config.settings import DATA_DIR, LOGS_DIR
 from reports._theme import CSS, COLORS, badge
 
 _LOGO       = Path(__file__).parent / "assets" / "logo.png"
+_LOGO_FULL  = Path(__file__).parent / "assets" / "logo_full.png"
 _LOGO_WORDS = Path(__file__).parent / "assets" / "logo_words.png"
 _FAVICON    = Path(__file__).parent / "assets" / "favicon.png"
 
@@ -141,20 +142,25 @@ pg = st.navigation(
 # ── Sidebar status + footer (renders below nav links) ─────────────────────────
 
 with st.sidebar:
-    if _LOGO.exists() and _LOGO_WORDS.exists():
-        _circle = base64.b64encode(_LOGO.read_bytes()).decode()
-        _words  = base64.b64encode(_LOGO_WORDS.read_bytes()).decode()
-        # Both PNGs share the same 539×480 canvas.
-        # Words image sets container height (flow); circle overlays on top (z-index:1)
-        # so the circle's opaque background masks the overlap area, matching logo_full.png.
+    _display_logo = _LOGO_FULL if _LOGO_FULL.exists() else _LOGO
+    if _display_logo.exists():
+        _img_b64 = base64.b64encode(_display_logo.read_bytes()).decode()
         st.markdown(f"""
-<div style="position:relative; width:80%; margin:0 auto;
+<div style="width:82%; margin:0 auto;
             filter:drop-shadow(0 0 10px rgba(201,162,39,0.28))
                    drop-shadow(0 0 24px rgba(201,162,39,0.12));">
-  <img src="data:image/png;base64,{_words}"
-       style="width:100%; display:block;"/>
-  <img src="data:image/png;base64,{_circle}"
-       style="width:100%; position:absolute; top:0; left:0; z-index:1;"/>
+  <img src="data:image/png;base64,{_img_b64}"
+       style="width:100%; display:block;
+              -webkit-mask-image:radial-gradient(
+                ellipse 88% 92% at 50% 42%,
+                black 30%, rgba(0,0,0,.95) 42%,
+                rgba(0,0,0,.78) 54%, rgba(0,0,0,.45) 65%,
+                rgba(0,0,0,.15) 76%, transparent 88%);
+              mask-image:radial-gradient(
+                ellipse 88% 92% at 50% 42%,
+                black 30%, rgba(0,0,0,.95) 42%,
+                rgba(0,0,0,.78) 54%, rgba(0,0,0,.45) 65%,
+                rgba(0,0,0,.15) 76%, transparent 88%);"/>
 </div>
 """, unsafe_allow_html=True)
 
