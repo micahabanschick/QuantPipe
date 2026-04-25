@@ -194,32 +194,16 @@ html, body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }}
 
-/* ── Strip opaque backgrounds from ALL Streamlit chrome elements ───────────── */
+/* ── Page header chrome — transparent so html/body gradient shows through ──── */
 header[data-testid="stHeader"],
 [data-testid="stHeader"],
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
-[data-testid="stStatusWidget"],
-
-/* Sidebar chrome — collapse button, nav wrapper, top padding area */
-[data-testid="stSidebarCollapsedControl"],
-[data-testid="stSidebarCollapsedControl"] > div,
-[data-testid="collapsedControl"],
-[data-testid="stSidebarHeader"],
-[data-testid="stSidebarNavItems"] > div:first-child,
-
-/* Remove any top offset Streamlit adds to account for header height */
-section[data-testid="stSidebar"] > div:first-child {{
+[data-testid="stStatusWidget"] {{
     background: transparent !important;
     background-color: transparent !important;
     box-shadow: none !important;
     border-bottom: none !important;
-}}
-
-/* Pull sidebar to very top — remove header-height offset */
-section[data-testid="stSidebar"] {{
-    top: 0 !important;
-    padding-top: 0 !important;
 }}
 
 /* ── Background — html/body is the true visual background in Streamlit 1.56 ── */
@@ -240,28 +224,24 @@ section[data-testid="stMain"] {{
     background: transparent !important;
 }}
 
-/* ── Sidebar — gradient on outermost element only ────────────────────────── */
-section[data-testid="stSidebar"] {{
-    background:
-        radial-gradient(ellipse 140% 40% at 50% 0%,
-            rgba(107,47,160,0.22) 0%, transparent 60%),
-        linear-gradient(
-            180deg,
-            #07091A 0%,
-            #0A0D20 30%,
-            #0D1228 65%,
-            {COLORS['surface']} 100%
-        ) !important;
-}}
-
-/* All inner sidebar wrappers transparent + remove header-offset padding */
+/* ── Sidebar — single flat colour applied to every layer ─────────────────── */
+/* Using one colour for all elements (including chrome) eliminates seams.    */
+section[data-testid="stSidebar"],
 section[data-testid="stSidebar"] > div,
 section[data-testid="stSidebar"] > div > div,
-section[data-testid="stSidebar"] > div > div > div {{
-    background: transparent !important;
-    background-color: transparent !important;
-    padding-top: 0 !important;
-    margin-top: 0 !important;
+section[data-testid="stSidebar"] > div > div > div,
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapsedControl"] > div,
+[data-testid="collapsedControl"],
+[data-testid="stSidebarHeader"] {{
+    background: #07091A !important;
+    background-color: #07091A !important;
+    box-shadow: none !important;
+}}
+
+/* Gold right border to separate sidebar from content */
+section[data-testid="stSidebar"] {{
+    border-right: 1px solid rgba(201,162,39,0.18) !important;
 }}
 
 [data-testid="block-container"] {{
