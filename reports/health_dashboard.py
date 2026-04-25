@@ -104,7 +104,33 @@ def _count_errors(lines: list[str]) -> int:
     return sum(1 for l in lines if " ERROR " in l or "FAILED" in l or "ALERT" in l)
 
 
-def _parse_log_events(path: Path, n: int = 400) -> list[dict]:
+def _log_rotation_warning(path: Path) -> str | None:
+    """Return a warning string if the log appears to have been recently rotated."""
+    if not path.exists():
+        return None
+    size_kb = path.stat().st_size / 1024
+    age_min = (datetime.now() - datetime.fromtimestamp(path.stat().st_mtime)).total_seconds() / 60
+    if size_kb < 5 and age_min < 120:
+        return f"Log may have been rotated recently (file is {size_kb:.1f} KB, modified {age_min:.0f} min ago)"
+    # Check if oldest visible line is recent
+    try:
+        first = path.read_text(errors="replace").splitlines()[0]
+        # Try to parse a date from the first line
+        parts = first.split()
+        if len(parts) >= 2:
+            try:
+                dt = datetime.fromisoformat(f"{parts[0]} {parts[1][:8]}")
+                age_h = (datetime.now() - dt).total_seconds() / 3600
+                if age_h < 6:
+                    return f"Log history starts {age_h:.1f}h ago — older entries may be in a rotated archive"
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return None
+
+
+def _parse_log_events(path: Path, n: int = 2000) -> list[dict]:
     """Return structured error/warning events from the last n lines of a log."""
     if not path.exists():
         return []
@@ -118,9 +144,37 @@ def _parse_log_events(path: Path, n: int = 400) -> list[dict]:
         else:
             continue
         parts  = line.split()
-        ts_str = next((p for p in parts[:3] if ":" in p and len(p) >= 5), "")
-        events.append({"level": level, "ts": ts_str, "message": line})
+        ts_str = ""
+        ts_dt  = None
+        if len(parts) >= 2:
+            try:
+                ts_dt  = datetime.fromisoformat(f"{parts[0]} {parts[1][:8]}")
+                ts_str = ts_dt.strftime("%m-%d %H:%M")
+            except Exception:
+                ts_str = parts[0] if parts else ""
+        events.append({
+            "level":   level,
+            "ts":      ts_str,
+            "ts_dt":   ts_dt,
+            "message": line,
+        })
     return events
+
+
+# Known symbols for Data Quality cross-linking
+_ALL_KNOWN_SYMBOLS: set[str] = set()
+try:
+    from config.universes import EQUITY_UNIVERSE, CRYPTO_UNIVERSE
+    _ALL_KNOWN_SYMBOLS = set(EQUITY_UNIVERSE) | {s.replace("/", "_") for s in CRYPTO_UNIVERSE}
+except Exception:
+    pass
+
+
+def _extract_symbols(message: str) -> list[str]:
+    """Find known ticker symbols mentioned in a log line."""
+    import re
+    words = set(re.findall(r"\b[A-Z0-9_]{2,10}\b", message))
+    return sorted(words & _ALL_KNOWN_SYMBOLS)
 
 
 # ── Compute status ────────────────────────────────────────────────────────────
@@ -576,76 +630,152 @@ with tab_data:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — LOGS  (structured error/warning event feed + raw expanders)
+# TAB 3 — LOGS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_logs:
-    st.markdown(section_label("Event Feed"), unsafe_allow_html=True)
-    st.markdown(
-        f'<div style="color:{COLORS["text_muted"]};font-size:0.78rem;margin-bottom:10px;">'
-        "Filtered errors and warnings across all pipeline components. "
-        "Expand the Raw Logs section below for full output."
-        "</div>", unsafe_allow_html=True,
-    )
+
+    # ── Filter controls ────────────────────────────────────────────────────────
+    lc1, lc2, lc3, lc4 = st.columns([2.5, 1.5, 1.5, 1.5])
+    with lc1:
+        log_search = st.text_input(
+            "Search", placeholder="symbol, error keyword…",
+            key="log_search", label_visibility="collapsed",
+        )
+        st.caption("🔍 Search events")
+    with lc2:
+        sev_filter = st.selectbox("Severity", ["All", "ERROR only", "WARNING only"],
+                                  key="log_sev")
+    with lc3:
+        comp_filter = st.multiselect(
+            "Component", ["pipeline", "ingest", "signals"],
+            default=["pipeline", "ingest", "signals"],
+            key="log_comp",
+        )
+    with lc4:
+        window_filter = st.selectbox(
+            "Time window", ["Last 24 h", "Last 48 h", "Last 7 d", "All time"],
+            key="log_window",
+        )
+
+    # ── Parse & filter events ──────────────────────────────────────────────────
+    _window_h = {"Last 24 h": 24, "Last 48 h": 48, "Last 7 d": 168, "All time": None}
+    cutoff_h  = _window_h[window_filter]
+    cutoff_dt = datetime.now() - timedelta(hours=cutoff_h) if cutoff_h else None
 
     all_events: list[dict] = []
     for _lp, _ln in [(PIPELINE_LOG, "pipeline"), (INGEST_LOG, "ingest"), (SIGNALS_LOG, "signals")]:
+        if _ln not in comp_filter:
+            continue
         for ev in _parse_log_events(_lp):
             ev["component"] = _ln
+            # date filter
+            if cutoff_dt and ev["ts_dt"] and ev["ts_dt"] < cutoff_dt:
+                continue
+            # severity filter
+            if sev_filter == "ERROR only"   and ev["level"] != "ERROR":
+                continue
+            if sev_filter == "WARNING only" and ev["level"] != "WARNING":
+                continue
+            # search filter
+            if log_search and log_search.lower() not in ev["message"].lower():
+                continue
             all_events.append(ev)
 
-    errors_only   = [e for e in all_events if e["level"] == "ERROR"]
-    warnings_only = [e for e in all_events if e["level"] == "WARNING"]
+    errors_f   = [e for e in all_events if e["level"] == "ERROR"]
+    warnings_f = [e for e in all_events if e["level"] == "WARNING"]
 
-    kc1, kc2, kc3 = st.columns(3)
-    kc1.markdown(kpi_card("Errors",   str(len(errors_only)),
-                           accent=COLORS["negative"] if errors_only else COLORS["positive"]),
+    # ── KPI cards ──────────────────────────────────────────────────────────────
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    kc1.markdown(kpi_card("Errors",   str(len(errors_f)),
+                           accent=COLORS["negative"] if errors_f else COLORS["positive"]),
                  unsafe_allow_html=True)
-    kc2.markdown(kpi_card("Warnings", str(len(warnings_only)),
-                           accent=COLORS["warning"] if warnings_only else COLORS["neutral"]),
+    kc2.markdown(kpi_card("Warnings", str(len(warnings_f)),
+                           accent=COLORS["warning"] if warnings_f else COLORS["neutral"]),
                  unsafe_allow_html=True)
-    kc3.markdown(kpi_card("Components scanned", "3", accent=COLORS["blue"]),
+    kc3.markdown(kpi_card("Total events", str(len(all_events)), accent=COLORS["blue"]),
+                 unsafe_allow_html=True)
+    kc4.markdown(kpi_card("Window", window_filter.replace(" h", "h").replace(" d", "d"),
+                           accent=COLORS["gold"]),
                  unsafe_allow_html=True)
 
-    st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+    st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
 
-    def _event_card(ev: dict, border_color: str) -> str:
-        return (
-            f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'
-            f'border-left:3px solid {border_color};border-radius:0 6px 6px 0;'
-            f'padding:6px 12px;margin:3px 0;font-family:monospace;font-size:0.75rem;'
-            f'color:{COLORS["text"]};">'
-            f'<span style="color:{COLORS["text_muted"]};">[{ev["component"]}]</span> '
-            f'{ev["message"]}</div>'
-        )
+    # ── Event feed ─────────────────────────────────────────────────────────────
+    st.markdown(section_label("Event Feed"), unsafe_allow_html=True)
 
-    if errors_only:
+    if not all_events:
+        if log_search or sev_filter != "All" or window_filter != "All time":
+            st.info("No events match the current filters.")
+        else:
+            st.markdown(badge("NO ERRORS OR WARNINGS", "positive"), unsafe_allow_html=True)
+    else:
+        # Group by level, newest first
+        for group_label, group_events, border_color in [
+            (f"Errors ({len(errors_f)})",   errors_f,   COLORS["negative"]),
+            (f"Warnings ({len(warnings_f)})", warnings_f, COLORS["warning"]),
+        ]:
+            if not group_events:
+                continue
+            st.markdown(
+                f'<div style="background:{border_color}14;border-left:3px solid {border_color};'
+                f'border-radius:0 6px 6px 0;padding:7px 14px;margin:10px 0 4px;">'
+                f'<span style="color:{border_color};font-weight:700;font-size:0.72rem;'
+                f'text-transform:uppercase;letter-spacing:0.08em;">{group_label}</span></div>',
+                unsafe_allow_html=True,
+            )
+            for ev in group_events[-30:]:
+                syms = _extract_symbols(ev["message"])
+                sym_badges = " ".join(
+                    f'<span style="background:rgba(201,162,39,0.15);color:{COLORS["gold"]};'
+                    f'font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:3px;'
+                    f'border:1px solid rgba(201,162,39,0.3);margin-left:4px;" '
+                    f'title="Check Data Quality tab for {s}">{s} ↗ DQ</span>'
+                    for s in syms
+                )
+                ts_html = (
+                    f'<span style="color:{COLORS["text_muted"]};margin-right:8px;">{ev["ts"]}</span>'
+                    if ev["ts"] else ""
+                )
+                comp_html = (
+                    f'<span style="color:{COLORS["purple"]};margin-right:6px;">'
+                    f'[{ev["component"]}]</span>'
+                )
+                st.markdown(
+                    f'<div style="background:{COLORS["card_bg"]};'
+                    f'border:1px solid {COLORS["border"]};'
+                    f'border-left:3px solid {border_color};'
+                    f'border-radius:0 6px 6px 0;'
+                    f'padding:6px 12px;margin:2px 0;font-family:monospace;font-size:0.74rem;'
+                    f'color:{COLORS["text"]};word-break:break-all;">'
+                    f'{ts_html}{comp_html}{ev["message"]}{sym_badges}</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── If symbols found across all errors, show DQ hint ──────────────────────
+    all_syms_in_errors = set()
+    for ev in errors_f:
+        all_syms_in_errors.update(_extract_symbols(ev["message"]))
+    if all_syms_in_errors:
         st.markdown(
-            f'<div style="background:{COLORS["negative"]}14;border-left:3px solid {COLORS["negative"]};'
-            f'border-radius:0 6px 6px 0;padding:8px 14px;margin:6px 0;">'
-            f'<span style="color:{COLORS["negative"]};font-weight:700;font-size:0.72rem;'
-            f'text-transform:uppercase;letter-spacing:0.08em;">Errors ({len(errors_only)})</span></div>',
+            f'<div style="background:{COLORS["gold_bg"]};border:1px solid rgba(201,162,39,0.3);'
+            f'border-radius:8px;padding:10px 14px;margin:10px 0;font-size:0.78rem;">'
+            f'<span style="color:{COLORS["gold"]};font-weight:700;">↗ Data Quality hint:</span> '
+            f'<span style="color:{COLORS["neutral"]};">Errors mention '
+            f'<b>{", ".join(sorted(all_syms_in_errors))}</b>. '
+            f'Open the <b>Data Quality</b> tab to check freshness and schema for these symbols.</span>'
+            f'</div>',
             unsafe_allow_html=True,
         )
-        for ev in errors_only[-20:]:
-            st.markdown(_event_card(ev, COLORS["negative"]), unsafe_allow_html=True)
 
-    if warnings_only:
-        st.markdown(
-            f'<div style="background:{COLORS["warning"]}14;border-left:3px solid {COLORS["warning"]};'
-            f'border-radius:0 6px 6px 0;padding:8px 14px;margin:6px 0;">'
-            f'<span style="color:{COLORS["warning"]};font-weight:700;font-size:0.72rem;'
-            f'text-transform:uppercase;letter-spacing:0.08em;">Warnings ({len(warnings_only)})</span></div>',
-            unsafe_allow_html=True,
-        )
-        for ev in warnings_only[-10:]:
-            st.markdown(_event_card(ev, COLORS["warning"]), unsafe_allow_html=True)
-
-    if not errors_only and not warnings_only:
-        st.markdown(badge("NO ERRORS OR WARNINGS", "positive"), unsafe_allow_html=True)
-
-    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    # ── Raw logs (bounded + rotation-aware) ────────────────────────────────────
+    st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Raw Logs"), unsafe_allow_html=True)
+
+    raw_lines_opt = st.select_slider(
+        "Lines to show", options=[50, 100, 200, 500, 1000], value=200,
+        key="log_raw_lines",
+    )
 
     sub_pipe, sub_ingest, sub_signals = st.tabs(["Pipeline", "Ingest", "Signals"])
     for sub_tab, log_path, log_name in [
@@ -654,10 +784,36 @@ with tab_logs:
         (sub_signals, SIGNALS_LOG,  "signals.log"),
     ]:
         with sub_tab:
-            lines      = _tail_log(log_path)
+            # Rotation warning
+            rot_warn = _log_rotation_warning(log_path)
+            if rot_warn:
+                st.warning(f"⚠ {rot_warn}", icon="🔄")
+
+            lines      = _tail_log(log_path, n=raw_lines_opt)
             exists_str = "exists" if log_path.exists() else "not found"
-            size_str   = f"{log_path.stat().st_size / 1024:.1f} KB" if log_path.exists() else ""
-            n_errors   = _count_errors(lines)
-            st.caption(f"{log_name} · {exists_str} · {size_str} · {n_errors} error lines")
-            with st.expander(f"{log_name} ({len(lines)} lines shown)", expanded=n_errors > 0):
+            size_str   = (
+                f"{log_path.stat().st_size / 1024:.1f} KB"
+                if log_path.exists() else "—"
+            )
+            total_lines = (
+                len(log_path.read_text(errors="replace").splitlines())
+                if log_path.exists() else 0
+            )
+            n_errors = _count_errors(lines)
+
+            st.caption(
+                f"{log_name} · {exists_str} · {size_str} · "
+                f"{total_lines:,} total lines · showing last {len(lines)} · "
+                f"{n_errors} error lines in view"
+            )
+
+            # Apply search filter to raw view too
+            if log_search:
+                lines = [l for l in lines if log_search.lower() in l.lower()]
+                st.caption(f"🔍 Filtered to {len(lines)} matching lines")
+
+            with st.expander(
+                f"{log_name} — last {len(lines)} lines",
+                expanded=n_errors > 0,
+            ):
                 st.code("\n".join(lines), language=None)
