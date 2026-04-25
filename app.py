@@ -3,6 +3,7 @@
 Run with:  streamlit run app.py
 """
 
+import base64
 import contextlib
 from datetime import datetime
 from pathlib import Path
@@ -139,13 +140,20 @@ pg = st.navigation(
 # ── Sidebar status + footer (renders below nav links) ─────────────────────────
 
 with st.sidebar:
-    if _LOGO.exists():
-        _l, _c, _r = st.columns([1, 3, 1])
-        with _c:
-            st.image(str(_LOGO), use_container_width=True)
-
-    if _LOGO_WORDS.exists():
-        st.image(str(_LOGO_WORDS), use_container_width=True)
+    if _LOGO.exists() and _LOGO_WORDS.exists():
+        _circle = base64.b64encode(_LOGO.read_bytes()).decode()
+        _words  = base64.b64encode(_LOGO_WORDS.read_bytes()).decode()
+        st.markdown(f"""
+<div style="text-align:center; padding:0; margin:0;">
+  <img src="data:image/png;base64,{_circle}"
+       style="width:62%; display:block; margin:0 auto;
+              filter:drop-shadow(0 0 10px rgba(201,162,39,0.30))
+                     drop-shadow(0 0 22px rgba(201,162,39,0.12));"/>
+  <img src="data:image/png;base64,{_words}"
+       style="width:88%; display:block; margin:-4px auto 0;
+              filter:drop-shadow(0 0 8px rgba(201,162,39,0.25));"/>
+</div>
+""", unsafe_allow_html=True)
 
     st.markdown(f"""
 <div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
