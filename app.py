@@ -27,6 +27,8 @@ st.set_page_config(
 
 NAV_CSS = f"""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;600&display=swap');
+
 /* ── Nav links ───────────────────────────────────────────────────────────── */
 [data-testid="stSidebarNavLink"] {{
     border-radius: 6px;
@@ -52,37 +54,14 @@ NAV_CSS = f"""
     padding-left: 10px;
 }}
 
-/* ── Sidebar logo container ───────────────────────────────────────────────── */
+/* ── Sidebar logo image (transparent PNG — no mask needed) ───────────────── */
 [data-testid="stSidebar"] [data-testid="stImage"] {{
     background: transparent !important;
     border: none !important;
     padding: 0 !important;
     margin: 0 auto !important;
     line-height: 0;
-    position: relative;
 }}
-
-/* Colour overlay — same centre/shape as the mask so both layers align.
-   Centre shifted to 38% height (the logo circle centre, not the image centre)
-   so the "QUANTPIPE" text in the lower third stays inside the opaque zone. */
-[data-testid="stSidebar"] [data-testid="stImage"]::after {{
-    content: '';
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background: radial-gradient(
-        ellipse 88% 95% at 50% 38%,
-        transparent           30%,
-        {COLORS['surface']}15 43%,
-        {COLORS['surface']}50 54%,
-        {COLORS['surface']}95 64%,
-        {COLORS['surface']}CC 73%,
-        {COLORS['surface']}EE 82%,
-        {COLORS['surface']}   90%
-    );
-}}
-
-/* ── Sidebar logo image — sharp + deep mask fade ─────────────────────────── */
 [data-testid="stSidebar"] [data-testid="stImage"] img {{
     image-rendering: -webkit-optimize-contrast;
     image-rendering: high-quality;
@@ -90,30 +69,9 @@ NAV_CSS = f"""
     height: auto;
     display: block;
     margin: 0 auto;
-    /* Centre at 38% height aligns opaque core with the logo circle.
-       Taller ellipse (95%) extends far enough down to include the text. */
-    -webkit-mask-image: radial-gradient(
-        ellipse 88% 95% at 50% 38%,
-        black             26%,
-        rgba(0,0,0,0.97)  35%,
-        rgba(0,0,0,0.88)  44%,
-        rgba(0,0,0,0.68)  53%,
-        rgba(0,0,0,0.40)  62%,
-        rgba(0,0,0,0.15)  72%,
-        rgba(0,0,0,0.03)  81%,
-        transparent       89%
-    );
-    mask-image: radial-gradient(
-        ellipse 88% 95% at 50% 38%,
-        black             26%,
-        rgba(0,0,0,0.97)  35%,
-        rgba(0,0,0,0.88)  44%,
-        rgba(0,0,0,0.68)  53%,
-        rgba(0,0,0,0.40)  62%,
-        rgba(0,0,0,0.15)  72%,
-        rgba(0,0,0,0.03)  81%,
-        transparent       89%
-    );
+    /* Gold glow follows the transparent PNG shape exactly */
+    filter: drop-shadow(0 0 10px rgba(201,162,39,0.30))
+            drop-shadow(0 0 22px rgba(201,162,39,0.12));
 }}
 </style>
 """
@@ -184,10 +142,58 @@ pg = st.navigation(
 
 with st.sidebar:
     if _LOGO.exists():
-        # 1/2 width, centred — columns give [1/4 gap | 1/2 image | 1/4 gap]
-        _l, _c, _r = st.columns([1, 2, 1])
+        # Circle logo: transparent PNG, centred at 55% of sidebar width
+        _l, _c, _r = st.columns([1, 3, 1])
         with _c:
             st.image(str(_LOGO), use_container_width=True)
+
+    # CSS-generated wordmark — matches brand palette
+    st.markdown(f"""
+<div style="text-align:center; margin:-6px 0 10px; line-height:1.15;">
+  <div style="
+    font-family:'Bebas Neue', Impact, 'Arial Black', sans-serif;
+    font-size: 1.55rem;
+    letter-spacing: 0.14em;
+    color: {COLORS['gold']};
+    text-shadow: 0 0 18px rgba(201,162,39,0.35), 0 0 6px rgba(201,162,39,0.2);
+  ">QUANT<span style="
+      display:inline-flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:0;
+      height:1em;
+      vertical-align:middle;
+      margin: 0 0.04em;
+      position:relative;
+      top:-0.04em;
+    "><span style="
+        display:block;
+        width:2px;
+        height:0.55em;
+        background:{COLORS['green']};
+        border-radius:1px;
+        box-shadow:0 0 6px {COLORS['green']}99;
+      "></span><span style="
+        display:block;
+        width:7px;
+        height:2px;
+        background:{COLORS['green']};
+        border-radius:1px;
+        margin-top:-1px;
+        box-shadow:0 0 6px {COLORS['green']}99;
+      "></span></span>PE</div>
+  <div style="
+    font-family:'Rajdhani', 'Segoe UI', sans-serif;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    color: {COLORS['gold_dim']};
+    text-transform: uppercase;
+    margin-top: 1px;
+  ">Research &amp; Live Trading</div>
+</div>
+""", unsafe_allow_html=True)
 
     st.markdown(f"""
 <div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
