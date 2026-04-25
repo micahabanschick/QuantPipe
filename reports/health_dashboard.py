@@ -205,8 +205,8 @@ else:
 
 st.markdown(
     page_header(
-        "QuantPipe — Pipeline Health",
-        "Data ingestion · Feature computation · Signal generation",
+        "Pipeline Health",
+        "Verify data is flowing, fresh, and error-free before any research or trading decision.",
         date.today().strftime("%B %d, %Y"),
     ),
     unsafe_allow_html=True,
