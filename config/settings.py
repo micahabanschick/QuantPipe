@@ -54,6 +54,9 @@ def _get(key: str, default: str = "") -> str:
     return _vault_secrets().get(key) or os.getenv(key, default)
 
 
+# ── Alternative data ───────────────────────────────────────────────────────────
+FRED_API_KEY: str = _get("FRED_API_KEY")   # Federal Reserve Economic Data
+
 # ── Data providers ─────────────────────────────────────────────────────────────
 EODHD_API_KEY: str = _get("EODHD_API_KEY")
 ALPACA_API_KEY: str = _get("ALPACA_API_KEY")

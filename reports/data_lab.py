@@ -22,7 +22,8 @@ from plotly.subplots import make_subplots
 from scipy.stats import spearmanr
 import streamlit as st
 
-from config.settings import DATA_DIR
+from config.settings import DATA_DIR, FRED_API_KEY
+from data_adapters.fred_adapter import FREDAdapter, POPULAR_SERIES
 from storage.parquet_store import load_bars
 from reports._theme import (
     CSS, COLORS, PLOTLY_CONFIG,
@@ -55,7 +56,48 @@ tab_reg, tab_ingest, tab_trade = st.tabs(
 # ══════════════════════════════════════════════════════════════════════════════
 
 with tab_reg:
-    st.markdown(section_label("Planned Data Source Connectors"), unsafe_allow_html=True)
+    st.markdown(section_label("Live Connectors"), unsafe_allow_html=True)
+
+    # ── FRED — Live ────────────────────────────────────────────────────────────
+    _fred_status = "LIVE" if FRED_API_KEY else "KEY MISSING"
+    _fred_color  = COLORS["green"] if FRED_API_KEY else COLORS["negative"]
+    _fred_bg     = "rgba(0,230,118,0.08)" if FRED_API_KEY else "rgba(255,77,77,0.08)"
+    _sample_series = list(POPULAR_SERIES.items())[:6]
+    _series_html = "".join(
+        f'<li style="color:{COLORS["text_muted"]};font-size:0.76rem;">'
+        f'<code style="color:{COLORS["gold"]};font-size:0.72rem;">{sid}</code>'
+        f' — {desc}</li>'
+        for sid, desc in _sample_series
+    )
+    st.markdown(f"""
+<div style="background:{_fred_bg};
+            border:1px solid {_fred_color}44;
+            border-left:3px solid {_fred_color};
+            border-radius:8px;padding:14px 16px;margin-bottom:16px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+    <span style="font-size:1.1rem;">📡</span>
+    <span style="color:{COLORS['text']};font-size:0.92rem;font-weight:700;">
+      FRED — Federal Reserve Economic Data
+    </span>
+    <span style="background:{_fred_color}22;color:{_fred_color};
+                 font-size:0.62rem;font-weight:700;letter-spacing:0.08em;
+                 padding:2px 8px;border-radius:3px;border:1px solid {_fred_color}55;">
+      {_fred_status}
+    </span>
+  </div>
+  <p style="color:{COLORS['neutral']};font-size:0.78rem;margin:0 0 8px;line-height:1.5;">
+    Free macro and financial time series from the St. Louis Fed.
+    {len(POPULAR_SERIES)} curated series available — pull any via the
+    <b>Ingest &amp; Clean</b> tab, or enter any custom FRED series ID.
+  </p>
+  <ul style="margin:0;padding-left:16px;">{_series_html}</ul>
+  <p style="color:{COLORS['text_muted']};font-size:0.72rem;margin:8px 0 0;">
+    + {len(POPULAR_SERIES) - 6} more curated series · 800,000+ series available via search
+  </p>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown(section_label("Planned Connectors"), unsafe_allow_html=True)
     st.markdown(
         f'<p style="color:{COLORS["neutral"]};font-size:0.84rem;margin-bottom:18px;">'
         "These connectors will be built out as each data source is validated in the "
@@ -71,11 +113,11 @@ with tab_reg:
          "regulatory filings, product pricing.",
          ["Job openings per ticker", "Employee sentiment score",
           "Product price index", "Review volume & rating"]),
-        ("📡", "API Connectors",
-         "Macro and alternative data APIs: FRED, Quandl, "
+        ("📡", "Other API Connectors",
+         "Additional macro and alternative data APIs: Quandl, "
          "Alpha Vantage, World Bank, BLS.",
-         ["Unemployment rate", "CPI components", "Harvest cycle indices",
-          "Credit card spend by sector"]),
+         ["Harvest cycle indices", "Credit card spend by sector",
+          "World Bank development data", "BLS detailed labour stats"]),
         ("📂", "File Watchers",
          "Scheduled CSV/JSON drops from data vendors, "
          "internal research exports, survey outputs.",
@@ -139,7 +181,132 @@ with tab_reg:
 
 with tab_ingest:
 
-    # ── Upload ─────────────────────────────────────────────────────────────────
+    # ── Source selector ────────────────────────────────────────────────────────
+    _fred_available = bool(FRED_API_KEY)
+    _src_options = ["📡 FRED — Federal Reserve", "📁 Upload File (CSV / JSON)"]
+    if not _fred_available:
+        _src_options = ["📁 Upload File (CSV / JSON)", "📡 FRED — Federal Reserve (key missing)"]
+
+    ingest_source = st.radio(
+        "Data source", _src_options, horizontal=True, key="ingest_src",
+    )
+    _is_fred = ingest_source.startswith("📡 FRED") and _fred_available
+
+    st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # FRED PULL PATH
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_fred:
+        fred = FREDAdapter(FRED_API_KEY)
+
+        st.markdown(section_label("Select FRED Series"), unsafe_allow_html=True)
+
+        fi1, fi2 = st.columns([2, 2])
+        with fi1:
+            popular_choice = st.selectbox(
+                "Popular series",
+                ["— search or pick below —"] + list(POPULAR_SERIES.keys()),
+                format_func=lambda k: k if k.startswith("—") else f"{k} — {POPULAR_SERIES.get(k, '')}",
+                key="fred_popular",
+            )
+        with fi2:
+            custom_id = st.text_input(
+                "Or enter any FRED series ID",
+                placeholder="e.g. MORTGAGE30US",
+                key="fred_custom",
+            )
+
+        series_id = (
+            custom_id.strip().upper()
+            if custom_id.strip()
+            else (popular_choice if not popular_choice.startswith("—") else None)
+        )
+
+        # Search box
+        search_q = st.text_input("🔍 Search FRED catalogue", placeholder="inflation, housing…", key="fred_search")
+        if search_q:
+            with st.spinner("Searching FRED…"):
+                results = fred.search_series(search_q, limit=10)
+            if results:
+                st.dataframe(
+                    pd.DataFrame(results),
+                    use_container_width=True, hide_index=True,
+                )
+                st.caption("Copy a series ID above into the 'Enter any FRED series ID' box.")
+            else:
+                st.info("No results found.")
+
+        if not series_id:
+            st.info("Pick a popular series or enter a custom series ID above.")
+            st.stop()
+
+        # Show series metadata
+        with st.spinner(f"Fetching metadata for {series_id}…"):
+            info = fred.get_series_info(series_id)
+        st.markdown(
+            f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'
+            f'border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:0.80rem;">'
+            f'<b style="color:{COLORS["gold"]};">{info["id"]}</b> — '
+            f'<span style="color:{COLORS["text"]};">{info["title"]}</span><br>'
+            f'<span style="color:{COLORS["text_muted"]};">Units: {info["units"]} · '
+            f'Frequency: {info["frequency"]} · Last updated: {info["last_updated"]}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        fd1, fd2 = st.columns(2)
+        with fd1:
+            fred_start = st.date_input("Start date", value=date(2015, 1, 1), key="fred_start")
+        with fd2:
+            fred_end   = st.date_input("End date",   value=date.today(),      key="fred_end")
+
+        source_name = st.text_input(
+            "Save as", value=f"fred_{series_id.lower()}", key="fred_savename"
+        )
+
+        if st.button("⬇ Pull from FRED", key="fred_pull"):
+            with st.spinner(f"Pulling {series_id} from {fred_start} to {fred_end}…"):
+                try:
+                    raw_pl = fred.get_series(series_id, start=str(fred_start), end=str(fred_end))
+                    if raw_pl.is_empty():
+                        st.error("No data returned. Check the series ID and date range.")
+                        st.stop()
+                except Exception as exc:
+                    st.error(f"FRED API error: {exc}")
+                    st.stop()
+
+            raw_pd = raw_pl.to_pandas()
+            st.success(f"Pulled {len(raw_pd):,} rows for {series_id}")
+
+            # Preview
+            st.markdown(section_label("Preview"), unsafe_allow_html=True)
+            n_null = raw_pd[series_id].isnull().sum()
+            p1, p2, p3 = st.columns(3)
+            p1.metric("Rows",        f"{len(raw_pd):,}")
+            p2.metric("Null values", f"{n_null:,}")
+            p3.metric("Date range",  f"{raw_pd['date'].min().date()} → {raw_pd['date'].max().date()}")
+
+            st.dataframe(raw_pd.head(10), use_container_width=True, hide_index=True)
+
+            fig_fred = go.Figure(go.Scatter(
+                x=raw_pd["date"], y=raw_pd[series_id],
+                mode="lines", line=dict(color=COLORS["gold"], width=1.8),
+                name=series_id,
+                hovertemplate="%{x}<br>%{y}<extra></extra>",
+            ))
+            apply_theme(fig_fred, title=f"{info['title']} ({info['units']})", height=260)
+            st.plotly_chart(fig_fred, use_container_width=True, config=PLOTLY_CONFIG)
+
+            # Save
+            out_path = ALT_DIR / f"{source_name}.parquet"
+            raw_pl.write_parquet(out_path)
+            st.success(f"Saved to `data/alt/{source_name}.parquet`")
+            st.info("Open the **Tradability Check** tab to analyse this signal.")
+
+        st.stop()   # don't render the upload section when FRED is selected
+
+    # ── Upload path ─────────────────────────────────────────────────────────────
     st.markdown(section_label("Upload Alternative Data"), unsafe_allow_html=True)
     st.caption(
         "CSV or JSON. Must contain a date column and at least one numeric signal column. "
