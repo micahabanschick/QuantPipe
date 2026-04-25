@@ -1,11 +1,11 @@
-"""Research dashboard — Streamlit page (Dashboard #4).
+"""Research dashboard - Streamlit page (Dashboard #4).
 
 UI-only layer. All analytics logic lives in research/.
 
 Tabs:
-  Signal Scanner  — current factor rankings and universe snapshot
-  Factor Analysis — factor time-series, distribution, and information coefficient
-  Walk-Forward    — OOS validation with per-fold Sharpe breakdown
+  Signal Scanner  - current factor rankings and universe snapshot
+  Factor Analysis - factor time-series, distribution, and information coefficient
+  Walk-Forward    - OOS validation with per-fold Sharpe breakdown
 """
 
 from datetime import date
@@ -45,7 +45,7 @@ from risk.factor_model import (
 
 st.markdown(CSS, unsafe_allow_html=True)
 
-# ── Cached data loaders ───────────────────────────────────────────────────────
+# ?? Cached data loaders ???????????????????????????????????????????????????????
 
 @st.cache_data(ttl=300)
 def _features(symbols: tuple, start_str: str, end_str: str) -> pl.DataFrame | None:
@@ -115,7 +115,7 @@ def _walk_forward(
         return str(exc)
 
 
-# ── Page header ───────────────────────────────────────────────────────────────
+# ?? Page header ???????????????????????????????????????????????????????????????
 
 st.markdown(
     page_header(
@@ -126,7 +126,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Controls ──────────────────────────────────────────────────────────────────
+# ?? Controls ??????????????????????????????????????????????????????????????????
 
 _ctrl, _spacer = st.columns([2, 6])
 with _ctrl:
@@ -138,7 +138,7 @@ with _ctrl:
         key="research_lookback",
     )
 
-# ── Universe + feature load ───────────────────────────────────────────────────
+# ?? Universe + feature load ???????????????????????????????????????????????????
 
 _end   = date.today()
 _start = date(_end.year - lookback_years, _end.month, _end.day)
@@ -148,28 +148,28 @@ _symbols  = tuple(sorted(_sym_list)) if _sym_list else ()
 
 features_df: pl.DataFrame | None = None
 if _symbols:
-    with st.spinner("Loading features…"):
+    with st.spinner("Loading features?"):
         features_df = _features(_symbols, str(_start), str(_end))
 
 tab_factor, tab_signal_analysis, tab_wfv, tab_mc, tab_kalman = st.tabs(
     ["  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  ", "  Kalman Filter  "]
 )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — FACTOR ANALYSIS  (merges former Signal Scanner)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????????
+# TAB 3 - FACTOR ANALYSIS  (merges former Signal Scanner)
+# ???????????????????????????????????????????????????????????????????????????????
 
 with tab_factor:
     if features_df is None:
         st.warning("No features available. Run: `uv run python features/compute.py`")
     else:
-        # ── Universe Snapshot (formerly Signal Scanner) ───────────────────────
+        # ?? Universe Snapshot (formerly Signal Scanner) ???????????????????????
         snap = get_snapshot(features_df)
-        with st.expander(f"Universe Snapshot · {snap.latest_date}", expanded=False):
+        with st.expander(f"Universe Snapshot ? {snap.latest_date}", expanded=False):
             _sc1, _sc2, _sc3, _sc4 = st.columns(4)
             _sc1.markdown(kpi_card("Universe Size",       str(snap.n_universe),       accent=COLORS["teal"]),     unsafe_allow_html=True)
             _sc2.markdown(kpi_card("Symbols w/ Momentum", str(snap.n_valid_momentum), accent=COLORS["blue"]),     unsafe_allow_html=True)
-            _sc3.markdown(kpi_card("Current Top-1", snap.top5_momentum[0] if snap.top5_momentum else "—", accent=COLORS["positive"]), unsafe_allow_html=True)
+            _sc3.markdown(kpi_card("Current Top-1", snap.top5_momentum[0] if snap.top5_momentum else "-", accent=COLORS["positive"]), unsafe_allow_html=True)
             _sc4.markdown(kpi_card("As-of Date",          snap.latest_date,           accent=COLORS["neutral"]), unsafe_allow_html=True)
             st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
             _col_rank, _col_zheat = st.columns(2)
@@ -202,7 +202,7 @@ with tab_factor:
                         text=_z_text, texttemplate="%{text}", textfont=dict(size=9),
                         colorscale="RdYlGn", zmid=0, showscale=True,
                         colorbar=dict(thickness=12, len=0.85),
-                        hovertemplate="<b>%{y}</b> · %{x}: %{z:.2f}σ<extra></extra>",
+                        hovertemplate="<b>%{y}</b> ? %{x}: %{z:.2f}sigma<extra></extra>",
                     ))
                     apply_theme(_fig_zheat)
                     _fig_zheat.update_layout(height=max(280, 26 * len(_z_sorted)), xaxis=dict(side="top"))
@@ -239,8 +239,8 @@ with tab_factor:
             fac_pivot = factor_pivot_from_features(features_df, selected_syms, selected_factor)
             is_pct    = selected_factor in PCT_FEATURES
 
-            # ── Time series ───────────────────────────────────────────────────
-            st.markdown(section_label(f"{FEATURE_LABELS.get(selected_factor, selected_factor)} — Time Series"), unsafe_allow_html=True)
+            # ?? Time series ???????????????????????????????????????????????????
+            st.markdown(section_label(f"{FEATURE_LABELS.get(selected_factor, selected_factor)} - Time Series"), unsafe_allow_html=True)
             fig_ts = go.Figure()
             for i, sym in enumerate(selected_syms):
                 if sym in fac_pivot.columns:
@@ -262,7 +262,7 @@ with tab_factor:
 
             col_dist, col_ic = st.columns(2)
 
-            # ── Distribution ──────────────────────────────────────────────────
+            # ?? Distribution ??????????????????????????????????????????????????
             with col_dist:
                 st.markdown(section_label("Factor Distribution"), unsafe_allow_html=True)
                 all_vals = fac_pivot.values.ravel()
@@ -297,7 +297,7 @@ with tab_factor:
                 c_c.metric("Skew",  f"{fstats.skew:.2f}")
                 c_d.metric("Kurt",  f"{fstats.kurt:.2f}")
 
-            # ── Information Coefficient ───────────────────────────────────────
+            # ?? Information Coefficient ???????????????????????????????????????
             with col_ic:
                 st.markdown(section_label(f"Information Coefficient ({ic_window}d forward)"), unsafe_allow_html=True)
 
@@ -390,7 +390,7 @@ with tab_factor:
                                delta=f"(p<0.05, n={_n_obs} periods)",
                                delta_color="off")
 
-                    # ── IC across lookback windows ──────────────────────────────
+                    # ?? IC across lookback windows ??????????????????????????????
                     st.markdown(section_label("IC across Lookback Windows"), unsafe_allow_html=True)
                     st.caption("Shows whether the factor was consistently predictive across different historical periods.")
                     _lb_rows = []
@@ -426,7 +426,7 @@ with tab_factor:
                     else:
                         st.caption("Not enough data for lookback comparison.")
 
-                    # ── Feature contribution decomposition ──────────────────────
+                    # ?? Feature contribution decomposition ??????????????????????
                     st.markdown(section_label("Feature Contribution to Current Signal"), unsafe_allow_html=True)
                     st.caption("Weighted average factor z-score across the current portfolio positions.")
                     try:
@@ -466,14 +466,14 @@ with tab_factor:
                             else:
                                 st.caption("No overlap between portfolio symbols and feature data.")
                         else:
-                            st.caption("No target weights found — run a rebalance first.")
+                            st.caption("No target weights found - run a rebalance first.")
                     except Exception as _ce:
                         st.caption(f"Contribution analysis unavailable: {_ce}")
 
                 else:
-                    st.info("Could not compute IC — price data unavailable.")
+                    st.info("Could not compute IC - price data unavailable.")
 
-            # ── Factor Correlation Heatmap ─────────────────────────────────────
+            # ?? Factor Correlation Heatmap ?????????????????????????????????????
             if len(present) >= 2 and selected_syms:
                 st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
                 st.markdown(section_label("Factor Correlation"), unsafe_allow_html=True)
@@ -502,9 +502,9 @@ with tab_factor:
                     st.info("Factor correlation unavailable.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — SIGNAL ANALYSIS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????????
+# TAB 4 - SIGNAL ANALYSIS
+# ???????????????????????????????????????????????????????????????????????????????
 
 with tab_signal_analysis:
     if features_df is None:
@@ -513,7 +513,7 @@ with tab_signal_analysis:
         _sa_present = [f for f in ALL_FEATURES if f in features_df.columns]
         _sa_all_syms = sorted(features_df["symbol"].unique().to_list())
 
-        # ── Section A: IC Decay ───────────────────────────────────────────────
+        # ?? Section A: IC Decay ???????????????????????????????????????????????
         st.markdown(section_label("IC Decay Curve"), unsafe_allow_html=True)
 
         col_a1, col_a2 = st.columns([1, 2])
@@ -572,7 +572,7 @@ with tab_signal_analysis:
 
         st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
 
-        # ── Section B: Signal Turnover ────────────────────────────────────────
+        # ?? Section B: Signal Turnover ????????????????????????????????????????
         st.markdown(section_label("Signal Turnover"), unsafe_allow_html=True)
 
         _sb_prices_pl = _prices(_symbols, str(_start), str(_end))
@@ -622,11 +622,11 @@ with tab_signal_analysis:
                 )
                 st.plotly_chart(fig_to, width="stretch", config=PLOTLY_CONFIG)
         else:
-            st.info("Could not compute signal turnover — price data unavailable.")
+            st.info("Could not compute signal turnover - price data unavailable.")
 
         st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
 
-        # ── Section C: Composite Signal Builder ───────────────────────────────
+        # ?? Section C: Composite Signal Builder ???????????????????????????????
         st.markdown(section_label("Composite Signal Builder"), unsafe_allow_html=True)
 
         _FEATURE_DEFAULT_WEIGHTS = {
@@ -698,7 +698,7 @@ with tab_signal_analysis:
                                 xaxis=dict(showgrid=False, title="Composite Score"),
                                 yaxis=dict(showgrid=False, autorange="reversed"),
                                 showlegend=False,
-                                title=f"Composite Scores — {_latest_rd}",
+                                title=f"Composite Scores - {_latest_rd}",
                             )
                             st.plotly_chart(fig_cs, width="stretch", config=PLOTLY_CONFIG)
 
@@ -722,9 +722,9 @@ with tab_signal_analysis:
                 st.info("Configure factor weights above and click **Preview Composite**.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — WALK-FORWARD
-# ═══════════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????????
+# TAB 4 - WALK-FORWARD
+# ???????????????????????????????????????????????????????????????????????????????
 
 with tab_wfv:
     st.markdown(section_label("Walk-Forward Validation Configuration"), unsafe_allow_html=True)
@@ -739,11 +739,11 @@ with tab_wfv:
     if lookback_years < required_years:
         st.warning(f"Increase Feature lookback to at least {required_years:.1f} years to produce complete folds.")
 
-    run_btn = st.button("▶ Run Walk-Forward Validation", type="primary")
+    run_btn = st.button("? Run Walk-Forward Validation", type="primary")
     _key    = f"wfv_{_symbols}_{wfv_train}_{wfv_test}_{wfv_top_n}_{wfv_cost}_{lookback_years}"
 
     if run_btn:
-        with st.spinner("Running walk-forward validation — this may take 30–90 seconds…"):
+        with st.spinner("Running walk-forward validation - this may take 30-90 seconds?"):
             st.session_state[_key] = _walk_forward(
                 _symbols, str(_start), str(_end),
                 wfv_train, wfv_test, wfv_top_n, float(wfv_cost),
@@ -752,13 +752,13 @@ with tab_wfv:
     wfv_result = st.session_state.get(_key)
 
     if wfv_result is None:
-        st.info("Configure parameters above and click **▶ Run Walk-Forward Validation** to start.")
+        st.info("Configure parameters above and click **? Run Walk-Forward Validation** to start.")
     elif isinstance(wfv_result, str):
         st.error(f"Walk-forward failed: {wfv_result}")
     else:
         folds = wfv_result.folds
 
-        # ── Summary KPIs ──────────────────────────────────────────────────────
+        # ?? Summary KPIs ??????????????????????????????????????????????????????
         st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(kpi_card("OOS Sharpe", f"{wfv_result.combined_sharpe:.3f}",        accent=COLORS["teal"]),     unsafe_allow_html=True)
@@ -768,7 +768,7 @@ with tab_wfv:
 
         st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
 
-        # ── OOS equity curve ──────────────────────────────────────────────────
+        # ?? OOS equity curve ??????????????????????????????????????????????????
         st.markdown(section_label("OOS Combined Equity Curve"), unsafe_allow_html=True)
         eq_norm = oos_equity_normalised(wfv_result)
         fig_eq  = go.Figure(go.Scatter(
@@ -794,7 +794,7 @@ with tab_wfv:
         )
         st.plotly_chart(fig_eq, width="stretch", config=PLOTLY_CONFIG)
 
-        # ── Per-fold table ────────────────────────────────────────────────────
+        # ?? Per-fold table ????????????????????????????????????????????????????
         st.markdown(section_label("Per-Fold Performance"), unsafe_allow_html=True)
         rows = fold_summary(wfv_result)
         fold_df = pd.DataFrame(rows)
@@ -803,7 +803,7 @@ with tab_wfv:
         fold_df["OOS Vol"]    = fold_df["OOS Vol"].map("{:.1%}".format)
         st.dataframe(fold_df, width="stretch", hide_index=True)
 
-        # ── Per-fold bar charts ───────────────────────────────────────────────
+        # ?? Per-fold bar charts ???????????????????????????????????????????????
         col_sharpe_bar, col_cagr_bar = st.columns(2)
         sharpe_vals = [r["OOS Sharpe"] for r in rows]
         cagr_vals   = [r["OOS CAGR"] for r in rows]   # raw float before formatting
@@ -837,22 +837,22 @@ with tab_wfv:
                                   yaxis=dict(tickformat=".0%", showgrid=False), xaxis=dict(showgrid=False), showlegend=False)
             st.plotly_chart(fig_cb, width="stretch", config=PLOTLY_CONFIG)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — MONTE CARLO BOOTSTRAP
-# ═══════════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????????
+# TAB 5 - MONTE CARLO BOOTSTRAP
+# ???????????????????????????????????????????????????????????????????????????????
 
 with tab_mc:
     st.markdown(section_label("Monte Carlo Block-Bootstrap Analysis"), unsafe_allow_html=True)
     st.markdown(
         f'<div style="color:{COLORS["neutral"]};font-size:0.83rem;margin-bottom:14px;">'
         "Upload a CSV of trade returns or an equity curve to run circular block-bootstrap "
-        "analysis across 10 000+ simulated paths. Covers: equity fan chart · metric "
-        "distributions · terminal wealth · convergence diagnostics · rolling Sharpe stability."
+        "analysis across 10 000+ simulated paths. Covers: equity fan chart ? metric "
+        "distributions ? terminal wealth ? convergence diagnostics ? rolling Sharpe stability."
         "</div>",
         unsafe_allow_html=True,
     )
 
-    # ── Config ────────────────────────────────────────────────────────────────
+    # ?? Config ????????????????????????????????????????????????????????????????
     mc_col1, mc_col2, mc_col3, mc_col4 = st.columns(4)
     with mc_col1:
         mc_n_sims   = st.selectbox("Simulations", [1_000, 5_000, 10_000, 25_000],
@@ -872,32 +872,32 @@ with tab_mc:
     mc_t_col1, mc_t_col2, mc_t_col3 = st.columns(3)
     mc_target_sharpe = mc_t_col1.number_input("Target Sharpe", value=1.0, step=0.1, format="%.1f")
     mc_target_calmar = mc_t_col2.number_input("Target Calmar", value=0.5, step=0.1, format="%.1f")
-    mc_target_dd     = mc_t_col3.number_input("Max DD target (e.g. −0.20)", value=-0.20, step=0.05, format="%.2f")
+    mc_target_dd     = mc_t_col3.number_input("Max DD target (e.g. ?0.20)", value=-0.20, step=0.05, format="%.2f")
 
-    # ── File upload ───────────────────────────────────────────────────────────
+    # ?? File upload ???????????????????????????????????????????????????????????
     mc_file      = st.file_uploader(
         "Upload CSV (trade log or equity curve)",
         type=["csv"],
         help=(
             "Accepted formats:\n"
-            "• QC trade log — columns: Entry Price, Exit Price, P&L, Exit Time\n"
-            "• Return series — column named 'return', 'returns', or 'ret'\n"
-            "• Equity curve — column named 'equity', 'value', 'nav', etc."
+            "? QC trade log - columns: Entry Price, Exit Price, P&L, Exit Time\n"
+            "? Return series - column named 'return', 'returns', or 'ret'\n"
+            "? Equity curve - column named 'equity', 'value', 'nav', etc."
         ),
     )
     ck_col1, ck_col2 = st.columns(2)
     mc_is_equity  = ck_col1.checkbox("CSV is an equity curve (not return series)", value=False)
     mc_pct_format = ck_col2.checkbox(
-        "Returns are in % format (÷ 100)",
+        "Returns are in % format (? 100)",
         value=False,
         help="Check if your return column stores e.g. 5.0 for a 5 % gain instead of 0.05.",
     )
 
-    mc_run = st.button("▶ Run Monte Carlo", type="primary", disabled=mc_file is None)
+    mc_run = st.button("? Run Monte Carlo", type="primary", disabled=mc_file is None)
     _mc_key = f"mc_result_{mc_n_sims}_{mc_block}_{mc_ppyr}_{mc_capital}_{mc_is_equity}_{mc_pct_format}"
 
     if mc_run and mc_file is not None:
-        with st.spinner(f"Running {mc_n_sims:,} bootstrap simulations…"):
+        with st.spinner(f"Running {mc_n_sims:,} bootstrap simulations?"):
             try:
                 import tempfile, os
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
@@ -928,15 +928,15 @@ with tab_mc:
 
     if mc_result is None:
         st.info(
-            "Upload a CSV then click **▶ Run Monte Carlo**."
+            "Upload a CSV then click **? Run Monte Carlo**."
             if mc_file is None
-            else "File loaded — click **▶ Run Monte Carlo** to start the analysis."
+            else "File loaded - click **? Run Monte Carlo** to start the analysis."
         )
         st.stop()
 
     r = mc_result
 
-    # ── Return series stats ───────────────────────────────────────────────────
+    # ?? Return series stats ???????????????????????????????????????????????????
     st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
     rs1, rs2, rs3, rs4, rs5, rs6 = st.columns(6)
     rs1.markdown(kpi_card("Periods",    str(r.n_periods),          accent=COLORS["neutral"]),  unsafe_allow_html=True)
@@ -948,11 +948,11 @@ with tab_mc:
 
     st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
 
-    # ── Section A: Equity Fan Chart ────────────────────────────────────────────
+    # ?? Section A: Equity Fan Chart ????????????????????????????????????????????
     st.markdown(section_label("Equity Fan Chart"), unsafe_allow_html=True)
 
     def _band_polygon(fan_x, y_lower, y_upper, fillcolor, name):
-        """Closed-polygon band — immune to fill='tonexty' ordering issues."""
+        """Closed-polygon band - immune to fill='tonexty' ordering issues."""
         xs = list(fan_x) + list(fan_x[::-1])
         ys = list(y_upper) + list(y_lower[::-1])
         return go.Scatter(
@@ -981,9 +981,9 @@ with tab_mc:
     ))
 
     # Layer 2: percentile bands (outermost first so inner bands render on top)
-    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p5,  r.fan_p95, "rgba(65,130,200,0.13)", "5th–95th"))
-    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p10, r.fan_p90, "rgba(55,115,190,0.19)", "10th–90th"))
-    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p25, r.fan_p75, "rgba(45,100,180,0.30)", "25th–75th"))
+    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p5,  r.fan_p95, "rgba(65,130,200,0.13)", "5th-95th"))
+    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p10, r.fan_p90, "rgba(55,115,190,0.19)", "10th-90th"))
+    fig_fan.add_trace(_band_polygon(r.fan_x, r.fan_p25, r.fan_p75, "rgba(45,100,180,0.30)", "25th-75th"))
 
     # Layer 3: median line + original path on top
     fig_fan.add_trace(go.Scatter(
@@ -999,7 +999,7 @@ with tab_mc:
         hovertemplate="Period %{x}: $%{y:,.0f}<extra>Original</extra>",
     ))
 
-    # Clamp y-axis to P5–P95 range with 5% padding so outlier paths don't
+    # Clamp y-axis to P5-P95 range with 5% padding so outlier paths don't
     # distort the scale. The original path is allowed to exceed this window.
     _y_lo = min(r.fan_p5)
     _y_hi = max(r.fan_p95)
@@ -1017,7 +1017,7 @@ with tab_mc:
     )
     st.plotly_chart(fig_fan, width="stretch", config=PLOTLY_CONFIG)
 
-    # ── Section B: Terminal Wealth + Metric Distributions ─────────────────────
+    # ?? Section B: Terminal Wealth + Metric Distributions ?????????????????????
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Terminal Wealth & Metric Distributions"), unsafe_allow_html=True)
 
@@ -1031,11 +1031,11 @@ with tab_mc:
 
     st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
 
-    # Metric distribution charts (2 × 2)
+    # Metric distribution charts (2 x 2)
     _mc_dist_panels = [
-        ("Sharpe Ratio",    r.sharpe_dist,   r.orig_sharpe,  COLORS["teal"],     mc_target_sharpe, "≥"),
-        ("Calmar Ratio",    r.calmar_dist,   r.orig_calmar,  COLORS["blue"],     mc_target_calmar, "≥"),
-        ("Max Drawdown",    [v*100 for v in r.max_dd_dist], r.orig_max_dd*100, COLORS["negative"], mc_target_dd*100, "≥"),
+        ("Sharpe Ratio",    r.sharpe_dist,   r.orig_sharpe,  COLORS["teal"],     mc_target_sharpe, ">="),
+        ("Calmar Ratio",    r.calmar_dist,   r.orig_calmar,  COLORS["blue"],     mc_target_calmar, ">="),
+        ("Max Drawdown",    [v*100 for v in r.max_dd_dist], r.orig_max_dd*100, COLORS["negative"], mc_target_dd*100, ">="),
         ("Ann. Volatility", [v*100 for v in r.ann_vol_dist], r.orig_ann_vol*100, COLORS["neutral"], None, None),
     ]
     dist_row1, dist_row2 = st.columns(2), st.columns(2)
@@ -1058,7 +1058,7 @@ with tab_mc:
             if target_val is not None:
                 fig_d.add_vline(x=target_val, line=dict(color=COLORS["neutral"], width=1, dash="dot"),
                                 annotation_text=f"Target {target_val:.1f}", annotation_font_size=8)
-                if direction == "≥":
+                if direction == ">=":
                     prob = float((np.array(dist) >= target_val).mean())
                 else:
                     prob = float((np.array(dist) <= target_val).mean())
@@ -1072,21 +1072,21 @@ with tab_mc:
             )
             st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CONFIG)
 
-    # ── Section C: Target Achievement ─────────────────────────────────────────
+    # ?? Section C: Target Achievement ?????????????????????????????????????????
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Joint Target Achievement"), unsafe_allow_html=True)
 
     tc1, tc2, tc3, tc4 = st.columns(4)
-    tc1.markdown(kpi_card(f"P(Sharpe ≥ {mc_target_sharpe:.1f})",    f"{r.p_meets_sharpe:.1%}",  accent=COLORS["teal"]),     unsafe_allow_html=True)
-    tc2.markdown(kpi_card(f"P(Calmar ≥ {mc_target_calmar:.1f})",    f"{r.p_meets_calmar:.1%}",  accent=COLORS["blue"]),     unsafe_allow_html=True)
-    tc3.markdown(kpi_card(f"P(Max DD ≥ {mc_target_dd:.0%})",        f"{r.p_meets_max_dd:.1%}",  accent=COLORS["warning"]),  unsafe_allow_html=True)
+    tc1.markdown(kpi_card(f"P(Sharpe >= {mc_target_sharpe:.1f})",    f"{r.p_meets_sharpe:.1%}",  accent=COLORS["teal"]),     unsafe_allow_html=True)
+    tc2.markdown(kpi_card(f"P(Calmar >= {mc_target_calmar:.1f})",    f"{r.p_meets_calmar:.1%}",  accent=COLORS["blue"]),     unsafe_allow_html=True)
+    tc3.markdown(kpi_card(f"P(Max DD >= {mc_target_dd:.0%})",        f"{r.p_meets_max_dd:.1%}",  accent=COLORS["warning"]),  unsafe_allow_html=True)
     tc4.markdown(kpi_card("P(All Three)",                             f"{r.p_meets_all:.1%}",     accent=COLORS["positive"]), unsafe_allow_html=True)
 
     # Horizontal bar chart
     target_labels = [
-        f"Sharpe ≥ {mc_target_sharpe:.1f}",
-        f"Calmar ≥ {mc_target_calmar:.1f}",
-        f"Max DD ≥ {mc_target_dd:.0%}",
+        f"Sharpe >= {mc_target_sharpe:.1f}",
+        f"Calmar >= {mc_target_calmar:.1f}",
+        f"Max DD >= {mc_target_dd:.0%}",
         "Any Two",
         "All Three",
     ]
@@ -1114,7 +1114,7 @@ with tab_mc:
     )
     st.plotly_chart(fig_target, width="stretch", config=PLOTLY_CONFIG)
 
-    # ── Section D: Rolling Sharpe Stability ───────────────────────────────────
+    # ?? Section D: Rolling Sharpe Stability ???????????????????????????????????
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
     st.markdown(section_label(f"Rolling Sharpe Stability (window = {r.rolling_window} periods)"), unsafe_allow_html=True)
 
@@ -1122,7 +1122,7 @@ with tab_mc:
     fig_roll.add_traces([
         go.Scatter(x=r.rolling_x, y=r.rolling_p10, line=dict(width=0), showlegend=False, hoverinfo="skip"),
         go.Scatter(x=r.rolling_x, y=r.rolling_p90, fill="tonexty", fillcolor="rgba(38,120,178,0.10)",
-                   line=dict(width=0), name="10th–90th"),
+                   line=dict(width=0), name="10th-90th"),
         go.Scatter(x=r.rolling_x, y=r.rolling_p50, line=dict(color=COLORS["blue"], width=1.5), name="Median"),
         go.Scatter(x=r.rolling_x, y=r.rolling_orig, line=dict(color=COLORS["warning"], width=1.5, dash="dash"),
                    name="Original"),
@@ -1134,7 +1134,7 @@ with tab_mc:
     fig_roll.update_layout(height=280, xaxis=dict(title="Period"), yaxis=dict(title="Annualized Sharpe"))
     st.plotly_chart(fig_roll, width="stretch", config=PLOTLY_CONFIG)
 
-    # ── Section E: Convergence ────────────────────────────────────────────────
+    # ?? Section E: Convergence ????????????????????????????????????????????????
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Convergence Diagnostics"), unsafe_allow_html=True)
 
@@ -1167,7 +1167,7 @@ with tab_mc:
         )
         st.plotly_chart(fig_cv2, width="stretch", config=PLOTLY_CONFIG)
 
-    # ── Section F: Summary Table ──────────────────────────────────────────────
+    # ?? Section F: Summary Table ??????????????????????????????????????????????
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Summary Table"), unsafe_allow_html=True)
 
@@ -1189,32 +1189,32 @@ with tab_mc:
     ]
     st.dataframe(_sum_display, width="stretch", hide_index=True)
 
-st.caption("QuantPipe — for research and paper trading only. Not investment advice.")
+st.caption("QuantPipe - for research and paper trading only. Not investment advice.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — KALMAN FILTER  (dynamic beta / TVP regression)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ???????????????????????????????????????????????????????????????????????????????
+# TAB 5 - KALMAN FILTER  (dynamic beta / TVP regression)
+# ???????????????????????????????????????????????????????????????????????????????
 
 with tab_kalman:
-    # ── DEBUG: remove after fix confirmed ──────────────────────────────────────
-    st.write(f"DEBUG A — tab body running. _sym_list len={len(_sym_list) if _sym_list else 0}")
+    # ?? DEBUG: remove after fix confirmed ??????????????????????????????????????
+    st.write(f"DEBUG A - tab body running. _sym_list len={len(_sym_list) if _sym_list else 0}")
     try:
         _dbg_kr, _ = _kalman_compute("SPY", 1e-4, 126, str(_start), str(_end), _symbols)
-        st.write(f"DEBUG B — _kalman_compute OK. dates={len(_dbg_kr.dates)}, ll={_dbg_kr.log_likelihood:.1f}")
+        st.write(f"DEBUG B - _kalman_compute OK. dates={len(_dbg_kr.dates)}, ll={_dbg_kr.log_likelihood:.1f}")
     except Exception as _dbg_e:
         st.error(f"DEBUG B FAILED: {_dbg_e}")
-    # ── END DEBUG ──────────────────────────────────────────────────────────────
+    # ?? END DEBUG ??????????????????????????????????????????????????????????????
     st.markdown(
         f'<p style="color:{COLORS["neutral"]};font-size:0.84rem;margin-bottom:12px;">'
-        "Time-varying parameter (TVP) regression — the Kalman filter tracks how each"
+        "Time-varying parameter (TVP) regression - the Kalman filter tracks how each"
         " factor beta evolves daily instead of using a fixed rolling window."
-        " Lower δ = slower adaptation; higher δ = betas respond faster to regime shifts."
+        " Lower delta = slower adaptation; higher delta = betas respond faster to regime shifts."
         "</p>",
         unsafe_allow_html=True,
     )
 
-    # ── Controls ──────────────────────────────────────────────────────────────
+    # ?? Controls ??????????????????????????????????????????????????????????????
     _kc1, _kc2, _kc3 = st.columns([2, 1.5, 1.5])
     with _kc1:
         _k_sym = st.selectbox(
@@ -1225,12 +1225,12 @@ with tab_kalman:
         )
     with _kc2:
         _k_delta = st.select_slider(
-            "δ (process noise)",
+            "delta (process noise)",
             options=[1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2],
             value=1e-4,
             format_func=lambda x: f"{x:.0e}",
             key="kf_delta",
-            help="δ/(1-δ) = Q/R ratio. Higher δ = betas adapt faster.",
+            help="delta/(1-delta) = Q/R ratio. Higher delta = betas adapt faster.",
         )
     with _kc3:
         _k_ols_window = st.select_slider(
@@ -1241,8 +1241,8 @@ with tab_kalman:
             key="kf_ols_win",
         )
 
-    # ── Compute ────────────────────────────────────────────────────────────────
-    with st.spinner("Running Kalman filter…"):
+    # ?? Compute ????????????????????????????????????????????????????????????????
+    with st.spinner("Running Kalman filter?"):
         _kr, _ols_df = _kalman_compute(
             _k_sym, _k_delta, _k_ols_window, str(_start), str(_end), _symbols
         )
@@ -1253,31 +1253,31 @@ with tab_kalman:
         _K    = _kr.filtered_betas.shape[1]
         _beta_names = ["Alpha"] + _kr.factor_names
 
-        # ── KPI cards ─────────────────────────────────────────────────────────
+        # ?? KPI cards ?????????????????????????????????????????????????????????
         st.markdown(section_label("Filter Summary"), unsafe_allow_html=True)
         _kcols = st.columns(4)
         _kcols[0].markdown(kpi_card("Log-Likelihood", f"{_kr.log_likelihood:,.1f}",
                                     accent=COLORS["blue"]), unsafe_allow_html=True)
         _kcols[1].markdown(kpi_card("Mean Innovation",
                                     f"{float(np.mean(_kr.innovations)):+.5f}",
-                                    delta="≈0 if well-calibrated",
+                                    delta="~0 if well-calibrated",
                                     accent=COLORS["gold"]), unsafe_allow_html=True)
 
         # Current market beta (first factor)
         _mkt_idx = 1 if _K > 1 else 0
         _cur_beta = float(_kr.filtered_betas[-1, _mkt_idx])
         _cur_std  = float(np.sqrt(_kr.filtered_vars[-1, _mkt_idx, _mkt_idx]))
-        _kcols[2].markdown(kpi_card(f"Current {_beta_names[_mkt_idx]} β",
+        _kcols[2].markdown(kpi_card(f"Current {_beta_names[_mkt_idx]} beta",
                                     f"{_cur_beta:+.4f}",
                                     accent=COLORS["positive"] if _cur_beta >= 0 else COLORS["negative"]),
                            unsafe_allow_html=True)
-        _kcols[3].markdown(kpi_card("β Uncertainty (1σ)", f"±{_cur_std:.4f}",
+        _kcols[3].markdown(kpi_card("beta Uncertainty (1sigma)", f"+/-{_cur_std:.4f}",
                                     accent=COLORS["warning"]), unsafe_allow_html=True)
 
-        # ── Rolling beta comparison ────────────────────────────────────────────
+        # ?? Rolling beta comparison ????????????????????????????????????????????
         st.markdown(section_label("Kalman vs OLS Rolling Betas"), unsafe_allow_html=True)
         st.caption(
-            "Solid lines = Kalman filtered betas with ±1σ confidence band. "
+            "Solid lines = Kalman filtered betas with +/-1sigma confidence band. "
             "Dashed lines = OLS rolling betas (comparison baseline)."
         )
 
@@ -1305,7 +1305,7 @@ with tab_kalman:
                 x=_dates_pd, y=_betas,
                 mode="lines", line=dict(color=_col, width=2),
                 name=f"{_fname} (Kalman)",
-                hovertemplate=f"<b>{_fname} β</b>: %{{y:.4f}}<extra>Kalman</extra>",
+                hovertemplate=f"<b>{_fname} beta</b>: %{{y:.4f}}<extra>Kalman</extra>",
             ))
             # OLS comparison
             if not _ols_df.empty and _fname in _ols_df.columns:
@@ -1313,7 +1313,7 @@ with tab_kalman:
                     x=_ols_df.index, y=_ols_df[_fname],
                     mode="lines", line=dict(color=_col, width=1.5, dash="dot"),
                     name=f"{_fname} (OLS {_k_ols_window}d)",
-                    hovertemplate=f"<b>{_fname} β</b>: %{{y:.4f}}<extra>OLS</extra>",
+                    hovertemplate=f"<b>{_fname} beta</b>: %{{y:.4f}}<extra>OLS</extra>",
                 ))
 
         _fig_beta.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
@@ -1321,7 +1321,7 @@ with tab_kalman:
         _fig_beta.update_layout(height=340, yaxis_title="Beta")
         st.plotly_chart(_fig_beta, width="stretch", config=PLOTLY_CONFIG)
 
-        # ── Innovation + uncertainty ───────────────────────────────────────────
+        # ?? Innovation + uncertainty ???????????????????????????????????????????
         st.markdown(section_label("Innovations & Beta Uncertainty"), unsafe_allow_html=True)
         _ic1, _ic2 = st.columns(2)
 
@@ -1338,11 +1338,11 @@ with tab_kalman:
                 hovertemplate="%{x|%Y-%m-%d}: %{y:.5f}<extra></extra>",
             ))
             _fig_innov.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
-            apply_theme(_fig_innov, title="One-step-ahead innovations (v_t = r_t − Ĥβ_t)")
+            apply_theme(_fig_innov, title="One-step-ahead innovations (v_t = r_t ? ?beta_t)")
             _fig_innov.update_layout(height=260, showlegend=False)
             st.plotly_chart(_fig_innov, width="stretch", config=PLOTLY_CONFIG)
             st.caption(
-                "Innovations should be approximately white noise (mean ≈ 0, no autocorrelation) "
+                "Innovations should be approximately white noise (mean ~ 0, no autocorrelation) "
                 "if the model is well-specified. Persistent structure indicates model misspecification."
             )
 
@@ -1356,18 +1356,18 @@ with tab_kalman:
                     x=_dates_pd, y=_stds,
                     mode="lines", line=dict(color=_col, width=1.8),
                     name=f"{_fname}",
-                    hovertemplate=f"<b>{_fname} σ</b>: %{{y:.4f}}<extra></extra>",
+                    hovertemplate=f"<b>{_fname} sigma</b>: %{{y:.4f}}<extra></extra>",
                 ))
             apply_theme(_fig_var, title="Posterior std of each beta (estimation uncertainty)",
                         legend_inside=True)
-            _fig_var.update_layout(height=260, yaxis_title="Posterior std (σ)")
+            _fig_var.update_layout(height=260, yaxis_title="Posterior std (sigma)")
             st.plotly_chart(_fig_var, width="stretch", config=PLOTLY_CONFIG)
             st.caption(
                 "Higher uncertainty = Kalman filter is less confident about the current beta. "
                 "Uncertainty spikes often coincide with regime changes or low-liquidity periods."
             )
 
-        # ── Beta heatmap over time ─────────────────────────────────────────────
+        # ?? Beta heatmap over time ?????????????????????????????????????????????
         if _K > 1:
             st.markdown(section_label("Factor Loading Heatmap"), unsafe_allow_html=True)
             _step = max(1, len(_dates_pd) // 60)
@@ -1387,7 +1387,7 @@ with tab_kalman:
                 zmid=0,
                 showscale=True,
                 colorbar=dict(thickness=12, len=0.8),
-                hovertemplate="<b>%{y}</b> on %{x}: β=%{z:.4f}<extra></extra>",
+                hovertemplate="<b>%{y}</b> on %{x}: beta=%{z:.4f}<extra></extra>",
             ))
             apply_theme(_fig_heat, title="Kalman-filtered betas over time")
             _fig_heat.update_layout(

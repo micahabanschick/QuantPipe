@@ -1,16 +1,16 @@
-"""Kalman filter — time-varying parameter (TVP) regression for dynamic factor betas.
+"""Kalman filter - time-varying parameter (TVP) regression for dynamic factor betas.
 
 Pure analytics. No Streamlit, no Plotly, no I/O.
 
 Model (Fahrmeir & Tutz parameterisation):
 
-    Observation:  r_t  = H_t @ β_t + ε_t,   ε_t ~ N(0, R)
-    Transition:   β_t  = β_{t-1} + η_t,       η_t ~ N(0, Q)
+    Observation:  r_t  = H_t @ beta_t + eps_t,   eps_t ~ N(0, R)
+    Transition:   beta_t  = beta_{t-1} + eta_t,       eta_t ~ N(0, Q)
 
 where
-    β_t ∈ ℝ^K   (K = n_factors + 1,  first element is the intercept)
+    beta_t in ?^K   (K = n_factors + 1,  first element is the intercept)
     H_t = [1, f1_t, f2_t, ...]   row vector of factor values at t
-    Q   = (δ / (1-δ)) * I_K       (delta controls how fast betas adapt)
+    Q   = (delta / (1-delta)) * I_K       (delta controls how fast betas adapt)
     R   = estimated from full-sample OLS residuals
 
 Public API:
@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 
-# ── Dataclass ──────────────────────────────────────────────────────────────────
+# ?? Dataclass ??????????????????????????????????????????????????????????????????
 
 @dataclass
 class KalmanResult:
@@ -38,7 +38,7 @@ class KalmanResult:
     dates               : T observation dates (aligned to the input series)
     filtered_betas      : (T, K) filtered state means.  Column 0 = alpha, 1..K-1 = betas.
     filtered_vars       : (T, K, K) filtered posterior covariances
-    innovations         : (T,) one-step-ahead forecast errors (v_t = r_t - H_t @ β_pred)
+    innovations         : (T,) one-step-ahead forecast errors (v_t = r_t - H_t @ beta_pred)
     innovation_variances: (T,) innovation variances (S_t = H_t @ P_pred @ H_t + R)
     log_likelihood      : scalar, sum of Gaussian log-likelihoods
     factor_names        : K-1 factor names (excluding intercept)
@@ -52,7 +52,7 @@ class KalmanResult:
     factor_names:         list[str]      = field(default_factory=list)
 
 
-# ── Core implementation ────────────────────────────────────────────────────────
+# ?? Core implementation ????????????????????????????????????????????????????????
 
 def kalman_smooth_betas(
     portfolio_returns: pd.Series,
@@ -65,18 +65,18 @@ def kalman_smooth_betas(
     Parameters
     ----------
     portfolio_returns : pd.Series  (T,)  daily returns of the portfolio / asset
-    factor_returns   : pd.DataFrame (T × K) factor daily returns, one column per factor
+    factor_returns   : pd.DataFrame (T x K) factor daily returns, one column per factor
     delta            : float  process noise scaling.  Higher = betas adapt faster.
                        Typical range: 1e-5 (very slow) to 1e-2 (fast adaptation).
-                       δ/(1-δ) is the ratio of process-to-observation noise variance.
+                       delta/(1-delta) is the ratio of process-to-observation noise variance.
     P_init_scale     : float  scales the initial posterior covariance P_0.
 
     Returns
     -------
-    KalmanResult with filtered betas (T × K), variances (T × K × K),
+    KalmanResult with filtered betas (T x K), variances (T x K x K),
     innovations (T,), innovation variances (T,), log-likelihood.
     """
-    # ── Align data ─────────────────────────────────────────────────────────────
+    # ?? Align data ?????????????????????????????????????????????????????????????
     pret = portfolio_returns.copy()
     fret = factor_returns.copy()
     pret.index = pd.to_datetime(pret.index)
@@ -101,7 +101,7 @@ def kalman_smooth_betas(
     # Design matrix: prepend intercept column
     H_all = np.column_stack([np.ones(T), F])    # (T, K)
 
-    # ── Initialise via full-sample OLS ─────────────────────────────────────────
+    # ?? Initialise via full-sample OLS ?????????????????????????????????????????
     X_aug = H_all
     try:
         coeffs_ols, resid_ols, _, _ = np.linalg.lstsq(X_aug, y, rcond=None)
@@ -114,7 +114,7 @@ def kalman_smooth_betas(
     if R < 1e-12:
         R = 1e-8
 
-    # Process noise covariance: Q = (δ/(1-δ)) * I_K
+    # Process noise covariance: Q = (delta/(1-delta)) * I_K
     q_scale = delta / (1.0 - delta)
     Q       = q_scale * np.eye(K)
 
@@ -123,7 +123,7 @@ def kalman_smooth_betas(
     XtX_inv = np.linalg.pinv(X_aug.T @ X_aug)
     P_t     = P_init_scale * R * XtX_inv         # (K, K)
 
-    # ── Storage ────────────────────────────────────────────────────────────────
+    # ?? Storage ????????????????????????????????????????????????????????????????
     betas_out  = np.empty((T, K))
     vars_out   = np.empty((T, K, K))
     innov      = np.empty(T)
@@ -131,7 +131,7 @@ def kalman_smooth_betas(
     log_lik    = 0.0
     _LOG2PI    = float(np.log(2.0 * np.pi))
 
-    # ── Kalman predict-update loop ─────────────────────────────────────────────
+    # ?? Kalman predict-update loop ?????????????????????????????????????????????
     for t in range(T):
         H_t = H_all[t]                           # (K,)
         y_t = y[t]
