@@ -166,6 +166,8 @@ pg = st.navigation(
                     title="Data Lab",              icon="🧪"),
             st.Page("reports/research_dashboard.py",
                     title="Research",              icon="🔬"),
+            st.Page("reports/kalman_dashboard.py",
+                    title="Kalman Filter",         icon="📡"),
             st.Page("reports/performance_dashboard.py",
                     title="Performance",           icon="📈"),
             st.Page("reports/strategy_lab.py",

@@ -38,10 +38,6 @@ from features.compute import load_features
 from signals.composite import composite_signal
 from signals.analysis import ic_decay, signal_turnover
 from signals.momentum import cross_sectional_momentum, get_monthly_rebalance_dates
-from research.kalman_filter import kalman_smooth_betas, KalmanResult
-from risk.factor_model import (
-    FACTOR_PROXIES, estimate_factor_returns, rolling_factor_betas,
-)
 
 st.markdown(CSS, unsafe_allow_html=True)
 
@@ -65,32 +61,6 @@ def _prices(symbols: tuple, start_str: str, end_str: str) -> pl.DataFrame | None
         return None
 
 
-@st.cache_data(ttl=300)
-def _kalman_compute(
-    sym: str, delta: float, ols_window: int,
-    start_str: str, end_str: str, symbols_tuple: tuple,
-) -> tuple[KalmanResult, pd.DataFrame]:
-    """Return (KalmanResult, rolling_ols_df). All params explicit for cache key."""
-    bars = _prices(symbols_tuple, start_str, end_str)
-    if bars is None:
-        return KalmanResult(), pd.DataFrame()
-    fr = estimate_factor_returns(bars, FACTOR_PROXIES)
-    if fr.returns.empty:
-        return KalmanResult(), pd.DataFrame()
-    price_col = "adj_close" if "adj_close" in bars.columns else "close"
-    port_pd = (
-        bars.filter(pl.col("symbol") == sym)
-        .sort("date")
-        .to_pandas()
-        .set_index("date")[price_col]
-        .pct_change()
-        .dropna()
-    )
-    port_pd.index = pd.to_datetime(port_pd.index)
-    kr  = kalman_smooth_betas(port_pd, fr.returns, delta=delta)
-    ols = rolling_factor_betas(port_pd, fr, window=ols_window,
-                               min_periods=max(ols_window // 2, 20))
-    return kr, ols
 
 
 @st.cache_data(ttl=600)
@@ -151,8 +121,8 @@ if _symbols:
     with st.spinner("Loading features?"):
         features_df = _features(_symbols, str(_start), str(_end))
 
-tab_kalman, tab_factor, tab_signal_analysis, tab_wfv, tab_mc = st.tabs(
-    ["  Kalman Filter  ", "  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  "]
+tab_factor, tab_signal_analysis, tab_wfv, tab_mc = st.tabs(
+    ["  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  "]
 )
 
 # ???????????????????????????????????????????????????????????????????????????????
@@ -1196,6 +1166,3 @@ st.caption("QuantPipe - for research and paper trading only. Not investment advi
 # TAB 5 - KALMAN FILTER  (dynamic beta / TVP regression)
 # ???????????????????????????????????????????????????????????????????????????????
 
-with tab_kalman:
-    st.write("MINIMAL TEST - tab mechanism works")
-    st.success("If you see this, the tab is working.")
