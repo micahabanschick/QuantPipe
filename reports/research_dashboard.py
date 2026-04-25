@@ -119,8 +119,8 @@ if _symbols:
     with st.spinner("Loading features…"):
         features_df = _features(_symbols, str(_start), str(_end))
 
-tab_factor, tab_signal_analysis, tab_wfv, tab_mc = st.tabs(
-    ["  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  "]
+tab_factor, tab_signal_analysis, tab_wfv, tab_mc, tab_kalman = st.tabs(
+    ["  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  ", "  Kalman Filter  "]
 )
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1158,3 +1158,240 @@ with tab_mc:
     st.dataframe(_sum_display, width="stretch", hide_index=True)
 
 st.caption("QuantPipe — for research and paper trading only. Not investment advice.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — KALMAN FILTER  (dynamic beta / TVP regression)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab_kalman:
+    from research.kalman_filter import KalmanResult, kalman_smooth_betas
+    from risk.factor_model import (
+        FACTOR_PROXIES, FactorReturns,
+        estimate_factor_returns, rolling_factor_betas,
+    )
+
+    st.markdown(
+        f'<p style="color:{COLORS["neutral"]};font-size:0.84rem;margin-bottom:12px;">'
+        "Time-varying parameter (TVP) regression — the Kalman filter tracks how each"
+        " factor beta evolves daily instead of using a fixed rolling window."
+        " Lower δ = slower adaptation; higher δ = betas respond faster to regime shifts."
+        "</p>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Controls ──────────────────────────────────────────────────────────────
+    _kc1, _kc2, _kc3 = st.columns([2, 1.5, 1.5])
+    with _kc1:
+        _k_sym = st.selectbox(
+            "Portfolio / asset",
+            options=sorted(_sym_list) if _sym_list else ["SPY"],
+            index=(sorted(_sym_list).index("SPY") if _sym_list and "SPY" in _sym_list else 0),
+            key="kf_sym",
+        )
+    with _kc2:
+        _k_delta = st.select_slider(
+            "δ (process noise)",
+            options=[1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2],
+            value=1e-4,
+            format_func=lambda x: f"{x:.0e}",
+            key="kf_delta",
+            help="δ/(1-δ) = Q/R ratio. Higher δ = betas adapt faster.",
+        )
+    with _kc3:
+        _k_ols_window = st.select_slider(
+            "OLS window (comparison)",
+            options=[63, 126, 252],
+            value=126,
+            format_func=lambda x: f"{x}d",
+            key="kf_ols_win",
+        )
+
+    # ── Cached computation ────────────────────────────────────────────────────
+    @st.cache_data(ttl=300)
+    def _kalman_compute(sym: str, delta: float, start_str: str, end_str: str,
+                        symbols_tuple: tuple) -> tuple[KalmanResult, pd.DataFrame]:
+        """Return (KalmanResult, rolling_ols_df)."""
+        _bars = _prices(symbols_tuple, start_str, end_str)
+        if _bars is None:
+            return KalmanResult(), pd.DataFrame()
+
+        _fr = estimate_factor_returns(_bars, FACTOR_PROXIES)
+        if _fr.returns.empty:
+            return KalmanResult(), pd.DataFrame()
+
+        # Portfolio returns
+        _pc = "adj_close" if "adj_close" in _bars.columns else "close"
+        _port_pd = (
+            _bars.filter(pl.col("symbol") == sym)
+            .sort("date")
+            .to_pandas()
+            .set_index("date")[_pc]
+            .pct_change()
+            .dropna()
+        )
+        _port_pd.index = pd.to_datetime(_port_pd.index)
+
+        _kr = kalman_smooth_betas(_port_pd, _fr.returns, delta=delta)
+        _ols = rolling_factor_betas(_port_pd, _fr, window=_k_ols_window, min_periods=_k_ols_window // 2)
+        return _kr, _ols
+
+    with st.spinner("Running Kalman filter…"):
+        _kr, _ols_df = _kalman_compute(
+            _k_sym, _k_delta, str(_start), str(_end), _symbols
+        )
+
+    if not _kr.dates or _kr.filtered_betas.size == 0:
+        st.warning("Not enough price data to run the Kalman filter. Extend the lookback or check data.")
+    else:
+        _K    = _kr.filtered_betas.shape[1]
+        _beta_names = ["Alpha"] + _kr.factor_names
+
+        # ── KPI cards ─────────────────────────────────────────────────────────
+        st.markdown(section_label("Filter Summary"), unsafe_allow_html=True)
+        _kcols = st.columns(4)
+        _kcols[0].markdown(kpi_card("Log-Likelihood", f"{_kr.log_likelihood:,.1f}",
+                                    accent=COLORS["blue"]), unsafe_allow_html=True)
+        _kcols[1].markdown(kpi_card("Mean Innovation",
+                                    f"{float(np.mean(_kr.innovations)):+.5f}",
+                                    delta="≈0 if well-calibrated",
+                                    delta_color="off" if hasattr(None, "x") else None,
+                                    accent=COLORS["gold"]), unsafe_allow_html=True)
+
+        # Current market beta (first factor)
+        _mkt_idx = 1 if _K > 1 else 0
+        _cur_beta = float(_kr.filtered_betas[-1, _mkt_idx])
+        _cur_std  = float(np.sqrt(_kr.filtered_vars[-1, _mkt_idx, _mkt_idx]))
+        _kcols[2].markdown(kpi_card(f"Current {_beta_names[_mkt_idx]} β",
+                                    f"{_cur_beta:+.4f}",
+                                    accent=COLORS["positive"] if _cur_beta >= 0 else COLORS["negative"]),
+                           unsafe_allow_html=True)
+        _kcols[3].markdown(kpi_card("β Uncertainty (1σ)", f"±{_cur_std:.4f}",
+                                    accent=COLORS["warning"]), unsafe_allow_html=True)
+
+        # ── Rolling beta comparison ────────────────────────────────────────────
+        st.markdown(section_label("Kalman vs OLS Rolling Betas"), unsafe_allow_html=True)
+        st.caption(
+            "Solid lines = Kalman filtered betas with ±1σ confidence band. "
+            "Dashed lines = OLS rolling betas (comparison baseline)."
+        )
+
+        _dates_pd = pd.to_datetime(_kr.dates)
+        _fig_beta = go.Figure()
+
+        # Plot each factor beta (skip intercept / alpha)
+        _series_colors = [COLORS["gold"], COLORS["green"], COLORS["purple"], COLORS["blue"]]
+
+        for _fi in range(1, _K):
+            _fname = _beta_names[_fi]
+            _betas = _kr.filtered_betas[:, _fi]
+            _stds  = np.sqrt(np.clip(_kr.filtered_vars[:, _fi, _fi], 0, None))
+            _col   = _series_colors[(_fi - 1) % len(_series_colors)]
+
+            # CI band
+            _fig_beta.add_trace(go.Scatter(
+                x=list(_dates_pd) + list(_dates_pd[::-1]),
+                y=list(_betas + _stds) + list((_betas - _stds)[::-1]),
+                fill="toself", fillcolor=f"{_col}18",
+                line=dict(width=0), showlegend=False, hoverinfo="skip",
+            ))
+            # Kalman line
+            _fig_beta.add_trace(go.Scatter(
+                x=_dates_pd, y=_betas,
+                mode="lines", line=dict(color=_col, width=2),
+                name=f"{_fname} (Kalman)",
+                hovertemplate=f"<b>{_fname} β</b>: %{{y:.4f}}<extra>Kalman</extra>",
+            ))
+            # OLS comparison
+            if not _ols_df.empty and _fname in _ols_df.columns:
+                _fig_beta.add_trace(go.Scatter(
+                    x=_ols_df.index, y=_ols_df[_fname],
+                    mode="lines", line=dict(color=_col, width=1.5, dash="dot"),
+                    name=f"{_fname} (OLS {_k_ols_window}d)",
+                    hovertemplate=f"<b>{_fname} β</b>: %{{y:.4f}}<extra>OLS</extra>",
+                ))
+
+        _fig_beta.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(_fig_beta, legend_inside=True)
+        _fig_beta.update_layout(height=340, yaxis_title="Beta")
+        st.plotly_chart(_fig_beta, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Innovation + uncertainty ───────────────────────────────────────────
+        st.markdown(section_label("Innovations & Beta Uncertainty"), unsafe_allow_html=True)
+        _ic1, _ic2 = st.columns(2)
+
+        with _ic1:
+            _fig_innov = go.Figure()
+            _fig_innov.add_trace(go.Bar(
+                x=_dates_pd, y=_kr.innovations,
+                marker=dict(
+                    color=[COLORS["positive"] if v >= 0 else COLORS["negative"]
+                           for v in _kr.innovations],
+                    line=dict(width=0),
+                ),
+                opacity=0.6, name="Innovation",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.5f}<extra></extra>",
+            ))
+            _fig_innov.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+            apply_theme(_fig_innov, title="One-step-ahead innovations (v_t = r_t − Ĥβ_t)")
+            _fig_innov.update_layout(height=260, showlegend=False)
+            st.plotly_chart(_fig_innov, width="stretch", config=PLOTLY_CONFIG)
+            st.caption(
+                "Innovations should be approximately white noise (mean ≈ 0, no autocorrelation) "
+                "if the model is well-specified. Persistent structure indicates model misspecification."
+            )
+
+        with _ic2:
+            _fig_var = go.Figure()
+            for _fi in range(1, _K):
+                _fname = _beta_names[_fi]
+                _stds  = np.sqrt(np.clip(_kr.filtered_vars[:, _fi, _fi], 0, None))
+                _col   = _series_colors[(_fi - 1) % len(_series_colors)]
+                _fig_var.add_trace(go.Scatter(
+                    x=_dates_pd, y=_stds,
+                    mode="lines", line=dict(color=_col, width=1.8),
+                    name=f"{_fname}",
+                    hovertemplate=f"<b>{_fname} σ</b>: %{{y:.4f}}<extra></extra>",
+                ))
+            apply_theme(_fig_var, title="Posterior std of each beta (estimation uncertainty)",
+                        legend_inside=True)
+            _fig_var.update_layout(height=260, yaxis_title="Posterior std (σ)")
+            st.plotly_chart(_fig_var, width="stretch", config=PLOTLY_CONFIG)
+            st.caption(
+                "Higher uncertainty = Kalman filter is less confident about the current beta. "
+                "Uncertainty spikes often coincide with regime changes or low-liquidity periods."
+            )
+
+        # ── Beta heatmap over time ─────────────────────────────────────────────
+        if _K > 1:
+            st.markdown(section_label("Factor Loading Heatmap"), unsafe_allow_html=True)
+            _step = max(1, len(_dates_pd) // 60)
+            _heat_idx = range(0, len(_dates_pd), _step)
+            _heat_dates = [str(_dates_pd[i].date()) for i in _heat_idx]
+            _heat_z = [[float(_kr.filtered_betas[i, _fi]) for i in _heat_idx]
+                       for _fi in range(1, _K)]
+            _heat_labels = _beta_names[1:]
+
+            _fig_heat = go.Figure(go.Heatmap(
+                z=_heat_z,
+                x=_heat_dates,
+                y=_heat_labels,
+                colorscale=[[0.0, COLORS["negative"]],
+                            [0.5, COLORS["card_bg"]],
+                            [1.0, COLORS["positive"]]],
+                zmid=0,
+                showscale=True,
+                colorbar=dict(thickness=12, len=0.8),
+                hovertemplate="<b>%{y}</b> on %{x}: β=%{z:.4f}<extra></extra>",
+            ))
+            apply_theme(_fig_heat, title="Kalman-filtered betas over time")
+            _fig_heat.update_layout(
+                height=max(180, 55 * len(_heat_labels)),
+                yaxis=dict(autorange="reversed"),
+                xaxis=dict(tickangle=-45, tickfont=dict(size=9)),
+            )
+            st.plotly_chart(_fig_heat, width="stretch", config=PLOTLY_CONFIG)
+            st.caption(
+                "Colour shows the direction and magnitude of each factor's contribution. "
+                "Regime shifts appear as horizontal colour transitions."
+            )
