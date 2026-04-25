@@ -183,17 +183,30 @@ with st.sidebar:
         _c = _crop_b64(_LOGO)       # circle only
         _w = _crop_b64(_LOGO_WORDS) # words only
 
-        # Circle is 349px wide in orig; words 423px wide — words ~21% wider.
-        # Scale both so circle sits at 72% of sidebar, words at ~87%.
+        # Fix the background behind the logo to the sidebar's endpoint colour
+        # so the transparent PNG edges always blend into the same base colour,
+        # regardless of where the sidebar gradient sits at that scroll position.
+        _sb_end = COLORS['surface']   # #0F1325 — bottom of sidebar gradient
         st.markdown(f"""
-<div style="text-align:center; padding:0; margin:0;">
+<div style="text-align:center; padding:8px 0 4px;
+            background:linear-gradient(180deg,transparent 0%,{_sb_end} 40%);">
   <img src="data:image/png;base64,{_c}"
-       style="width:72%; display:block; margin:0 auto;
-              filter:drop-shadow(0 0 10px rgba(201,162,39,0.30))
-                     drop-shadow(0 0 22px rgba(201,162,39,0.12));"/>
+       style="width:68%; display:block; margin:0 auto;
+              filter:drop-shadow(0 0 12px rgba(201,162,39,0.35))
+                     drop-shadow(0 0 28px rgba(201,162,39,0.15));
+              -webkit-mask-image:radial-gradient(
+                circle at 50% 48%,
+                black 38%, rgba(0,0,0,0.95) 50%,
+                rgba(0,0,0,0.7) 62%, rgba(0,0,0,0.3) 76%,
+                transparent 90%);
+              mask-image:radial-gradient(
+                circle at 50% 48%,
+                black 38%, rgba(0,0,0,0.95) 50%,
+                rgba(0,0,0,0.7) 62%, rgba(0,0,0,0.3) 76%,
+                transparent 90%);"/>
   <img src="data:image/png;base64,{_w}"
-       style="width:87%; display:block; margin:4px auto 0;
-              filter:drop-shadow(0 0 7px rgba(201,162,39,0.25));"/>
+       style="width:84%; display:block; margin:2px auto 0;
+              filter:drop-shadow(0 0 6px rgba(201,162,39,0.28));"/>
 </div>
 """, unsafe_allow_html=True)
 

@@ -212,17 +212,20 @@ section[data-testid="stMain"] {{
     background: transparent !important;
 }}
 
-/* ── Sidebar gradient ─────────────────────────────────────────────────────── */
+/* ── Sidebar — brand-coloured gradient ───────────────────────────────────── */
 [data-testid="stSidebar"],
 [data-testid="stSidebar"] > div,
 [data-testid="stSidebar"] > div > div {{
-    background: linear-gradient(
-        180deg,
-        #060912 0%,
-        #09101F 25%,
-        #0C1525 60%,
-        {COLORS['surface']} 100%
-    ) !important;
+    background:
+        radial-gradient(ellipse 140% 40% at 50% 0%,
+            rgba(107,47,160,0.22) 0%, transparent 60%),
+        linear-gradient(
+            180deg,
+            #07091A 0%,
+            #0A0D20 30%,
+            #0D1228 65%,
+            {COLORS['surface']} 100%
+        ) !important;
 }}
 
 [data-testid="block-container"] {{
@@ -308,13 +311,13 @@ section[data-testid="stMain"] {{
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
     color: {COLORS['text_muted']};
-    font-size: 0.82rem;
+    font-size: 0.80rem;
     font-weight: 500;
-    padding: 11px 20px;
+    padding: 9px 14px;
     background: transparent;
     border-bottom: 2px solid transparent;
     transition: color 0.15s ease, border-color 0.15s ease;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
 }}
 [data-testid="stTabs"] [data-baseweb="tab"]:hover {{
     color: {COLORS['neutral']};
