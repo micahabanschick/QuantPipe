@@ -12,7 +12,8 @@ import streamlit as st
 from config.settings import DATA_DIR, LOGS_DIR
 from reports._theme import CSS, COLORS, badge
 
-_LOGO = Path(__file__).parent / "assets" / "logo.png"
+_LOGO       = Path(__file__).parent / "assets" / "logo.png"
+_LOGO_WORDS = Path(__file__).parent / "assets" / "logo_words.png"
 
 # ── Page config ────────────────────────────────────────────────────────────────
 
@@ -27,8 +28,6 @@ st.set_page_config(
 
 NAV_CSS = f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;600&display=swap');
-
 /* ── Nav links ───────────────────────────────────────────────────────────── */
 [data-testid="stSidebarNavLink"] {{
     border-radius: 6px;
@@ -54,7 +53,7 @@ NAV_CSS = f"""
     padding-left: 10px;
 }}
 
-/* ── Sidebar logo image (transparent PNG — no mask needed) ───────────────── */
+/* ── Sidebar logo images (transparent PNGs) ──────────────────────────────── */
 [data-testid="stSidebar"] [data-testid="stImage"] {{
     background: transparent !important;
     border: none !important;
@@ -69,7 +68,6 @@ NAV_CSS = f"""
     height: auto;
     display: block;
     margin: 0 auto;
-    /* Gold glow follows the transparent PNG shape exactly */
     filter: drop-shadow(0 0 10px rgba(201,162,39,0.30))
             drop-shadow(0 0 22px rgba(201,162,39,0.12));
 }}
@@ -142,40 +140,12 @@ pg = st.navigation(
 
 with st.sidebar:
     if _LOGO.exists():
-        # Circle logo: transparent PNG, centred at 55% of sidebar width
         _l, _c, _r = st.columns([1, 3, 1])
         with _c:
             st.image(str(_LOGO), use_container_width=True)
 
-    # CSS-generated wordmark — matches brand palette
-    st.markdown(f"""
-<div style="text-align:center; margin:-6px 0 10px; line-height:1.15;">
-  <div style="
-    font-family:'Bebas Neue', Impact, 'Arial Black', sans-serif;
-    font-size: 1.55rem;
-    letter-spacing: 0.14em;
-    color: {COLORS['gold']};
-    text-shadow: 0 0 18px rgba(201,162,39,0.35), 0 0 6px rgba(201,162,39,0.2);
-  ">QUANT<span style="
-      color:{COLORS['green']};
-      font-size:0.92em;
-      letter-spacing:0;
-      text-shadow:0 0 10px {COLORS['green']}AA, 0 0 22px {COLORS['green']}55;
-      vertical-align:middle;
-      position:relative;
-      top:-0.03em;
-    ">Π</span>PE</div>
-  <div style="
-    font-family:'Rajdhani', 'Segoe UI', sans-serif;
-    font-size: 0.58rem;
-    font-weight: 600;
-    letter-spacing: 0.22em;
-    color: {COLORS['gold_dim']};
-    text-transform: uppercase;
-    margin-top: 1px;
-  ">Research &amp; Live Trading</div>
-</div>
-""", unsafe_allow_html=True)
+    if _LOGO_WORDS.exists():
+        st.image(str(_LOGO_WORDS), use_container_width=True)
 
     st.markdown(f"""
 <div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
