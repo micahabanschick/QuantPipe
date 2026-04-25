@@ -1,32 +1,63 @@
-"""Shared Plotly theme, CSS, and HTML components for QuantPipe dashboards."""
+"""Shared Plotly theme, CSS, and HTML components for QuantPipe dashboards.
+
+Brand palette extracted from the QuantPipe logo:
+  Gold   #C9A227 — border ring, wordmark
+  Green  #00E676 — the pipe / equity curve (positive)
+  Purple #6B2FA0 — circular logo background (secondary accent)
+  Navy   #0A0D1A — overall dark background
+  Red    #FF4444 — bearish candles (negative)
+"""
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
 
 COLORS = {
-    "bg":         "#0e1117",
-    "surface":    "#161b27",
-    "card_bg":    "#1a1f2e",
-    "border":     "#2d3748",
-    "border_dim": "#1e2636",
-    "positive":   "#00d4aa",
-    "negative":   "#ff4b4b",
-    "warning":    "#f6ad55",
-    "info":       "#4299e1",
-    "neutral":    "#8892a4",
-    "text":       "#e2e8f0",
-    "text_muted": "#64748b",
-    "blue":       "#4299e1",
-    "purple":     "#9f7aea",
-    "orange":     "#ed8936",
-    "teal":       "#00d4aa",
+    # Backgrounds
+    "bg":         "#0A0D1A",
+    "surface":    "#0F1320",
+    "card_bg":    "#141928",
+
+    # Borders
+    "border":     "#1E2640",
+    "border_dim": "#161C30",
+
+    # Brand accents
+    "gold":       "#C9A227",   # primary UI accent — tabs, active states, KPI borders
+    "green":      "#00E676",   # positive returns, bullish signals
+    "purple":     "#6B2FA0",   # secondary accent
+    "gold_dim":   "#8A6B18",   # dimmed gold for hover states
+
+    # Semantic
+    "positive":   "#00E676",   # matches brand green
+    "negative":   "#FF4444",   # bearish red from logo candles
+    "warning":    "#C9A227",   # gold doubles as warning
+    "info":       "#7B5EA7",   # muted purple
+
+    # Text
+    "text":       "#E8EDF5",
+    "text_muted": "#5A6478",
+    "neutral":    "#8892A4",
+
+    # Legacy aliases (kept for backwards compat)
+    "blue":       "#4A90D9",
+    "orange":     "#C9A227",
+    "teal":       "#00E676",
+
+    # Chart series (gold → green → purple → … )
     "series": [
-        "#00d4aa", "#4299e1", "#f6ad55", "#9f7aea",
-        "#ed8936", "#68d391", "#fc8181", "#76e4f7",
+        "#C9A227",  # gold
+        "#00E676",  # green
+        "#6B2FA0",  # purple
+        "#4A90D9",  # blue
+        "#FF4444",  # red
+        "#F5A623",  # amber
+        "#50E3C2",  # teal
+        "#BD10E0",  # magenta
     ],
 }
 
 # ── Plotly base layout ─────────────────────────────────────────────────────────
 
+_GRID   = "#1A2038"
 _LAYOUT_BASE = dict(
     paper_bgcolor=COLORS["bg"],
     plot_bgcolor=COLORS["card_bg"],
@@ -36,15 +67,15 @@ _LAYOUT_BASE = dict(
         size=12,
     ),
     xaxis=dict(
-        showgrid=True, gridcolor=COLORS["border"], gridwidth=1,
+        showgrid=True, gridcolor=_GRID, gridwidth=1,
         linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=COLORS["border"], zerolinewidth=1,
+        zerolinecolor=_GRID, zerolinewidth=1,
         tickfont=dict(color=COLORS["neutral"], size=11),
     ),
     yaxis=dict(
-        showgrid=True, gridcolor=COLORS["border"], gridwidth=1,
+        showgrid=True, gridcolor=_GRID, gridwidth=1,
         linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=COLORS["border"], zerolinewidth=1,
+        zerolinecolor=_GRID, zerolinewidth=1,
         tickfont=dict(color=COLORS["neutral"], size=11),
     ),
     margin=dict(l=8, r=8, t=38, b=8),
@@ -58,14 +89,13 @@ _LAYOUT_BASE = dict(
     ),
     hoverlabel=dict(
         bgcolor=COLORS["surface"],
-        bordercolor=COLORS["border"],
+        bordercolor=COLORS["gold"],
         font=dict(color=COLORS["text"], size=12),
     ),
     hovermode="x unified",
     dragmode="pan",
 )
 
-# Plotly chart config (passed to st.plotly_chart)
 PLOTLY_CONFIG = {
     "displaylogo": False,
     "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"],
@@ -75,21 +105,18 @@ PLOTLY_CONFIG = {
 
 def apply_theme(fig, title: str = "", height: int | None = None,
                 legend_inside: bool = False) -> None:
-    """Apply shared dark theme to a Plotly figure in-place."""
     layout = dict(_LAYOUT_BASE)
     layout["title"] = dict(
         text=f"<b style='color:{COLORS['neutral']};font-size:12px;'>{title}</b>",
-        x=0.01,
-        y=0.98,
-        xanchor="left",
-        yanchor="top",
+        x=0.01, y=0.98,
+        xanchor="left", yanchor="top",
         pad=dict(t=4),
     )
     if height:
         layout["height"] = height
     if legend_inside:
         layout["legend"] = dict(
-            bgcolor="rgba(26,31,46,0.85)",
+            bgcolor="rgba(20,25,40,0.88)",
             bordercolor=COLORS["border"],
             font=dict(color=COLORS["neutral"], size=11),
             x=0.01, y=0.99,
@@ -99,31 +126,26 @@ def apply_theme(fig, title: str = "", height: int | None = None,
 
 
 def apply_subplot_theme(fig, height: int | None = None) -> None:
-    """Apply theme to a subplot figure (skips per-axis overrides)."""
-    layout = {
-        k: v for k, v in _LAYOUT_BASE.items()
-        if k not in ("xaxis", "yaxis")
-    }
+    layout = {k: v for k, v in _LAYOUT_BASE.items() if k not in ("xaxis", "yaxis")}
     layout["title"] = dict(text="", x=0)
     if height:
         layout["height"] = height
     fig.update_layout(**layout)
     fig.update_xaxes(
-        showgrid=True, gridcolor=COLORS["border"], gridwidth=1,
+        showgrid=True, gridcolor=_GRID, gridwidth=1,
         linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=COLORS["border"],
+        zerolinecolor=_GRID,
         tickfont=dict(color=COLORS["neutral"], size=11),
     )
     fig.update_yaxes(
-        showgrid=True, gridcolor=COLORS["border"], gridwidth=1,
+        showgrid=True, gridcolor=_GRID, gridwidth=1,
         linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=COLORS["border"],
+        zerolinecolor=_GRID,
         tickfont=dict(color=COLORS["neutral"], size=11),
     )
 
 
 def range_selector() -> dict:
-    """Return a Plotly xaxis range-selector config."""
     return dict(
         buttons=[
             dict(count=3,  label="3M",  step="month", stepmode="backward"),
@@ -133,7 +155,7 @@ def range_selector() -> dict:
             dict(step="all", label="All"),
         ],
         bgcolor=COLORS["card_bg"],
-        activecolor=COLORS["positive"],
+        activecolor=COLORS["gold"],
         font=dict(color=COLORS["text"], size=11),
         bordercolor=COLORS["border"],
         borderwidth=1,
@@ -161,20 +183,24 @@ html, body, [data-testid="stApp"] {{
 ::-webkit-scrollbar {{ width: 5px; height: 5px; }}
 ::-webkit-scrollbar-track {{ background: {COLORS['bg']}; }}
 ::-webkit-scrollbar-thumb {{ background: {COLORS['border']}; border-radius: 3px; }}
-::-webkit-scrollbar-thumb:hover {{ background: #3d4f6e; }}
+::-webkit-scrollbar-thumb:hover {{ background: {COLORS['gold_dim']}; }}
 
 /* ── st.metric cards ─────────────────────────────────────────────────────── */
 [data-testid="metric-container"] {{
     background: {COLORS['card_bg']};
     border: 1px solid {COLORS['border']};
-    border-radius: 10px;
+    border-top: 2px solid {COLORS['gold']};
+    border-radius: 2px 2px 10px 10px;
     padding: 16px 18px 14px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
-    transition: border-color 0.18s ease;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.45);
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
     min-width: 0;
     overflow: hidden;
 }}
-[data-testid="metric-container"]:hover {{ border-color: #3d4f6e; }}
+[data-testid="metric-container"]:hover {{
+    border-color: {COLORS['gold']};
+    box-shadow: 0 4px 20px rgba(201,162,39,0.15);
+}}
 [data-testid="stMetricValue"] {{
     font-size: 1.35rem !important;
     font-weight: 700 !important;
@@ -224,10 +250,10 @@ html, body, [data-testid="stApp"] {{
 }}
 [data-testid="stTabs"] [data-baseweb="tab"]:hover {{ color: {COLORS['text']}; }}
 [data-testid="stTabs"] [aria-selected="true"] {{
-    color: {COLORS['positive']} !important;
+    color: {COLORS['gold']} !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab-highlight"] {{
-    background-color: {COLORS['positive']} !important;
+    background-color: {COLORS['gold']} !important;
     height: 2px !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab-border"] {{ display: none !important; }}
@@ -244,6 +270,21 @@ html, body, [data-testid="stApp"] {{
     letter-spacing: 0.07em;
     font-weight: 600;
     margin-bottom: 2px;
+}}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+[data-testid="stButton"] > button {{
+    background: transparent;
+    border: 1px solid {COLORS['gold']};
+    color: {COLORS['gold']};
+    border-radius: 6px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    transition: background 0.15s ease, color 0.15s ease;
+}}
+[data-testid="stButton"] > button:hover {{
+    background: {COLORS['gold']};
+    color: {COLORS['bg']};
 }}
 
 /* ── Dataframe ───────────────────────────────────────────────────────────── */
@@ -272,10 +313,14 @@ html, body, [data-testid="stApp"] {{
 }}
 
 /* ── Divider ─────────────────────────────────────────────────────────────── */
-hr {{ border: none !important; border-top: 1px solid {COLORS['border']} !important; margin: 18px 0; }}
+hr {{
+    border: none !important;
+    border-top: 1px solid {COLORS['border']} !important;
+    margin: 18px 0;
+}}
 
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
-[data-testid="stSpinner"] {{ color: {COLORS['positive']}; }}
+[data-testid="stSpinner"] {{ color: {COLORS['gold']}; }}
 
 /* ── Code blocks ─────────────────────────────────────────────────────────── */
 [data-testid="stCode"] pre {{
@@ -286,12 +331,32 @@ hr {{ border: none !important; border-top: 1px solid {COLORS['border']} !importa
     color: {COLORS['text_muted']};
 }}
 
+/* ── Select / radio / toggle accent ─────────────────────────────────────── */
+[data-baseweb="select"] [data-baseweb="select-control"] {{
+    background: {COLORS['card_bg']} !important;
+    border-color: {COLORS['border']} !important;
+}}
+
+/* ── Sidebar logo separator ─────────────────────────────────────────────── */
+.qp-logo-divider {{
+    height: 1px;
+    background: linear-gradient(90deg, {COLORS['gold']}40, transparent);
+    margin: 8px 0 18px;
+}}
+
 /* ── Animations ──────────────────────────────────────────────────────────── */
 @keyframes pulse-critical {{
     0%, 100% {{ opacity: 1; }}
     50%       {{ opacity: 0.45; }}
 }}
 .qp-pulse {{ animation: pulse-critical 1.8s ease-in-out infinite; }}
+
+/* ── Gold glow effect for critical KPIs ──────────────────────────────────── */
+@keyframes gold-pulse {{
+    0%, 100% {{ box-shadow: 0 0 0 0 rgba(201,162,39,0); }}
+    50%      {{ box-shadow: 0 0 16px 2px rgba(201,162,39,0.25); }}
+}}
+.qp-gold-glow {{ animation: gold-pulse 2.5s ease-in-out infinite; }}
 </style>
 """
 
@@ -327,8 +392,7 @@ def page_header(title: str, subtitle: str = "", right_text: str = "") -> str:
 def kpi_card(label: str, value: str, delta: str = "",
              delta_up: bool | None = None,
              accent: str | None = None) -> str:
-    """Full-control KPI card returned as HTML."""
-    top_border = accent or COLORS["border"]
+    top_border = accent or COLORS["gold"]
     if delta and delta_up is not None:
         dcolor = COLORS["positive"] if delta_up else COLORS["negative"]
         arrow = "▲" if delta_up else "▼"
@@ -345,7 +409,7 @@ def kpi_card(label: str, value: str, delta: str = "",
         f'border-radius:2px 2px 10px 10px;'
         f'padding:16px 18px 14px;'
         f'min-width:0;overflow:hidden;'
-        f'box-shadow:0 2px 8px rgba(0,0,0,0.3);">'
+        f'box-shadow:0 2px 10px rgba(0,0,0,0.4);">'
         f'<div style="color:{COLORS["neutral"]};font-size:0.68rem;text-transform:uppercase;'
         f'letter-spacing:0.08em;font-weight:600;margin-bottom:7px;'
         f'line-height:1.35;overflow-wrap:break-word;">{label}</div>'
@@ -361,18 +425,20 @@ def section_label(text: str) -> str:
     return (
         f'<div style="color:{COLORS["neutral"]};font-size:0.68rem;text-transform:uppercase;'
         f'letter-spacing:0.09em;font-weight:700;margin:20px 0 12px;'
-        f'border-left:3px solid {COLORS["positive"]};padding-left:10px;'
+        f'border-left:3px solid {COLORS["gold"]};padding-left:10px;'
         f'line-height:1.4;overflow-wrap:break-word;">{text}</div>'
     )
 
 
 def badge(text: str, variant: str = "neutral") -> str:
     palette = {
-        "positive": ("#00d4aa", "#003d2e"),
-        "negative": ("#ff4b4b", "#3d0000"),
-        "warning":  ("#f6ad55", "#3d2800"),
-        "neutral":  ("#8892a4", "#1a1f2e"),
-        "blue":     ("#4299e1", "#0d2040"),
+        "positive": ("#00E676", "#003D1A"),
+        "negative": ("#FF4444", "#3D0000"),
+        "warning":  ("#C9A227", "#2E2000"),
+        "neutral":  ("#8892A4", "#141928"),
+        "blue":     ("#4A90D9", "#0D1F3D"),
+        "gold":     ("#C9A227", "#2E2000"),
+        "purple":   ("#7B5EA7", "#1A0F2E"),
     }
     fg, bg = palette.get(variant, palette["neutral"])
     return (
@@ -386,7 +452,7 @@ def badge(text: str, variant: str = "neutral") -> str:
 def status_banner(text: str, color: str, animate: bool = False) -> str:
     cls = ' class="qp-pulse"' if animate else ""
     return (
-        f'<div style="background:{color}16;border:1px solid {color};'
+        f'<div style="background:{color}18;border:1px solid {color};'
         f'border-radius:10px;padding:14px 22px;margin-bottom:22px;'
         f'display:flex;align-items:center;gap:14px;">'
         f'<span{cls} style="font-size:1rem;font-weight:700;color:{color};">● {text}</span>'
