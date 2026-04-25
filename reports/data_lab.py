@@ -59,8 +59,7 @@ def _save_meta(name: str, record: dict) -> None:
 st.markdown(
     page_header(
         "Data Lab",
-        "Ingest and clean alternative data sources, then test their predictive"
-        " power before building them into the pipeline.",
+        "Source, clean, and validate alternative data signals before promoting them into the feature pipeline.",
         date.today().strftime("%B %d, %Y"),
     ),
     unsafe_allow_html=True,
