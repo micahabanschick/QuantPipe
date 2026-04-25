@@ -194,30 +194,35 @@ html, body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }}
 
-/* Background — target every layer Streamlit renders to */
+/* ── Background — html/body is the true visual background in Streamlit 1.56 ── */
+html, body, #root {{
+    background:
+        radial-gradient(ellipse 60% 50% at 8% 0%,
+            rgba(107,47,160,0.28) 0%, rgba(107,47,160,0.10) 40%, transparent 68%),
+        radial-gradient(ellipse 55% 45% at 92% 100%,
+            rgba(201,162,39,0.22) 0%, rgba(201,162,39,0.07) 45%, transparent 68%),
+        {COLORS['bg']} !important;
+    min-height: 100vh !important;
+}}
 .stApp,
 [data-testid="stApp"],
 [data-testid="stAppViewContainer"],
 [data-testid="stAppViewContainer"] > .main,
-section[data-testid="stMain"],
-div[data-testid="stVerticalBlock"] {{
-    background-color: {COLORS['bg']} !important;
+section[data-testid="stMain"] {{
+    background: transparent !important;
 }}
 
-/* Ambient glows — strong enough to be clearly visible */
-.stApp {{
-    background:
-        radial-gradient(ellipse 60% 45% at 10% 0%,
-            rgba(107,47,160,0.22) 0%, rgba(107,47,160,0.08) 35%, transparent 65%),
-        radial-gradient(ellipse 50% 40% at 90% 100%,
-            rgba(201,162,39,0.18) 0%, rgba(201,162,39,0.06) 40%, transparent 65%),
-        {COLORS['bg']} !important;
-    min-height: 100vh !important;
-}}
-
-/* Sidebar has its own gradient */
-[data-testid="stSidebar"] > div:first-child {{
-    background: linear-gradient(180deg, #070A15 0%, #0C1020 40%, {COLORS['surface']} 100%) !important;
+/* ── Sidebar gradient ─────────────────────────────────────────────────────── */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebar"] > div > div {{
+    background: linear-gradient(
+        180deg,
+        #060912 0%,
+        #09101F 25%,
+        #0C1525 60%,
+        {COLORS['surface']} 100%
+    ) !important;
 }}
 
 [data-testid="block-container"] {{
@@ -648,13 +653,15 @@ def kpi_card(label: str, value: str, delta: str = "",
         d_html = ""
     return (
         f'<div style="'
-        f'background:linear-gradient(145deg,{COLORS["card_bg"]} 0%,{COLORS["surface"]} 100%);'
-        f'border:1px solid rgba(201,162,39,0.20);'
+        f'background:linear-gradient(145deg,#1E2848 0%,#0F1528 100%);'
+        f'border:1px solid rgba(201,162,39,0.25);'
         f'border-top:2px solid {top};'
         f'border-radius:2px 2px 12px 12px;'
         f'padding:16px 18px 14px;'
         f'min-width:0;overflow:hidden;'
-        f'box-shadow:0 4px 24px rgba(0,0,0,0.50),inset 0 1px 0 rgba(201,162,39,0.07);">'
+        f'box-shadow:0 4px 20px rgba(0,0,0,0.60),'
+        f'0 1px 0 rgba(201,162,39,0.08) inset,'
+        f'0 0 0 0 transparent;">'
         f'<div style="color:{COLORS["neutral"]};font-size:0.67rem;text-transform:uppercase;'
         f'letter-spacing:0.10em;font-weight:600;margin-bottom:8px;'
         f'line-height:1.35;overflow-wrap:break-word;">{label}</div>'
