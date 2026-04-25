@@ -172,19 +172,28 @@ def _build_equity_curve() -> pd.Series:
 
 # ── Metric helpers ─────────────────────────────────────────────────────────────
 
+_MIN_DAYS_ANNUALIZED = 63   # ~3 months before CAGR / Sharpe are statistically meaningful
+
 def _compute_metrics(eq: pd.Series) -> dict:
     if eq.empty or len(eq) < 2:
         return {}
+    n_days = len(eq)
     daily_ret = eq.pct_change().dropna()
     total_ret = eq.iloc[-1] / eq.iloc[0] - 1
-    n_years = max(len(eq) / 252, 1e-6)
-    cagr = (eq.iloc[-1] / eq.iloc[0]) ** (1 / n_years) - 1
-    sharpe = float(daily_ret.mean() / daily_ret.std() * np.sqrt(252)) if daily_ret.std() > 0 else 0.0
+    n_years = max(n_days / 252, 1e-6)
+
+    # Annualised metrics are unreliable below ~3 months of data — return None so
+    # the UI can display "n/a" instead of a misleading extrapolated number.
+    reliable = n_days >= _MIN_DAYS_ANNUALIZED
+    cagr   = (eq.iloc[-1] / eq.iloc[0]) ** (1 / n_years) - 1 if reliable else None
+    sharpe = float(daily_ret.mean() / daily_ret.std() * np.sqrt(252)) if (reliable and daily_ret.std() > 0) else None
+
     roll_max = eq.cummax()
     dd = (eq - roll_max) / roll_max
     max_dd = float(dd.min())
     return {
         "nav":       float(eq.iloc[-1]),
+        "n_days":    n_days,
         "total_ret": total_ret,
         "cagr":      cagr,
         "sharpe":    sharpe,
@@ -266,17 +275,30 @@ if metrics:
     total_ret = metrics["total_ret"]
     sharpe    = metrics["sharpe"]
     max_dd    = metrics["max_dd"]
+    n_days    = metrics["n_days"]
     pnl       = nav_now - _INITIAL_NAV
 
-    ret_color  = COLORS["positive"] if total_ret >= 0 else COLORS["negative"]
-    pnl_color  = COLORS["positive"] if pnl >= 0 else COLORS["negative"]
+    pnl_color = COLORS["positive"] if pnl >= 0 else COLORS["negative"]
+
+    # Warn when annualised metrics are statistically unreliable
+    if n_days < _MIN_DAYS_ANNUALIZED:
+        st.warning(
+            f"**{n_days} trading days of data** — CAGR and Sharpe require at least "
+            f"{_MIN_DAYS_ANNUALIZED} days (~3 months) to be meaningful. "
+            f"They will appear as **n/a** until then.",
+            icon="⚠️",
+        )
+
+    cagr_str   = _pct(metrics["cagr"])   if metrics["cagr"]   is not None else "n/a"
+    sharpe_str = f"{sharpe:.2f}"          if sharpe             is not None else "n/a"
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Portfolio NAV", f"${nav_now:,.0f}",
-               delta=f"${pnl:+,.0f} all-time")
+               delta=f"${pnl:+,.0f} vs $100K sim start")
     k2.metric("Total Return", _pct(total_ret),
-               delta=f"CAGR {_pct(metrics['cagr'])}")
-    k3.metric("Sharpe Ratio", f"{sharpe:.2f}")
+               delta=f"CAGR {cagr_str}")
+    k3.metric("Sharpe Ratio", sharpe_str,
+               help="Annualised. Shown as n/a when fewer than 63 trading days available.")
     k4.metric("Max Drawdown", _pct(max_dd, sign=False),
                delta=f"from {metrics['start'].strftime('%Y-%m-%d')}",
                delta_color="off")
