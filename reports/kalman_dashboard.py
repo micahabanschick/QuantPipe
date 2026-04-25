@@ -154,7 +154,9 @@ st.caption("Solid = Kalman filtered betas with +/-1-sigma confidence band. "
 
 dates_pd = pd.to_datetime(kr.dates)
 fig_beta = go.Figure()
-_colors  = [COLORS["gold"], COLORS["green"], COLORS["purple"], COLORS["blue"]]
+_colors      = [COLORS["gold"], COLORS["green"], COLORS["purple"], COLORS["blue"]]
+_fill_colors = ["rgba(201,162,39,0.10)", "rgba(0,230,118,0.10)",
+                "rgba(123,94,167,0.10)", "rgba(74,144,217,0.10)"]
 
 for fi in range(1, K):
     fname = beta_names[fi]
@@ -165,7 +167,7 @@ for fi in range(1, K):
     fig_beta.add_trace(go.Scatter(
         x=list(dates_pd) + list(dates_pd[::-1]),
         y=list(betas + stds) + list((betas - stds)[::-1]),
-        fill="toself", fillcolor=f"{col}18",
+        fill="toself", fillcolor=_fill_colors[(fi - 1) % len(_fill_colors)],
         line=dict(width=0), showlegend=False, hoverinfo="skip",
     ))
     fig_beta.add_trace(go.Scatter(
