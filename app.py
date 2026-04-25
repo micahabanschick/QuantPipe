@@ -52,7 +52,16 @@ NAV_CSS = f"""
     padding-left: 10px;
 }}
 
-/* ── Sidebar logo image — sharp + radial gradient fade at edges ──────────── */
+/* ── Sidebar logo — strip all container chrome ───────────────────────────── */
+[data-testid="stSidebar"] [data-testid="stImage"] {{
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    line-height: 0;
+}}
+
+/* ── Sidebar logo image — sharp + deep feathered radial blend ────────────── */
 [data-testid="stSidebar"] [data-testid="stImage"] img {{
     image-rendering: -webkit-optimize-contrast;
     image-rendering: high-quality;
@@ -60,21 +69,32 @@ NAV_CSS = f"""
     height: auto;
     display: block;
     margin: 0 auto;
+
+    /* Long, gradual fade — opaque at core, ghost-transparent at all edges.
+       Starts fading at 28% so the transition is imperceptibly slow. */
     -webkit-mask-image: radial-gradient(
-        ellipse 78% 78% at 50% 52%,
-        black            45%,
-        rgba(0,0,0,0.95) 55%,
-        rgba(0,0,0,0.7)  65%,
-        rgba(0,0,0,0.35) 78%,
-        transparent      92%
+        circle at 50% 50%,
+        black             28%,
+        rgba(0,0,0,0.97)  36%,
+        rgba(0,0,0,0.90)  44%,
+        rgba(0,0,0,0.75)  52%,
+        rgba(0,0,0,0.52)  60%,
+        rgba(0,0,0,0.28)  68%,
+        rgba(0,0,0,0.10)  76%,
+        rgba(0,0,0,0.02)  84%,
+        transparent       92%
     );
     mask-image: radial-gradient(
-        ellipse 78% 78% at 50% 52%,
-        black            45%,
-        rgba(0,0,0,0.95) 55%,
-        rgba(0,0,0,0.7)  65%,
-        rgba(0,0,0,0.35) 78%,
-        transparent      92%
+        circle at 50% 50%,
+        black             28%,
+        rgba(0,0,0,0.97)  36%,
+        rgba(0,0,0,0.90)  44%,
+        rgba(0,0,0,0.75)  52%,
+        rgba(0,0,0,0.52)  60%,
+        rgba(0,0,0,0.28)  68%,
+        rgba(0,0,0,0.10)  76%,
+        rgba(0,0,0,0.02)  84%,
+        transparent       92%
     );
 }}
 </style>
@@ -146,7 +166,10 @@ pg = st.navigation(
 
 with st.sidebar:
     if _LOGO.exists():
-        st.image(str(_LOGO), use_container_width=True)
+        # 2/3 width, centred — columns give [1/6 gap | 4/6 image | 1/6 gap]
+        _l, _c, _r = st.columns([1, 4, 1])
+        with _c:
+            st.image(str(_LOGO), use_container_width=True)
 
     st.markdown(f"""
 <div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
