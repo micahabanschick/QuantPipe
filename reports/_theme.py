@@ -194,24 +194,32 @@ html, body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }}
 
-/* Main app background — target every layer Streamlit uses */
+/* Background — target every layer Streamlit renders to */
 .stApp,
 [data-testid="stApp"],
 [data-testid="stAppViewContainer"],
 [data-testid="stAppViewContainer"] > .main,
-section[data-testid="stMain"] {{
+section[data-testid="stMain"],
+div[data-testid="stVerticalBlock"] {{
     background-color: {COLORS['bg']} !important;
 }}
-/* Ambient brand glows — applied to the outermost layer */
-.stApp,
-[data-testid="stApp"] {{
+
+/* Ambient glows — strong enough to be clearly visible */
+.stApp {{
     background:
-        radial-gradient(ellipse 55% 35% at 12% 0%,
-            rgba(107,47,160,0.09) 0%, transparent 65%),
-        radial-gradient(ellipse 45% 30% at 88% 100%,
-            rgba(201,162,39,0.07) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 45% at 10% 0%,
+            rgba(107,47,160,0.22) 0%, rgba(107,47,160,0.08) 35%, transparent 65%),
+        radial-gradient(ellipse 50% 40% at 90% 100%,
+            rgba(201,162,39,0.18) 0%, rgba(201,162,39,0.06) 40%, transparent 65%),
         {COLORS['bg']} !important;
+    min-height: 100vh !important;
 }}
+
+/* Sidebar has its own gradient */
+[data-testid="stSidebar"] > div:first-child {{
+    background: linear-gradient(180deg, #070A15 0%, #0C1020 40%, {COLORS['surface']} 100%) !important;
+}}
+
 [data-testid="block-container"] {{
     padding-top: 24px;
     max-width: 1440px;
@@ -229,28 +237,30 @@ section[data-testid="stMain"] {{
 ::-webkit-scrollbar-thumb:hover {{ background: {COLORS['gold']}; }}
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   METRIC CARDS
+   METRIC CARDS — dual selector covers Streamlit ≤1.21 and ≥1.22
 ══════════════════════════════════════════════════════════════════════════════ */
-[data-testid="metric-container"] {{
-    background: linear-gradient(145deg, {COLORS['card_bg']} 0%, {COLORS['surface']} 100%) !important;
-    border: 1px solid rgba(201,162,39,0.20) !important;
+[data-testid="metric-container"],
+[data-testid="stMetric"] {{
+    background: linear-gradient(145deg, #1E2848 0%, #0F1528 100%) !important;
+    border: 1px solid rgba(201,162,39,0.28) !important;
     border-top: 2px solid {COLORS['gold']} !important;
     border-radius: 2px 2px 12px 12px !important;
     padding: 16px 18px 14px !important;
     box-shadow:
-        0 4px 24px rgba(0,0,0,0.50),
-        inset 0 1px 0 rgba(201,162,39,0.08) !important;
+        0 4px 24px rgba(0,0,0,0.55),
+        inset 0 1px 0 rgba(201,162,39,0.10) !important;
     transition: border-color 0.20s ease, box-shadow 0.20s ease !important;
     min-width: 0;
     overflow: hidden;
 }}
-[data-testid="metric-container"]:hover {{
-    border-color: rgba(201,162,39,0.45) !important;
+[data-testid="metric-container"]:hover,
+[data-testid="stMetric"]:hover {{
+    border-color: rgba(201,162,39,0.55) !important;
     border-top-color: {COLORS['gold_bright']} !important;
     box-shadow:
-        0 6px 32px rgba(0,0,0,0.60),
-        0 0 24px rgba(201,162,39,0.14),
-        inset 0 1px 0 rgba(201,162,39,0.14) !important;
+        0 6px 32px rgba(0,0,0,0.65),
+        0 0 28px rgba(201,162,39,0.18),
+        inset 0 1px 0 rgba(201,162,39,0.16) !important;
 }}
 [data-testid="stMetricValue"] {{
     font-size: 1.40rem !important;
@@ -318,8 +328,7 @@ section[data-testid="stMain"] {{
    SIDEBAR
 ══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stSidebar"] {{
-    background: linear-gradient(180deg, #0D1020 0%, {COLORS['surface']} 100%) !important;
-    border-right: 1px solid rgba(201,162,39,0.12) !important;
+    border-right: 1px solid rgba(201,162,39,0.18) !important;
 }}
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{
     color: {COLORS['text_muted']};
@@ -453,8 +462,8 @@ input[type="number"] {{
    EXPANDER
 ══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stExpander"] {{
-    background: linear-gradient(145deg, {COLORS['card_bg']} 0%, {COLORS['surface']} 100%) !important;
-    border: 1px solid rgba(201,162,39,0.18) !important;
+    background: linear-gradient(145deg, #1E2848 0%, #0F1528 100%) !important;
+    border: 1px solid rgba(201,162,39,0.25) !important;
     border-radius: 10px !important;
     transition: border-color 0.15s ease !important;
 }}
