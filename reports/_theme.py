@@ -345,10 +345,6 @@ html, body {{
     color: {COLORS['bg_void']} !important;
     box-shadow: 0 0 20px rgba(201,162,39,0.30) !important;
 }}
-[data-testid="stButton"] > button[kind="primary"] {{
-    background: rgba(201,162,39,0.12) !important;
-    border-color: {COLORS['gold_bright']} !important;
-}}
 [data-testid="stButton"] > button:disabled {{
     opacity: 0.35 !important;
 }}
@@ -404,19 +400,19 @@ input[type="number"] {{
 /* ══════════════════════════════════════════════════════════════════════════════
    CHECKBOXES / RADIOS / TOGGLES
 ══════════════════════════════════════════════════════════════════════════════ */
-[data-baseweb="checkbox"] [data-checked="true"] [class*="checkbox"],
+/* Checkbox — aria-checked is standard and stable */
 [data-baseweb="checkbox"] [aria-checked="true"] {{
     background: {COLORS['gold']} !important;
     border-color: {COLORS['gold']} !important;
 }}
-[data-baseweb="radio"] [data-checked="true"] [class*="radio"],
 [data-baseweb="radio"] [aria-checked="true"] {{
     border-color: {COLORS['gold']} !important;
-}}
-/* Toggle on-state */
-[data-testid="stToggle"] [data-checked="true"],
-[aria-checked="true"][role="switch"] {{
     background: {COLORS['gold']} !important;
+}}
+/* Toggle — role="switch" is the stable ARIA pattern */
+[role="switch"][aria-checked="true"] {{
+    background: {COLORS['gold']} !important;
+    border-color: {COLORS['gold_dim']} !important;
 }}
 
 /* ══════════════════════════════════════════════════════════════════════════════
@@ -467,25 +463,40 @@ input[type="number"] {{
 /* ══════════════════════════════════════════════════════════════════════════════
    ALERT BOXES
 ══════════════════════════════════════════════════════════════════════════════ */
+/* Alerts — Streamlit exposes type via data-testid on the inner notification */
 [data-testid="stAlert"] {{
     border-radius: 8px !important;
     font-size: 0.85rem !important;
+}}
+[data-testid="stNotification"] {{
+    border-radius: 8px !important;
     border-width: 1px !important;
     border-style: solid !important;
 }}
-[data-testid="stAlert"][data-baseweb="notification"][kind="info"] {{
+/* Info */
+[data-testid="stNotification"][data-type="info"],
+div[data-testid="stAlert"] div[role="alert"][class*="info"] {{
     background: rgba(74,144,217,0.09) !important;
     border-color: rgba(74,144,217,0.38) !important;
 }}
-[data-testid="stAlert"][data-baseweb="notification"][kind="warning"] {{
+/* Warning */
+[data-testid="stNotification"][data-type="warning"],
+div[data-testid="stAlert"] div[role="alert"][class*="warning"],
+div[data-testid="stAlert"] div[class*="Warning"] {{
     background: rgba(201,162,39,0.09) !important;
     border-color: rgba(201,162,39,0.38) !important;
 }}
-[data-testid="stAlert"][data-baseweb="notification"][kind="success"] {{
+/* Success */
+[data-testid="stNotification"][data-type="success"],
+div[data-testid="stAlert"] div[role="alert"][class*="success"],
+div[data-testid="stAlert"] div[class*="Success"] {{
     background: rgba(0,230,118,0.09) !important;
     border-color: rgba(0,230,118,0.38) !important;
 }}
-[data-testid="stAlert"][data-baseweb="notification"][kind="error"] {{
+/* Error */
+[data-testid="stNotification"][data-type="error"],
+div[data-testid="stAlert"] div[role="alert"][class*="error"],
+div[data-testid="stAlert"] div[class*="Error"] {{
     background: rgba(255,77,77,0.09) !important;
     border-color: rgba(255,77,77,0.38) !important;
 }}
@@ -586,17 +597,18 @@ def page_header(title: str, subtitle: str = "", right_text: str = "") -> str:
         if subtitle else ""
     )
     return (
+        f'<div style="margin-bottom:22px;">'
         f'<div style="display:flex;align-items:flex-end;justify-content:space-between;'
-        f'padding-bottom:14px;'
-        f'border-bottom:1px solid;'
-        f'border-image:linear-gradient(90deg,{COLORS["gold"]}60,transparent) 1;'
-        f'margin-bottom:22px;">'
+        f'padding-bottom:14px;">'
         f'<div>'
         f'<h1 style="margin:0;font-size:1.70rem;font-weight:800;color:{COLORS["text"]};'
         f'letter-spacing:-0.04em;line-height:1.15;">{title}</h1>'
         f'{sub}'
         f'</div>'
         f'{right}'
+        f'</div>'
+        f'<div style="height:1px;background:linear-gradient(90deg,'
+        f'{COLORS["gold"]}70,rgba(201,162,39,0.35) 40%,transparent);"></div>'
         f'</div>'
     )
 
