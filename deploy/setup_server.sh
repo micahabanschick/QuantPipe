@@ -65,7 +65,9 @@ ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh comment "SSH"
 ufw allow "${WG_PORT}/udp" comment "WireGuard"
-# Streamlit and Vault only reachable via VPN (added after wg0 comes up)
+# Streamlit and Vault — only reachable via VPN interface
+ufw allow in on "${WG_IFACE}" to any port 8501 comment "Streamlit (VPN only)"
+ufw allow in on "${WG_IFACE}" to any port 8200 comment "Vault (VPN only)"
 ufw --force enable
 
 # ── 5. WireGuard ──────────────────────────────────────────────────────────────

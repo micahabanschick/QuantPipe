@@ -15,8 +15,7 @@ ExecStart=/opt/quantpipe/.venv/bin/streamlit run app.py \
     --server.address 10.0.0.1 \
     --server.port 8501 \
     --server.headless true \
-    --server.enableCORS false \
-    --server.enableXsrfProtection true \
+    --server.enableXsrfProtection false \
     --browser.gatherUsageStats false
 
 StandardOutput=append:/var/log/quantpipe/streamlit.log
