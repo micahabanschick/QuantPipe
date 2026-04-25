@@ -143,15 +143,16 @@ with st.sidebar:
     if _LOGO.exists() and _LOGO_WORDS.exists():
         _circle = base64.b64encode(_LOGO.read_bytes()).decode()
         _words  = base64.b64encode(_LOGO_WORDS.read_bytes()).decode()
+        # Both PNGs share the same 539×480 canvas — overlay them at identical
+        # size so the result is pixel-perfect to logo_full.png.
         st.markdown(f"""
-<div style="text-align:center; padding:0; margin:0;">
+<div style="position:relative; width:80%; margin:0 auto;
+            filter:drop-shadow(0 0 10px rgba(201,162,39,0.28))
+                   drop-shadow(0 0 24px rgba(201,162,39,0.12));">
   <img src="data:image/png;base64,{_circle}"
-       style="width:62%; display:block; margin:0 auto;
-              filter:drop-shadow(0 0 10px rgba(201,162,39,0.30))
-                     drop-shadow(0 0 22px rgba(201,162,39,0.12));"/>
+       style="width:100%; display:block;"/>
   <img src="data:image/png;base64,{_words}"
-       style="width:88%; display:block; margin:-4px auto 0;
-              filter:drop-shadow(0 0 8px rgba(201,162,39,0.25));"/>
+       style="width:100%; position:absolute; top:0; left:0;"/>
 </div>
 """, unsafe_allow_html=True)
 
