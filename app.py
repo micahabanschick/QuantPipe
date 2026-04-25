@@ -62,20 +62,20 @@ NAV_CSS = f"""
     position: relative;
 }}
 
-/* Colour overlay: sidebar bg radiates inward from all edges,
-   physically painting over the image corners with the sidebar colour */
+/* Colour overlay — same centre/shape as the mask so both layers align.
+   Centre shifted to 38% height (the logo circle centre, not the image centre)
+   so the "QUANTPIPE" text in the lower third stays inside the opaque zone. */
 [data-testid="stSidebar"] [data-testid="stImage"]::after {{
     content: '';
     position: absolute;
     inset: 0;
     pointer-events: none;
-    border-radius: 0;
     background: radial-gradient(
-        circle at 50% 50%,
-        transparent           28%,
-        {COLORS['surface']}1A 42%,
-        {COLORS['surface']}55 54%,
-        {COLORS['surface']}99 64%,
+        ellipse 88% 95% at 50% 38%,
+        transparent           30%,
+        {COLORS['surface']}15 43%,
+        {COLORS['surface']}50 54%,
+        {COLORS['surface']}95 64%,
         {COLORS['surface']}CC 73%,
         {COLORS['surface']}EE 82%,
         {COLORS['surface']}   90%
@@ -90,27 +90,29 @@ NAV_CSS = f"""
     height: auto;
     display: block;
     margin: 0 auto;
+    /* Centre at 38% height aligns opaque core with the logo circle.
+       Taller ellipse (95%) extends far enough down to include the text. */
     -webkit-mask-image: radial-gradient(
-        circle at 50% 50%,
-        black             24%,
-        rgba(0,0,0,0.96)  33%,
-        rgba(0,0,0,0.85)  42%,
-        rgba(0,0,0,0.65)  51%,
-        rgba(0,0,0,0.38)  60%,
-        rgba(0,0,0,0.14)  70%,
-        rgba(0,0,0,0.03)  80%,
-        transparent       88%
+        ellipse 88% 95% at 50% 38%,
+        black             26%,
+        rgba(0,0,0,0.97)  35%,
+        rgba(0,0,0,0.88)  44%,
+        rgba(0,0,0,0.68)  53%,
+        rgba(0,0,0,0.40)  62%,
+        rgba(0,0,0,0.15)  72%,
+        rgba(0,0,0,0.03)  81%,
+        transparent       89%
     );
     mask-image: radial-gradient(
-        circle at 50% 50%,
-        black             24%,
-        rgba(0,0,0,0.96)  33%,
-        rgba(0,0,0,0.85)  42%,
-        rgba(0,0,0,0.65)  51%,
-        rgba(0,0,0,0.38)  60%,
-        rgba(0,0,0,0.14)  70%,
-        rgba(0,0,0,0.03)  80%,
-        transparent       88%
+        ellipse 88% 95% at 50% 38%,
+        black             26%,
+        rgba(0,0,0,0.97)  35%,
+        rgba(0,0,0,0.88)  44%,
+        rgba(0,0,0,0.68)  53%,
+        rgba(0,0,0,0.40)  62%,
+        rgba(0,0,0,0.15)  72%,
+        rgba(0,0,0,0.03)  81%,
+        transparent       89%
     );
 }}
 </style>
@@ -182,8 +184,8 @@ pg = st.navigation(
 
 with st.sidebar:
     if _LOGO.exists():
-        # 1/3 width, centred — columns give [1/3 gap | 1/3 image | 1/3 gap]
-        _l, _c, _r = st.columns([1, 1, 1])
+        # 1/2 width, centred — columns give [1/4 gap | 1/2 image | 1/4 gap]
+        _l, _c, _r = st.columns([1, 2, 1])
         with _c:
             st.image(str(_LOGO), use_container_width=True)
 
