@@ -1,94 +1,115 @@
 """Shared Plotly theme, CSS, and HTML components for QuantPipe dashboards.
 
-Brand palette extracted from the QuantPipe logo:
-  Gold   #C9A227 — border ring, wordmark
-  Green  #00E676 — the pipe / equity curve (positive)
-  Purple #6B2FA0 — circular logo background (secondary accent)
-  Navy   #0A0D1A — overall dark background
-  Red    #FF4444 — bearish candles (negative)
+Brand palette — derived from the QuantPipe logo:
+  Gold   #C9A227  ring border, wordmark — primary UI accent
+  Green  #00E676  the pipe / equity curve — positive / bullish
+  Purple #7B5EA7  logo interior depth — tertiary accent
+  Void   #05070F  deepest background — chart paper
+  Navy   #0A0D1A  app background
+
+All dashboard files reference COLORS keys only — swap here, changes everywhere.
 """
 
 # ── Colour palette ─────────────────────────────────────────────────────────────
 
 COLORS = {
-    # Backgrounds
-    "bg":         "#0A0D1A",
-    "surface":    "#0F1320",
-    "card_bg":    "#141928",
+    # Backgrounds — 5-tier depth stack
+    "bg":           "#0A0D1A",   # Streamlit app / main content
+    "bg_void":      "#05070F",   # Plotly paper — deepest black
+    "surface":      "#0F1325",   # Sidebar, secondary panels
+    "card_bg":      "#141C35",   # Card / input surfaces
+    "bg_hover":     "#1B2445",   # Hover / selected rows
 
     # Borders
-    "border":     "#1E2640",
-    "border_dim": "#161C30",
+    "border":       "rgba(201,162,39,0.20)",  # standard gold-tinted
+    "border_dim":   "rgba(201,162,39,0.10)",  # subtle
+    "border_focus": "#C9A227",               # active / focused
 
-    # Brand accents
-    "gold":       "#C9A227",   # primary UI accent — tabs, active states, KPI borders
-    "green":      "#00E676",   # positive returns, bullish signals
-    "purple":     "#6B2FA0",   # secondary accent
-    "gold_dim":   "#8A6B18",   # dimmed gold for hover states
+    # Gold — primary accent
+    "gold":         "#C9A227",
+    "gold_bright":  "#D4AE42",
+    "gold_dim":     "#8A6B18",
+    "gold_bg":      "rgba(201,162,39,0.10)",
+
+    # Green — pipe / positive / bullish
+    "green":        "#00E676",
+    "green_bright": "#33EE8F",
+    "green_dim":    "#00A854",
+    "green_bg":     "rgba(0,230,118,0.07)",
+
+    # Purple — brand depth / tertiary
+    "purple":       "#7B5EA7",
+    "purple_bright":"#9B7EC7",
+    "purple_dim":   "#5B3E87",
+    "purple_bg":    "rgba(123,94,167,0.12)",
 
     # Semantic
-    "positive":   "#00E676",   # matches brand green
-    "negative":   "#FF4444",   # bearish red from logo candles
-    "warning":    "#C9A227",   # gold doubles as warning
-    "info":       "#7B5EA7",   # muted purple
+    "positive":     "#00E676",   # gains, bullish
+    "negative":     "#FF4D4D",   # losses, bearish
+    "warning":      "#C9A227",   # stale / caution (gold)
+    "info":         "#4A90D9",   # informational blue
 
-    # Text
-    "text":       "#E8EDF5",
-    "text_muted": "#5A6478",
-    "neutral":    "#8892A4",
+    # Typography
+    "text":         "#EEF2FF",   # primary (blue-white)
+    "text_muted":   "#5A6478",   # muted
+    "neutral":      "#A8B3CC",   # secondary / labels
 
-    # Legacy aliases (kept for backwards compat)
-    "blue":       "#4A90D9",
-    "orange":     "#C9A227",
-    "teal":       "#00E676",
+    # Legacy aliases — dashboards import these by name
+    "blue":         "#4A90D9",
+    "orange":       "#C9A227",
+    "teal":         "#00E676",
 
-    # Chart series (gold → green → purple → … )
+    # Chart series — brand-matched 8-colour rotation
     "series": [
-        "#C9A227",  # gold
-        "#00E676",  # green
-        "#6B2FA0",  # purple
-        "#4A90D9",  # blue
-        "#FF4444",  # red
-        "#F5A623",  # amber
-        "#50E3C2",  # teal
-        "#BD10E0",  # magenta
+        "#C9A227",   # 1  Gold
+        "#00E676",   # 2  Green / pipe
+        "#7B5EA7",   # 3  Purple
+        "#4A90D9",   # 4  Blue
+        "#FF4D4D",   # 5  Red
+        "#F5A623",   # 6  Amber
+        "#50E3C2",   # 7  Teal
+        "#BD10E0",   # 8  Magenta
     ],
 }
 
 # ── Plotly base layout ─────────────────────────────────────────────────────────
 
-_GRID   = "#1A2038"
+_GRID = "rgba(30,38,100,0.45)"   # indigo-tinted grid — subtle but visible
+
 _LAYOUT_BASE = dict(
-    paper_bgcolor=COLORS["bg"],
-    plot_bgcolor=COLORS["card_bg"],
+    paper_bgcolor=COLORS["bg_void"],
+    plot_bgcolor="#0D1128",          # slightly purple-tinted inner bg
     font=dict(
-        color=COLORS["text"],
+        color=COLORS["neutral"],
         family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
         size=12,
     ),
     xaxis=dict(
         showgrid=True, gridcolor=_GRID, gridwidth=1,
-        linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=_GRID, zerolinewidth=1,
-        tickfont=dict(color=COLORS["neutral"], size=11),
+        linecolor="rgba(201,162,39,0.15)",
+        tickcolor=COLORS["text_muted"],
+        zerolinecolor="rgba(201,162,39,0.15)", zerolinewidth=1,
+        tickfont=dict(color=COLORS["text_muted"], size=11),
     ),
     yaxis=dict(
         showgrid=True, gridcolor=_GRID, gridwidth=1,
-        linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=_GRID, zerolinewidth=1,
-        tickfont=dict(color=COLORS["neutral"], size=11),
+        linecolor="rgba(201,162,39,0.15)",
+        tickcolor=COLORS["text_muted"],
+        zerolinecolor="rgba(201,162,39,0.15)", zerolinewidth=1,
+        tickfont=dict(color=COLORS["text_muted"], size=11),
     ),
     margin=dict(l=8, r=8, t=38, b=8),
     legend=dict(
-        bgcolor="rgba(0,0,0,0)",
-        bordercolor=COLORS["border"],
+        bgcolor="rgba(5,7,15,0.70)",
+        bordercolor="rgba(201,162,39,0.20)",
+        borderwidth=1,
         font=dict(color=COLORS["neutral"], size=11),
         orientation="h",
         yanchor="bottom", y=1.02,
         xanchor="left", x=0,
     ),
     hoverlabel=dict(
-        bgcolor=COLORS["surface"],
+        bgcolor="#141C35",
         bordercolor=COLORS["gold"],
         font=dict(color=COLORS["text"], size=12),
     ),
@@ -107,7 +128,8 @@ def apply_theme(fig, title: str = "", height: int | None = None,
                 legend_inside: bool = False) -> None:
     layout = dict(_LAYOUT_BASE)
     layout["title"] = dict(
-        text=f"<b style='color:{COLORS['neutral']};font-size:12px;'>{title}</b>",
+        text=f"<b style='color:{COLORS['text_muted']};font-size:12px;"
+             f"letter-spacing:0.06em;text-transform:uppercase;'>{title}</b>",
         x=0.01, y=0.98,
         xanchor="left", yanchor="top",
         pad=dict(t=4),
@@ -116,8 +138,9 @@ def apply_theme(fig, title: str = "", height: int | None = None,
         layout["height"] = height
     if legend_inside:
         layout["legend"] = dict(
-            bgcolor="rgba(20,25,40,0.88)",
-            bordercolor=COLORS["border"],
+            bgcolor="rgba(20,28,53,0.90)",
+            bordercolor="rgba(201,162,39,0.25)",
+            borderwidth=1,
             font=dict(color=COLORS["neutral"], size=11),
             x=0.01, y=0.99,
             xanchor="left", yanchor="top",
@@ -131,18 +154,15 @@ def apply_subplot_theme(fig, height: int | None = None) -> None:
     if height:
         layout["height"] = height
     fig.update_layout(**layout)
-    fig.update_xaxes(
+    _ax = dict(
         showgrid=True, gridcolor=_GRID, gridwidth=1,
-        linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=_GRID,
-        tickfont=dict(color=COLORS["neutral"], size=11),
+        linecolor="rgba(201,162,39,0.15)",
+        tickcolor=COLORS["text_muted"],
+        zerolinecolor="rgba(201,162,39,0.15)",
+        tickfont=dict(color=COLORS["text_muted"], size=11),
     )
-    fig.update_yaxes(
-        showgrid=True, gridcolor=_GRID, gridwidth=1,
-        linecolor=COLORS["border"], tickcolor=COLORS["neutral"],
-        zerolinecolor=_GRID,
-        tickfont=dict(color=COLORS["neutral"], size=11),
-    )
+    fig.update_xaxes(**_ax)
+    fig.update_yaxes(**_ax)
 
 
 def range_selector() -> dict:
@@ -154,10 +174,10 @@ def range_selector() -> dict:
             dict(count=3,  label="3Y",  step="year",  stepmode="backward"),
             dict(step="all", label="All"),
         ],
-        bgcolor=COLORS["card_bg"],
+        bgcolor="#141C35",
         activecolor=COLORS["gold"],
-        font=dict(color=COLORS["text"], size=11),
-        bordercolor=COLORS["border"],
+        font=dict(color=COLORS["neutral"], size=11),
+        bordercolor="rgba(201,162,39,0.25)",
         borderwidth=1,
     )
 
@@ -166,43 +186,68 @@ def range_selector() -> dict:
 
 CSS = f"""
 <style>
-/* ── Reset / global ─────────────────────────────────────────────────────── */
-html, body, [data-testid="stApp"] {{
-    background-color: {COLORS['bg']} !important;
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   GLOBAL RESET / BASE
+══════════════════════════════════════════════════════════════════════════════ */
+html, body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }}
+
+/* Main app — subtle brand-colour radial glows in opposite corners */
+[data-testid="stApp"] {{
+    background:
+        radial-gradient(ellipse 60% 40% at 15% 0%,
+            rgba(107,47,160,0.07) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 35% at 85% 100%,
+            rgba(201,162,39,0.05) 0%, transparent 55%),
+        {COLORS['bg']} !important;
+}}
 [data-testid="stAppViewContainer"] > .main {{
-    background-color: {COLORS['bg']};
+    background: transparent;
 }}
 [data-testid="block-container"] {{
     padding-top: 24px;
-    max-width: 1400px;
+    max-width: 1440px;
 }}
 
-/* ── Scrollbar ───────────────────────────────────────────────────────────── */
-::-webkit-scrollbar {{ width: 5px; height: 5px; }}
-::-webkit-scrollbar-track {{ background: {COLORS['bg']}; }}
-::-webkit-scrollbar-thumb {{ background: {COLORS['border']}; border-radius: 3px; }}
-::-webkit-scrollbar-thumb:hover {{ background: {COLORS['gold_dim']}; }}
+/* ══════════════════════════════════════════════════════════════════════════════
+   SCROLLBAR
+══════════════════════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar {{ width: 4px; height: 4px; }}
+::-webkit-scrollbar-track {{ background: {COLORS['bg_void']}; }}
+::-webkit-scrollbar-thumb {{
+    background: rgba(201,162,39,0.25);
+    border-radius: 3px;
+}}
+::-webkit-scrollbar-thumb:hover {{ background: {COLORS['gold']}; }}
 
-/* ── st.metric cards ─────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   METRIC CARDS
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="metric-container"] {{
-    background: {COLORS['card_bg']};
-    border: 1px solid {COLORS['border']};
-    border-top: 2px solid {COLORS['gold']};
-    border-radius: 2px 2px 10px 10px;
-    padding: 16px 18px 14px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.45);
-    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+    background: linear-gradient(145deg, {COLORS['card_bg']} 0%, {COLORS['surface']} 100%) !important;
+    border: 1px solid rgba(201,162,39,0.20) !important;
+    border-top: 2px solid {COLORS['gold']} !important;
+    border-radius: 2px 2px 12px 12px !important;
+    padding: 16px 18px 14px !important;
+    box-shadow:
+        0 4px 24px rgba(0,0,0,0.50),
+        inset 0 1px 0 rgba(201,162,39,0.08) !important;
+    transition: border-color 0.20s ease, box-shadow 0.20s ease !important;
     min-width: 0;
     overflow: hidden;
 }}
 [data-testid="metric-container"]:hover {{
-    border-color: {COLORS['gold']};
-    box-shadow: 0 4px 20px rgba(201,162,39,0.15);
+    border-color: rgba(201,162,39,0.45) !important;
+    border-top-color: {COLORS['gold_bright']} !important;
+    box-shadow:
+        0 6px 32px rgba(0,0,0,0.60),
+        0 0 24px rgba(201,162,39,0.14),
+        inset 0 1px 0 rgba(201,162,39,0.14) !important;
 }}
 [data-testid="stMetricValue"] {{
-    font-size: 1.35rem !important;
+    font-size: 1.40rem !important;
     font-weight: 700 !important;
     color: {COLORS['text']} !important;
     letter-spacing: -0.02em;
@@ -213,150 +258,312 @@ html, body, [data-testid="stApp"] {{
 }}
 [data-testid="stMetricLabel"] {{
     color: {COLORS['neutral']} !important;
-    font-size: 0.69rem !important;
+    font-size: 0.68rem !important;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.10em;
     font-weight: 600;
-    margin-bottom: 4px;
+    margin-bottom: 5px;
     line-height: 1.35;
     overflow-wrap: break-word;
 }}
 [data-testid="stMetricDelta"] svg {{ display: none; }}
 [data-testid="stMetricDelta"] > div {{
-    font-size: 0.78rem !important;
-    font-weight: 500;
+    font-size: 0.77rem !important;
+    font-weight: 600;
     letter-spacing: 0.01em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }}
 
-/* ── Tabs ────────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   TABS
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {{
-    background: {COLORS['surface']};
-    border-bottom: 1px solid {COLORS['border']};
+    background: linear-gradient(180deg, #0D1020 0%, {COLORS['surface']} 100%);
+    border-bottom: 1px solid rgba(201,162,39,0.15);
     gap: 0;
     padding: 0 4px;
 }}
 [data-testid="stTabs"] [data-baseweb="tab"] {{
-    color: {COLORS['neutral']};
-    font-size: 0.83rem;
+    color: {COLORS['text_muted']};
+    font-size: 0.82rem;
     font-weight: 500;
-    padding: 11px 18px;
+    padding: 11px 20px;
     background: transparent;
     border-bottom: 2px solid transparent;
     transition: color 0.15s ease, border-color 0.15s ease;
-    letter-spacing: 0.01em;
+    letter-spacing: 0.02em;
 }}
-[data-testid="stTabs"] [data-baseweb="tab"]:hover {{ color: {COLORS['text']}; }}
+[data-testid="stTabs"] [data-baseweb="tab"]:hover {{
+    color: {COLORS['neutral']};
+}}
 [data-testid="stTabs"] [aria-selected="true"] {{
     color: {COLORS['gold']} !important;
+    font-weight: 600 !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab-highlight"] {{
-    background-color: {COLORS['gold']} !important;
+    background: linear-gradient(90deg, {COLORS['gold']}, {COLORS['gold_bright']}) !important;
     height: 2px !important;
 }}
 [data-testid="stTabs"] [data-baseweb="tab-border"] {{ display: none !important; }}
 
-/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   SIDEBAR
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stSidebar"] {{
-    background: {COLORS['surface']} !important;
-    border-right: 1px solid {COLORS['border']};
+    background: linear-gradient(180deg, #0D1020 0%, {COLORS['surface']} 100%) !important;
+    border-right: 1px solid rgba(201,162,39,0.12) !important;
 }}
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {{
-    color: {COLORS['neutral']};
-    font-size: 0.78rem;
+    color: {COLORS['text_muted']};
+    font-size: 0.77rem;
     text-transform: uppercase;
-    letter-spacing: 0.07em;
+    letter-spacing: 0.08em;
     font-weight: 600;
     margin-bottom: 2px;
 }}
 
-/* ── Buttons ─────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   BUTTONS
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stButton"] > button {{
-    background: transparent;
-    border: 1px solid {COLORS['gold']};
-    color: {COLORS['gold']};
-    border-radius: 6px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    transition: background 0.15s ease, color 0.15s ease;
+    background: transparent !important;
+    border: 1px solid {COLORS['gold']} !important;
+    color: {COLORS['gold']} !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 0.78rem !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    padding: 7px 20px !important;
+    transition: all 0.18s ease !important;
+    box-shadow: none !important;
 }}
 [data-testid="stButton"] > button:hover {{
-    background: {COLORS['gold']};
-    color: {COLORS['bg']};
+    background: {COLORS['gold']} !important;
+    color: {COLORS['bg_void']} !important;
+    box-shadow: 0 0 20px rgba(201,162,39,0.30) !important;
+}}
+[data-testid="stButton"] > button[kind="primary"] {{
+    background: rgba(201,162,39,0.12) !important;
+    border-color: {COLORS['gold_bright']} !important;
+}}
+[data-testid="stButton"] > button:disabled {{
+    opacity: 0.35 !important;
 }}
 
-/* ── Dataframe ───────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   INPUTS — select, text, number, slider
+══════════════════════════════════════════════════════════════════════════════ */
+[data-baseweb="select"] [data-baseweb="select-control"] {{
+    background: {COLORS['card_bg']} !important;
+    border-color: rgba(201,162,39,0.22) !important;
+    transition: border-color 0.15s ease !important;
+}}
+[data-baseweb="select"] [data-baseweb="select-control"]:hover,
+[data-baseweb="select"] [data-baseweb="select-control"]:focus-within {{
+    border-color: {COLORS['gold']} !important;
+}}
+[data-baseweb="select"] [data-baseweb="menu"] {{
+    background: {COLORS['card_bg']} !important;
+    border: 1px solid rgba(201,162,39,0.22) !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.60) !important;
+}}
+[data-baseweb="select"] [role="option"]:hover {{
+    background: {COLORS['gold_bg']} !important;
+}}
+[data-baseweb="select"] [aria-selected="true"] {{
+    background: rgba(201,162,39,0.15) !important;
+    color: {COLORS['gold']} !important;
+}}
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea,
+input[type="number"] {{
+    background: {COLORS['card_bg']} !important;
+    border-color: rgba(201,162,39,0.22) !important;
+    color: {COLORS['text']} !important;
+    border-radius: 6px !important;
+}}
+[data-baseweb="input"] input:focus,
+[data-baseweb="textarea"] textarea:focus {{
+    border-color: {COLORS['gold']} !important;
+    box-shadow: 0 0 0 2px rgba(201,162,39,0.15) !important;
+    outline: none !important;
+}}
+/* Slider thumb + fill */
+[data-testid="stSlider"] [role="slider"] {{
+    background: {COLORS['gold']} !important;
+    border-color: {COLORS['gold']} !important;
+    box-shadow: 0 0 8px rgba(201,162,39,0.45) !important;
+}}
+[data-testid="stSlider"] [data-testid="stTickBar"] {{
+    background: {COLORS['gold_dim']} !important;
+}}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   CHECKBOXES / RADIOS / TOGGLES
+══════════════════════════════════════════════════════════════════════════════ */
+[data-baseweb="checkbox"] [data-checked="true"] [class*="checkbox"],
+[data-baseweb="checkbox"] [aria-checked="true"] {{
+    background: {COLORS['gold']} !important;
+    border-color: {COLORS['gold']} !important;
+}}
+[data-baseweb="radio"] [data-checked="true"] [class*="radio"],
+[data-baseweb="radio"] [aria-checked="true"] {{
+    border-color: {COLORS['gold']} !important;
+}}
+/* Toggle on-state */
+[data-testid="stToggle"] [data-checked="true"],
+[aria-checked="true"][role="switch"] {{
+    background: {COLORS['gold']} !important;
+}}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   DATAFRAME / TABLE
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stDataFrame"] {{
-    border: 1px solid {COLORS['border']};
-    border-radius: 10px;
-    overflow: hidden;
+    border: 1px solid rgba(201,162,39,0.18) !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
+}}
+/* Column headers */
+[data-testid="stDataFrame"] th {{
+    background: {COLORS['card_bg']} !important;
+    color: {COLORS['gold']} !important;
+    font-size: 0.72rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.07em !important;
+    border-bottom: 1px solid rgba(201,162,39,0.20) !important;
+}}
+[data-testid="stDataFrame"] td {{
+    color: {COLORS['neutral']} !important;
+    font-size: 0.83rem !important;
+    border-color: rgba(201,162,39,0.08) !important;
 }}
 
-/* ── Expander ────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   EXPANDER
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stExpander"] {{
-    background: {COLORS['card_bg']};
-    border: 1px solid {COLORS['border']} !important;
-    border-radius: 8px;
+    background: linear-gradient(145deg, {COLORS['card_bg']} 0%, {COLORS['surface']} 100%) !important;
+    border: 1px solid rgba(201,162,39,0.18) !important;
+    border-radius: 10px !important;
+    transition: border-color 0.15s ease !important;
+}}
+[data-testid="stExpander"]:hover {{
+    border-color: rgba(201,162,39,0.35) !important;
 }}
 [data-testid="stExpander"] summary {{
     color: {COLORS['neutral']};
     font-size: 0.83rem;
     font-weight: 500;
+    padding: 12px 16px;
+}}
+[data-testid="stExpander"] summary:hover {{
+    color: {COLORS['text']};
 }}
 
-/* ── Info / alert boxes ──────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   ALERT BOXES
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stAlert"] {{
-    border-radius: 8px;
-    font-size: 0.85rem;
+    border-radius: 8px !important;
+    font-size: 0.85rem !important;
+    border-width: 1px !important;
+    border-style: solid !important;
+}}
+[data-testid="stAlert"][data-baseweb="notification"][kind="info"] {{
+    background: rgba(74,144,217,0.09) !important;
+    border-color: rgba(74,144,217,0.38) !important;
+}}
+[data-testid="stAlert"][data-baseweb="notification"][kind="warning"] {{
+    background: rgba(201,162,39,0.09) !important;
+    border-color: rgba(201,162,39,0.38) !important;
+}}
+[data-testid="stAlert"][data-baseweb="notification"][kind="success"] {{
+    background: rgba(0,230,118,0.09) !important;
+    border-color: rgba(0,230,118,0.38) !important;
+}}
+[data-testid="stAlert"][data-baseweb="notification"][kind="error"] {{
+    background: rgba(255,77,77,0.09) !important;
+    border-color: rgba(255,77,77,0.38) !important;
 }}
 
-/* ── Divider ─────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   DIVIDER / HR
+══════════════════════════════════════════════════════════════════════════════ */
 hr {{
     border: none !important;
-    border-top: 1px solid {COLORS['border']} !important;
-    margin: 18px 0;
+    height: 1px !important;
+    background: linear-gradient(
+        90deg, transparent 0%, rgba(201,162,39,0.30) 20%,
+        rgba(201,162,39,0.30) 80%, transparent 100%) !important;
+    margin: 20px 0 !important;
 }}
 
-/* ── Spinner ─────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   SPINNER
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stSpinner"] {{ color: {COLORS['gold']}; }}
 
-/* ── Code blocks ─────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   CODE BLOCKS
+══════════════════════════════════════════════════════════════════════════════ */
 [data-testid="stCode"] pre {{
-    background: {COLORS['surface']} !important;
-    border: 1px solid {COLORS['border']};
-    border-radius: 6px;
-    font-size: 0.78rem;
-    color: {COLORS['text_muted']};
+    background: linear-gradient(145deg, #0D1128, {COLORS['surface']}) !important;
+    border: 1px solid rgba(201,162,39,0.18) !important;
+    border-radius: 8px !important;
+    font-size: 0.79rem !important;
+    color: {COLORS['neutral']} !important;
 }}
 
-/* ── Select / radio / toggle accent ─────────────────────────────────────── */
-[data-baseweb="select"] [data-baseweb="select-control"] {{
-    background: {COLORS['card_bg']} !important;
-    border-color: {COLORS['border']} !important;
+/* ══════════════════════════════════════════════════════════════════════════════
+   PROGRESS BAR
+══════════════════════════════════════════════════════════════════════════════ */
+[data-testid="stProgress"] > div > div > div {{
+    background: linear-gradient(90deg, {COLORS['gold_dim']}, {COLORS['gold']}) !important;
 }}
 
-/* ── Sidebar logo separator ─────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   SIDEBAR LOGO / DIVIDER
+══════════════════════════════════════════════════════════════════════════════ */
 .qp-logo-divider {{
     height: 1px;
-    background: linear-gradient(90deg, {COLORS['gold']}40, transparent);
-    margin: 8px 0 18px;
+    background: linear-gradient(90deg, {COLORS['gold']}50, transparent);
+    margin: 8px 0 16px;
+}}
+[data-testid="stSidebar"] [data-testid="stImage"] {{
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 auto !important;
+    line-height: 0;
+}}
+[data-testid="stSidebar"] [data-testid="stImage"] img {{
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: high-quality;
 }}
 
-/* ── Animations ──────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+══════════════════════════════════════════════════════════════════════════════ */
 @keyframes pulse-critical {{
     0%, 100% {{ opacity: 1; }}
-    50%       {{ opacity: 0.45; }}
+    50%       {{ opacity: 0.40; }}
 }}
-.qp-pulse {{ animation: pulse-critical 1.8s ease-in-out infinite; }}
-
-/* ── Gold glow effect for critical KPIs ──────────────────────────────────── */
 @keyframes gold-pulse {{
     0%, 100% {{ box-shadow: 0 0 0 0 rgba(201,162,39,0); }}
-    50%      {{ box-shadow: 0 0 16px 2px rgba(201,162,39,0.25); }}
+    50%      {{ box-shadow: 0 0 20px 4px rgba(201,162,39,0.22); }}
 }}
-.qp-gold-glow {{ animation: gold-pulse 2.5s ease-in-out infinite; }}
+@keyframes green-pulse {{
+    0%, 100% {{ box-shadow: 0 0 0 0 rgba(0,230,118,0); }}
+    50%      {{ box-shadow: 0 0 16px 3px rgba(0,230,118,0.20); }}
+}}
+.qp-pulse      {{ animation: pulse-critical 1.8s ease-in-out infinite; }}
+.qp-gold-glow  {{ animation: gold-pulse 2.5s ease-in-out infinite; }}
+.qp-green-glow {{ animation: green-pulse 2.5s ease-in-out infinite; }}
+
 </style>
 """
 
@@ -365,23 +572,28 @@ hr {{
 
 def page_header(title: str, subtitle: str = "", right_text: str = "") -> str:
     right = (
-        f'<div style="text-align:right;">'
-        f'<div style="color:{COLORS["neutral"]};font-size:0.7rem;text-transform:uppercase;'
-        f'letter-spacing:0.08em;">As of</div>'
-        f'<div style="color:{COLORS["text"]};font-size:0.95rem;font-weight:600;">{right_text}</div>'
+        f'<div style="text-align:right;flex-shrink:0;">'
+        f'<div style="color:{COLORS["text_muted"]};font-size:0.68rem;text-transform:uppercase;'
+        f'letter-spacing:0.09em;font-weight:600;">As of</div>'
+        f'<div style="color:{COLORS["text"]};font-size:0.95rem;font-weight:700;'
+        f'margin-top:1px;">{right_text}</div>'
         f'</div>'
         if right_text else ""
     )
     sub = (
-        f'<p style="margin:3px 0 0;color:{COLORS["neutral"]};font-size:0.82rem;">{subtitle}</p>'
+        f'<p style="margin:4px 0 0;color:{COLORS["neutral"]};font-size:0.82rem;'
+        f'letter-spacing:0.01em;">{subtitle}</p>'
         if subtitle else ""
     )
     return (
         f'<div style="display:flex;align-items:flex-end;justify-content:space-between;'
-        f'padding-bottom:14px;border-bottom:1px solid {COLORS["border"]};margin-bottom:20px;">'
+        f'padding-bottom:14px;'
+        f'border-bottom:1px solid;'
+        f'border-image:linear-gradient(90deg,{COLORS["gold"]}60,transparent) 1;'
+        f'margin-bottom:22px;">'
         f'<div>'
-        f'<h1 style="margin:0;font-size:1.65rem;font-weight:800;color:{COLORS["text"]};'
-        f'letter-spacing:-0.04em;">{title}</h1>'
+        f'<h1 style="margin:0;font-size:1.70rem;font-weight:800;color:{COLORS["text"]};'
+        f'letter-spacing:-0.04em;line-height:1.15;">{title}</h1>'
         f'{sub}'
         f'</div>'
         f'{right}'
@@ -392,59 +604,63 @@ def page_header(title: str, subtitle: str = "", right_text: str = "") -> str:
 def kpi_card(label: str, value: str, delta: str = "",
              delta_up: bool | None = None,
              accent: str | None = None) -> str:
-    top_border = accent or COLORS["gold"]
+    top = accent or COLORS["gold"]
     if delta and delta_up is not None:
-        dcolor = COLORS["positive"] if delta_up else COLORS["negative"]
+        dcol = COLORS["positive"] if delta_up else COLORS["negative"]
         arrow = "▲" if delta_up else "▼"
-        delta_html = (
-            f'<div style="color:{dcolor};font-size:0.77rem;font-weight:600;'
-            f'margin-top:7px;letter-spacing:0.01em;">{arrow} {delta}</div>'
+        d_html = (
+            f'<div style="color:{dcol};font-size:0.76rem;font-weight:700;'
+            f'margin-top:8px;letter-spacing:0.01em;">{arrow} {delta}</div>'
         )
     else:
-        delta_html = ""
+        d_html = ""
     return (
-        f'<div style="background:{COLORS["card_bg"]};'
-        f'border:1px solid {COLORS["border"]};'
-        f'border-top:3px solid {top_border};'
-        f'border-radius:2px 2px 10px 10px;'
+        f'<div style="'
+        f'background:linear-gradient(145deg,{COLORS["card_bg"]} 0%,{COLORS["surface"]} 100%);'
+        f'border:1px solid rgba(201,162,39,0.20);'
+        f'border-top:2px solid {top};'
+        f'border-radius:2px 2px 12px 12px;'
         f'padding:16px 18px 14px;'
         f'min-width:0;overflow:hidden;'
-        f'box-shadow:0 2px 10px rgba(0,0,0,0.4);">'
-        f'<div style="color:{COLORS["neutral"]};font-size:0.68rem;text-transform:uppercase;'
-        f'letter-spacing:0.08em;font-weight:600;margin-bottom:7px;'
+        f'box-shadow:0 4px 24px rgba(0,0,0,0.50),inset 0 1px 0 rgba(201,162,39,0.07);">'
+        f'<div style="color:{COLORS["neutral"]};font-size:0.67rem;text-transform:uppercase;'
+        f'letter-spacing:0.10em;font-weight:600;margin-bottom:8px;'
         f'line-height:1.35;overflow-wrap:break-word;">{label}</div>'
-        f'<div style="color:{COLORS["text"]};font-size:1.3rem;font-weight:700;'
+        f'<div style="color:{COLORS["text"]};font-size:1.32rem;font-weight:700;'
         f'letter-spacing:-0.02em;line-height:1.2;'
         f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{value}</div>'
-        f'{delta_html}'
+        f'{d_html}'
         f'</div>'
     )
 
 
 def section_label(text: str) -> str:
     return (
-        f'<div style="color:{COLORS["neutral"]};font-size:0.68rem;text-transform:uppercase;'
-        f'letter-spacing:0.09em;font-weight:700;margin:20px 0 12px;'
-        f'border-left:3px solid {COLORS["gold"]};padding-left:10px;'
-        f'line-height:1.4;overflow-wrap:break-word;">{text}</div>'
+        f'<div style="'
+        f'color:{COLORS["neutral"]};font-size:0.67rem;text-transform:uppercase;'
+        f'letter-spacing:0.10em;font-weight:700;margin:22px 0 13px;'
+        f'border-left:3px solid {COLORS["gold"]};'
+        f'padding-left:10px;'
+        f'background:linear-gradient(90deg,{COLORS["gold_bg"]},transparent);'
+        f'line-height:1.8;overflow-wrap:break-word;">{text}</div>'
     )
 
 
 def badge(text: str, variant: str = "neutral") -> str:
     palette = {
-        "positive": ("#00E676", "#003D1A"),
-        "negative": ("#FF4444", "#3D0000"),
-        "warning":  ("#C9A227", "#2E2000"),
-        "neutral":  ("#8892A4", "#141928"),
-        "blue":     ("#4A90D9", "#0D1F3D"),
-        "gold":     ("#C9A227", "#2E2000"),
-        "purple":   ("#7B5EA7", "#1A0F2E"),
+        "positive": (COLORS["green"],        "rgba(0,230,118,0.12)"),
+        "negative": (COLORS["negative"],     "rgba(255,77,77,0.12)"),
+        "warning":  (COLORS["gold"],         "rgba(201,162,39,0.12)"),
+        "neutral":  (COLORS["neutral"],      COLORS["card_bg"]),
+        "blue":     (COLORS["blue"],         "rgba(74,144,217,0.12)"),
+        "gold":     (COLORS["gold"],         "rgba(201,162,39,0.12)"),
+        "purple":   (COLORS["purple"],       COLORS["purple_bg"]),
     }
     fg, bg = palette.get(variant, palette["neutral"])
     return (
-        f'<span style="background:{bg};color:{fg};border:1px solid {fg};'
-        f'border-radius:4px;padding:3px 12px;font-size:0.78rem;'
-        f'font-weight:700;font-family:monospace;letter-spacing:0.05em;">'
+        f'<span style="background:{bg};color:{fg};border:1px solid {fg}44;'
+        f'border-radius:4px;padding:3px 12px;font-size:0.76rem;'
+        f'font-weight:700;font-family:monospace;letter-spacing:0.06em;">'
         f'{text}</span>'
     )
 
@@ -452,9 +668,14 @@ def badge(text: str, variant: str = "neutral") -> str:
 def status_banner(text: str, color: str, animate: bool = False) -> str:
     cls = ' class="qp-pulse"' if animate else ""
     return (
-        f'<div style="background:{color}18;border:1px solid {color};'
-        f'border-radius:10px;padding:14px 22px;margin-bottom:22px;'
-        f'display:flex;align-items:center;gap:14px;">'
-        f'<span{cls} style="font-size:1rem;font-weight:700;color:{color};">● {text}</span>'
+        f'<div style="'
+        f'background:{color}12;'
+        f'border:1px solid {color}60;'
+        f'border-left:3px solid {color};'
+        f'border-radius:8px;'
+        f'padding:13px 20px;margin-bottom:20px;'
+        f'display:flex;align-items:center;gap:12px;">'
+        f'<span{cls} style="font-size:0.95rem;font-weight:700;color:{color};">'
+        f'● {text}</span>'
         f'</div>'
     )

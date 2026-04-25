@@ -1,9 +1,8 @@
 [theme]
-# QuantPipe brand palette — derived from logo
-primaryColor      = "#C9A227"   # Gold  — the logo border / wordmark
-backgroundColor   = "#0A0D1A"   # Deep navy — logo background
-secondaryBackgroundColor = "#0F1320"  # Slightly lighter navy — sidebar / cards
-textColor         = "#E8EDF5"   # Off-white text
+primaryColor             = "#C9A227"   # Gold — brand accent
+backgroundColor          = "#0A0D1A"   # Deep navy
+secondaryBackgroundColor = "#0F1325"   # Sidebar / panels
+textColor                = "#EEF2FF"   # Blue-white primary text
 
 [server]
 headless = true

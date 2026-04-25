@@ -34,27 +34,34 @@ NAV_CSS = f"""
 <style>
 /* ── Nav links ───────────────────────────────────────────────────────────── */
 [data-testid="stSidebarNavLink"] {{
-    border-radius: 6px;
+    border-radius: 7px;
     padding: 8px 12px;
-    margin: 2px 0;
-    transition: background 0.15s ease;
+    margin: 2px 4px;
+    transition: background 0.15s ease, color 0.15s ease;
+    color: {COLORS['neutral']};
+    font-size: 0.83rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
 }}
 [data-testid="stSidebarNavLink"]:hover {{
-    background: {COLORS['card_bg']};
+    background: rgba(201,162,39,0.06);
+    color: {COLORS['text']};
 }}
 [data-testid="stSidebarNavLink"][aria-current="page"] {{
     background: rgba(201,162,39,0.10);
     border-left: 3px solid {COLORS['gold']};
     padding-left: 9px;
+    color: {COLORS['gold']};
+    font-weight: 600;
 }}
 [data-testid="stSidebarNavSeparator"] p {{
     color: {COLORS['text_muted']} !important;
-    font-size: 0.62rem !important;
+    font-size: 0.61rem !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.1em !important;
+    letter-spacing: 0.11em !important;
     font-weight: 700 !important;
-    margin: 14px 0 3px !important;
-    padding-left: 10px;
+    margin: 16px 0 4px !important;
+    padding-left: 12px;
 }}
 
 /* ── Sidebar logo images (transparent PNGs) ──────────────────────────────── */
