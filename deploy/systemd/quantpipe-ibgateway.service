@@ -1,0 +1,37 @@
+[Unit]
+Description=IB Gateway via IBC (headless)
+After=network-online.target quantpipe-xvfb.service
+Requires=quantpipe-xvfb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantpipe
+WorkingDirectory=/opt/ibgateway
+
+# Virtual display + IBC env vars
+Environment=DISPLAY=:99
+Environment=IBC_PATH=/opt/ibc
+Environment=TWS_PATH=/opt/ibgateway
+Environment=IBC_INI=/opt/ibc/config.ini
+Environment=GATEWAY_OR_TWS=gateway
+Environment=JAVA_PATH=/usr/bin/java
+
+# Give Xvfb a moment to be ready before launching Gateway
+ExecStartPre=/bin/sleep 5
+
+ExecStart=/bin/bash /opt/ibc/scripts/gateway.sh
+
+StandardOutput=append:/var/log/quantpipe/ibgateway.log
+StandardError=append:/var/log/quantpipe/ibgateway.log
+
+# IB Gateway auto-restarts daily; systemd should restart it if it crashes
+Restart=on-failure
+RestartSec=60
+
+# Resource limits — Gateway is Java-based, needs headroom
+MemoryMax=1G
+CPUQuota=60%
+
+[Install]
+WantedBy=multi-user.target

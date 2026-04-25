@@ -1,0 +1,37 @@
+# IBC Configuration File
+# Full docs: https://github.com/IbcAlpha/IBC/blob/master/userguide.md
+#
+# After copying to /opt/ibc/config.ini:
+#   chmod 600 /opt/ibc/config.ini
+#   nano /opt/ibc/config.ini
+# Fill in IbLoginId and IbPassword, then start the service.
+
+# ── Credentials ───────────────────────────────────────────────────────────────
+IbLoginId=REPLACE_WITH_YOUR_IBKR_USERNAME
+IbPassword=REPLACE_WITH_YOUR_IBKR_PASSWORD
+
+# paper = paper trading account | live = real-money account
+TradingMode=paper
+
+# ── API settings ──────────────────────────────────────────────────────────────
+# Port IB Gateway listens on (must match IBKR_PORT in QuantPipe .env)
+OverrideTwsApiPort=4002
+
+# Allow QuantPipe to place orders (set no for view-only)
+ReadOnlyApi=no
+
+# Accept incoming connections automatically (safe — server only accessible via VPN)
+AcceptIncomingConnectionAction=accept
+
+# ── Login dialogs ─────────────────────────────────────────────────────────────
+AcceptEulaDialog=yes
+AcceptBidEventError=yes
+AllowBlindTrading=no
+ExistingSessionDetectedAction=primaryoverride
+
+# ── Auto-restart ──────────────────────────────────────────────────────────────
+# IB Gateway restarts daily at this time (ET). Pick a time outside market hours.
+AutoRestartTime=11:59 PM
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+LogComponents=never
