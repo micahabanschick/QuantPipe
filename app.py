@@ -15,12 +15,13 @@ from reports._theme import CSS, COLORS, badge
 
 _LOGO       = Path(__file__).parent / "assets" / "logo.png"
 _LOGO_WORDS = Path(__file__).parent / "assets" / "logo_words.png"
+_FAVICON    = Path(__file__).parent / "assets" / "favicon.png"
 
 # ── Page config ────────────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title="QuantPipe",
-    page_icon=str(_LOGO) if _LOGO.exists() else "📊",
+    page_icon=str(_FAVICON) if _FAVICON.exists() else "📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -143,16 +144,17 @@ with st.sidebar:
     if _LOGO.exists() and _LOGO_WORDS.exists():
         _circle = base64.b64encode(_LOGO.read_bytes()).decode()
         _words  = base64.b64encode(_LOGO_WORDS.read_bytes()).decode()
-        # Both PNGs share the same 539×480 canvas — overlay them at identical
-        # size so the result is pixel-perfect to logo_full.png.
+        # Both PNGs share the same 539×480 canvas.
+        # Words image sets container height (flow); circle overlays on top (z-index:1)
+        # so the circle's opaque background masks the overlap area, matching logo_full.png.
         st.markdown(f"""
 <div style="position:relative; width:80%; margin:0 auto;
             filter:drop-shadow(0 0 10px rgba(201,162,39,0.28))
                    drop-shadow(0 0 24px rgba(201,162,39,0.12));">
-  <img src="data:image/png;base64,{_circle}"
-       style="width:100%; display:block;"/>
   <img src="data:image/png;base64,{_words}"
-       style="width:100%; position:absolute; top:0; left:0;"/>
+       style="width:100%; display:block;"/>
+  <img src="data:image/png;base64,{_circle}"
+       style="width:100%; position:absolute; top:0; left:0; z-index:1;"/>
 </div>
 """, unsafe_allow_html=True)
 
