@@ -506,35 +506,100 @@ with tab_signal_analysis:
                 _sa_price_pivot = price_pivot_from_bars(_sa_prices_pl)
                 _sa_decay = ic_decay(_sa_fac_pivot, _sa_price_pivot, horizons=[1, 5, 21, 63, 126])
 
-                _sa_horizons  = [p.horizon_days for p in _sa_decay]
-                _sa_mean_ics  = [p.mean_ic for p in _sa_decay]
-                _sa_icirs     = [p.icir for p in _sa_decay]
+                _sa_horizons = [p.horizon_days for p in _sa_decay]
+                _sa_mean_ics = [p.mean_ic       for p in _sa_decay]
+
+                # --- 1. Statistical significance via t-test ---
+                # t = ICIR * sqrt(n),  p = 2 * t.sf(|t|, df=n-1)
+                # SE(mean_IC) = mean_IC / (ICIR * sqrt(n))  =>  CI = mean_IC +/- 1.96*SE
+                _sa_tstats, _sa_pvals, _sa_ci_hi, _sa_ci_lo = [], [], [], []
+                for p in _sa_decay:
+                    _n = max(p.n_obs, 2)
+                    _t = p.icir * (_n ** 0.5) if p.icir != 0 else 0.0
+                    _pv = float(2 * _scipy_t.sf(abs(_t), df=_n - 1))
+                    _se = abs(p.mean_ic / (p.icir * (_n ** 0.5))) if p.icir != 0 and _n > 0 else 0.0
+                    _sa_tstats.append(round(_t, 3))
+                    _sa_pvals.append(round(_pv, 4))
+                    _sa_ci_hi.append(p.mean_ic + 1.96 * _se)
+                    _sa_ci_lo.append(p.mean_ic - 1.96 * _se)
+
+                # --- 2. Regime-conditioned IC (bull vs bear via SPY 252d return) ---
+                _bull_decay, _bear_decay = [], []
+                try:
+                    _spy_ser = (_sa_prices_pl
+                                .filter(pl.col("symbol") == "SPY").sort("date")
+                                .to_pandas().set_index("date")
+                                ["adj_close" if "adj_close" in _sa_prices_pl.columns else "close"])
+                    _spy_ser.index = pd.to_datetime(_spy_ser.index)
+                    _spy_252 = _spy_ser.pct_change(252)
+                    _bull_dates = set(_spy_252[_spy_252 >  0].dropna().index.date)
+                    _bear_dates = set(_spy_252[_spy_252 <= 0].dropna().index.date)
+                    _fp_bull = _sa_fac_pivot[_sa_fac_pivot.index.map(
+                        lambda d: d.date() if hasattr(d, "date") else d).isin(_bull_dates)]
+                    _fp_bear = _sa_fac_pivot[_sa_fac_pivot.index.map(
+                        lambda d: d.date() if hasattr(d, "date") else d).isin(_bear_dates)]
+                    if len(_fp_bull) > 20:
+                        _bull_decay = ic_decay(_fp_bull, _sa_price_pivot, horizons=[1, 5, 21, 63, 126])
+                    if len(_fp_bear) > 20:
+                        _bear_decay = ic_decay(_fp_bear, _sa_price_pivot, horizons=[1, 5, 21, 63, 126])
+                except Exception:
+                    pass
 
                 fig_decay = go.Figure()
+                # CI band
                 fig_decay.add_trace(go.Scatter(
-                    x=_sa_horizons, y=_sa_mean_ics,
-                    mode="lines+markers",
-                    line=dict(color=COLORS["teal"], width=2.5),
-                    marker=dict(size=8, color=COLORS["teal"]),
-                    name="Mean IC",
-                    hovertemplate="Horizon %{x}d: IC=%{y:.4f}<extra></extra>",
+                    x=_sa_horizons + _sa_horizons[::-1],
+                    y=_sa_ci_hi + _sa_ci_lo[::-1],
+                    fill="toself", fillcolor="rgba(0,230,118,0.08)",
+                    line=dict(width=0), showlegend=False, hoverinfo="skip",
                 ))
+                # Full-sample IC line
+                bar_cols = [COLORS["positive"] if p < 0.05 else
+                            COLORS["warning"]  if p < 0.10 else
+                            COLORS["neutral"]   for p in _sa_pvals]
+                fig_decay.add_trace(go.Bar(
+                    x=_sa_horizons, y=_sa_mean_ics,
+                    marker=dict(color=bar_cols, line=dict(width=0)), opacity=0.75,
+                    name="Mean IC (green=p<0.05, gold=p<0.10, grey=NS)",
+                    hovertemplate="Horizon %{x}d: IC=%{y:.4f}<extra>Full sample</extra>",
+                ))
+                # Regime lines
+                if _bull_decay:
+                    fig_decay.add_trace(go.Scatter(
+                        x=[p.horizon_days for p in _bull_decay],
+                        y=[p.mean_ic       for p in _bull_decay],
+                        mode="lines+markers", line=dict(color=COLORS["positive"], width=2, dash="dot"),
+                        marker=dict(size=7), name="Bull regime (SPY 252d > 0)",
+                        hovertemplate="Horizon %{x}d: IC=%{y:.4f}<extra>Bull</extra>",
+                    ))
+                if _bear_decay:
+                    fig_decay.add_trace(go.Scatter(
+                        x=[p.horizon_days for p in _bear_decay],
+                        y=[p.mean_ic       for p in _bear_decay],
+                        mode="lines+markers", line=dict(color=COLORS["negative"], width=2, dash="dot"),
+                        marker=dict(size=7), name="Bear regime (SPY 252d <= 0)",
+                        hovertemplate="Horizon %{x}d: IC=%{y:.4f}<extra>Bear</extra>",
+                    ))
                 fig_decay.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
-                apply_theme(fig_decay)
+                apply_theme(fig_decay, legend_inside=True)
                 fig_decay.update_layout(
-                    height=260,
+                    height=300,
                     xaxis=dict(title="Horizon (days)", showgrid=False),
                     yaxis=dict(title="Mean IC (Spearman)"),
-                    showlegend=False,
                 )
                 st.plotly_chart(fig_decay, width="stretch", config=PLOTLY_CONFIG)
 
-                # Table
+                # Significance table
                 _decay_tbl = pd.DataFrame({
-                    "Horizon (days)": _sa_horizons,
-                    "Mean IC":        [f"{v:.4f}" for v in _sa_mean_ics],
-                    "IC IR":          [f"{p.icir:.3f}" for p in _sa_decay],
-                    "N Obs":          [p.n_obs for p in _sa_decay],
+                    "Horizon": [f"{h}d" for h in _sa_horizons],
+                    "Mean IC":  [f"{v:+.4f}" for v in _sa_mean_ics],
+                    "95% CI":   [f"[{lo:+.4f}, {hi:+.4f}]" for lo, hi in zip(_sa_ci_lo, _sa_ci_hi)],
+                    "t-stat":   [f"{t:+.2f}" for t in _sa_tstats],
+                    "p-value":  [f"{pv:.4f}" for pv in _sa_pvals],
+                    "Sig":      ["***" if pv < 0.01 else "**" if pv < 0.05 else "*" if pv < 0.10 else "NS"
+                                 for pv in _sa_pvals],
+                    "IC IR":    [f"{p.icir:.3f}" for p in _sa_decay],
+                    "N Obs":    [p.n_obs for p in _sa_decay],
                 })
                 st.dataframe(_decay_tbl, width="stretch", hide_index=True)
             else:
@@ -593,6 +658,55 @@ with tab_signal_analysis:
                 st.plotly_chart(fig_to, width="stretch", config=PLOTLY_CONFIG)
         else:
             st.info("Could not compute signal turnover - price data unavailable.")
+
+        # --- 3. Turnover cost simulation ---
+        if _sb_sig_df is not None and not _sb_sig_df.is_empty():
+            st.markdown(section_label("Turnover Cost Simulation"), unsafe_allow_html=True)
+            st.caption(
+                "Projects annual cost drag from transaction costs. "
+                "Annual cost = 12 rebalances x mean_turnover x cost (one-way) x 2 (round-trip)."
+            )
+            _tc1, _tc2 = st.columns([1, 2])
+            with _tc1:
+                _cost_bps = st.select_slider(
+                    "Cost per trade (bps, one-way)",
+                    options=[1, 2, 5, 10, 15, 20, 30, 50],
+                    value=5,
+                    key="sa_cost_bps",
+                )
+                _assumed_vol = st.number_input(
+                    "Assumed annual vol (%)",
+                    min_value=5.0, max_value=50.0, value=15.0, step=1.0,
+                    key="sa_vol",
+                    help="Used to estimate Sharpe drag from costs.",
+                )
+
+            _to_val = _sb_to.mean_turnover
+            _rebal_per_yr = 12
+            _annual_cost_pct = _rebal_per_yr * _to_val * 2 * _cost_bps / 10_000
+            _sharpe_drag    = _annual_cost_pct / (_assumed_vol / 100)
+
+            with _tc2:
+                _rows = []
+                for _bps in [1, 2, 5, 10, 20, 30, 50]:
+                    _ac = _rebal_per_yr * _to_val * 2 * _bps / 10_000
+                    _sd = _ac / (_assumed_vol / 100)
+                    _rows.append({
+                        "Cost (bps)":          _bps,
+                        "Annual drag (%)":     f"{_ac*100:.3f}%",
+                        "Sharpe reduction":    f"{_sd:.3f}",
+                        "Selected":            "<<" if _bps == _cost_bps else "",
+                    })
+                st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+
+            _cc1, _cc2, _cc3 = st.columns(3)
+            _cc1.markdown(kpi_card("Mean Turnover",      f"{_to_val:.1%}",
+                                    accent=COLORS["blue"]),     unsafe_allow_html=True)
+            _cc2.markdown(kpi_card("Annual Cost Drag",   f"{_annual_cost_pct*100:.3f}%",
+                                    accent=COLORS["negative"] if _annual_cost_pct > 0.01
+                                    else COLORS["positive"]),   unsafe_allow_html=True)
+            _cc3.markdown(kpi_card("Sharpe Reduction",   f"{_sharpe_drag:.3f}",
+                                    accent=COLORS["warning"]),  unsafe_allow_html=True)
 
         st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
 
