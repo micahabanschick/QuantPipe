@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import plotly.graph_objects as go
-from scipy.stats import norm as _scipy_norm
+from scipy.stats import norm as _scipy_norm, t as _scipy_t
 import streamlit as st
 
 from reports._theme import (
@@ -276,22 +276,44 @@ with tab_factor:
                     ic_result = compute_ic(fac_pivot, price_piv, ic_window)
 
                 if ic_result and ic_result.values:
-                    bar_colors = [COLORS["positive"] if v >= 0 else COLORS["negative"] for v in ic_result.values]
+                    _ic_arr   = np.array(ic_result.values)
+                    _n_sym    = max(len(selected_syms), 3)
+                    _n_obs    = len(_ic_arr)
+
+                    # Per-observation SE and p-value (t-test for Spearman correlation)
+                    _ic_se    = np.sqrt(np.clip(1 - _ic_arr**2, 0, 1) / max(_n_sym - 2, 1))
+                    _ic_t     = np.where(_ic_se > 0, _ic_arr / _ic_se, 0)
+                    _ic_pval  = 2 * _scipy_t.sf(np.abs(_ic_t), df=max(_n_sym - 2, 1))
+                    _ic_ci_hi = _ic_arr + 1.96 * _ic_se
+                    _ic_ci_lo = _ic_arr - 1.96 * _ic_se
+
+                    # Colour by significance: green=sig positive, red=sig negative, gold=NS
+                    bar_colors = [
+                        COLORS["positive"] if (v >= 0 and p < 0.05) else
+                        COLORS["negative"] if (v <  0 and p < 0.05) else
+                        COLORS["gold_dim"]
+                        for v, p in zip(_ic_arr, _ic_pval)
+                    ]
+
+                    # Mean IC confidence interval (analytical)
+                    _ic_std       = float(np.std(_ic_arr))
+                    _ic_se_mean   = _ic_std / np.sqrt(_n_obs) if _n_obs > 1 else float("nan")
+                    _ci_lo_mean   = ic_result.mean_ic - 1.96 * _ic_se_mean
+                    _ci_hi_mean   = ic_result.mean_ic + 1.96 * _ic_se_mean
+                    _pct_sig      = int(100 * np.mean(_ic_pval < 0.05))
+
                     fig_ic = go.Figure()
 
-                    # SPY regime overlay: shade periods where SPY 252d rolling return < 0
+                    # SPY bear regime shading
                     if spy_overlay and prices_pl is not None:
                         try:
                             _spy_px = prices_pl.filter(pl.col("symbol") == "SPY").sort("date").to_pandas().set_index("date")["close"]
                             _spy_px.index = pd.to_datetime(_spy_px.index)
                             _spy_roll = _spy_px.rolling(252).apply(lambda x: x[-1] / x[0] - 1, raw=True)
-                            _bear = _spy_roll < 0
-                            _in_bear = False
-                            _bear_start = None
+                            _bear, _in_bear, _bear_start = _spy_roll < 0, False, None
                             for _dt, _is_bear in _bear.items():
                                 if _is_bear and not _in_bear:
-                                    _bear_start = _dt
-                                    _in_bear = True
+                                    _bear_start, _in_bear = _dt, True
                                 elif not _is_bear and _in_bear:
                                     fig_ic.add_vrect(x0=str(_bear_start.date()), x1=str(_dt.date()),
                                                      fillcolor="rgba(255,75,75,0.08)", layer="below", line_width=0)
@@ -302,28 +324,120 @@ with tab_factor:
                         except Exception:
                             pass
 
+                    # 95 % CI band
+                    fig_ic.add_trace(go.Scatter(
+                        x=ic_result.dates + ic_result.dates[::-1],
+                        y=list(_ic_ci_hi) + list(_ic_ci_lo[::-1]),
+                        fill="toself",
+                        fillcolor="rgba(201,162,39,0.08)",
+                        line=dict(width=0), showlegend=True,
+                        name="95% CI", hoverinfo="skip",
+                    ))
                     fig_ic.add_trace(go.Bar(
                         x=ic_result.dates, y=ic_result.values,
-                        marker=dict(color=bar_colors, line=dict(width=0)), opacity=0.55,
-                        name="IC",
+                        marker=dict(color=bar_colors, line=dict(width=0)), opacity=0.65,
+                        name="IC (gold=NS, green/red=p<0.05)",
                         hovertemplate="%{x|%Y-%m-%d}: %{y:.3f}<extra>IC</extra>",
                     ))
                     fig_ic.add_trace(go.Scatter(
                         x=ic_result.dates, y=ic_result.rolling_mean,
                         line=dict(color=COLORS["teal"], width=2), name="6-period MA",
-                        hovertemplate="%{x|%Y-%m-%d}: %{y:.3f}<extra>MA</extra>",
                     ))
                     fig_ic.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
                     apply_theme(fig_ic, legend_inside=True)
-                    fig_ic.update_layout(
-                        height=280,
-                        yaxis=dict(tickformat=".2f", title="Rank IC"),
-                    )
+                    fig_ic.update_layout(height=300, yaxis=dict(tickformat=".2f", title="Rank IC"))
                     st.plotly_chart(fig_ic, width="stretch", config=PLOTLY_CONFIG)
 
-                    c_a, c_b = st.columns(2)
-                    c_a.metric("Mean IC", f"{ic_result.mean_ic:.4f}")
-                    c_b.metric("IC IR",   f"{ic_result.icir:.3f}")
+                    c_a, c_b, c_c = st.columns(3)
+                    c_a.metric("Mean IC",
+                               f"{ic_result.mean_ic:.4f}",
+                               delta=f"95% CI [{_ci_lo_mean:.4f}, {_ci_hi_mean:.4f}]",
+                               delta_color="off")
+                    c_b.metric("IC IR", f"{ic_result.icir:.3f}")
+                    c_c.metric("% Significant",  f"{_pct_sig}%",
+                               delta=f"(p<0.05, n={_n_obs} periods)",
+                               delta_color="off")
+
+                    # ── IC across lookback windows ──────────────────────────────
+                    st.markdown(section_label("IC across Lookback Windows"), unsafe_allow_html=True)
+                    st.caption("Shows whether the factor was consistently predictive across different historical periods.")
+                    _lb_rows = []
+                    for _lb in [1, 3, 5, lookback_years]:
+                        if _lb > lookback_years:
+                            continue
+                        _lb_start = date(_end.year - _lb, _end.month, _end.day)
+                        try:
+                            _lb_feat = _features(_symbols, str(_lb_start), str(_end))
+                            if _lb_feat is None:
+                                continue
+                            _lb_fp   = factor_pivot_from_features(_lb_feat, selected_syms, selected_feature)
+                            _lb_ic   = compute_ic(_lb_fp, price_piv, ic_window) if price_piv is not None else None
+                            if _lb_ic and _lb_ic.values:
+                                _lv = np.array(_lb_ic.values)
+                                _ls = np.sqrt(np.clip(1 - _lv**2, 0, 1) / max(_n_sym - 2, 1))
+                                _lp = 2 * _scipy_t.sf(np.abs(np.where(_ls > 0, _lv / _ls, 0)), df=max(_n_sym - 2, 1))
+                                _lb_rows.append({
+                                    "Lookback": f"{_lb}yr",
+                                    "Mean IC":  round(_lb_ic.mean_ic, 4),
+                                    "IC IR":    round(_lb_ic.icir, 3),
+                                    "N periods":len(_lv),
+                                    "% Sig (p<0.05)": f"{int(100 * np.mean(_lp < 0.05))}%",
+                                })
+                        except Exception:
+                            pass
+                    if _lb_rows:
+                        _lb_df = pd.DataFrame(_lb_rows)
+                        st.dataframe(
+                            _lb_df.style.format({"Mean IC": "{:+.4f}", "IC IR": "{:.3f}"}),
+                            use_container_width=True, hide_index=True,
+                        )
+                    else:
+                        st.caption("Not enough data for lookback comparison.")
+
+                    # ── Feature contribution decomposition ──────────────────────
+                    st.markdown(section_label("Feature Contribution to Current Signal"), unsafe_allow_html=True)
+                    st.caption("Weighted average factor z-score across the current portfolio positions.")
+                    try:
+                        from config.settings import DATA_DIR as _DATA_DIR
+                        _tw_path = _DATA_DIR / "gold" / "equity" / "target_weights.parquet"
+                        if _tw_path.exists():
+                            _tw_df   = pl.read_parquet(_tw_path).to_pandas()
+                            _port_syms = _tw_df["symbol"].unique().tolist()
+                            _latest  = features_df.filter(pl.col("date") == features_df["date"].max()).to_pandas()
+                            _latest  = _latest[_latest["symbol"].isin(_port_syms)].set_index("symbol")
+                            _wt      = _tw_df.groupby("symbol")["weight"].last()
+                            _contrib = {}
+                            for _ff in present:
+                                if _ff in _latest.columns:
+                                    _merged_c = _latest[[_ff]].join(_wt, how="inner")
+                                    _contrib[FEATURE_LABELS.get(_ff, _ff)] = float(
+                                        (_merged_c[_ff] * _merged_c["weight"]).sum()
+                                    )
+                            if _contrib:
+                                _cdf = pd.DataFrame([
+                                    {"Feature": k, "Weighted Z-Score": v}
+                                    for k, v in sorted(_contrib.items(), key=lambda x: abs(x[1]), reverse=True)
+                                ])
+                                _cc = [COLORS["positive"] if v >= 0 else COLORS["negative"]
+                                       for v in _cdf["Weighted Z-Score"]]
+                                _fig_contrib = go.Figure(go.Bar(
+                                    x=_cdf["Feature"], y=_cdf["Weighted Z-Score"],
+                                    marker=dict(color=_cc, line=dict(width=0)),
+                                    text=[f"{v:+.3f}" for v in _cdf["Weighted Z-Score"]],
+                                    textposition="outside",
+                                    hovertemplate="<b>%{x}</b>: %{y:+.3f}<extra></extra>",
+                                ))
+                                _fig_contrib.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+                                apply_theme(_fig_contrib, title="Portfolio-weighted factor z-score", height=240)
+                                _fig_contrib.update_layout(showlegend=False)
+                                st.plotly_chart(_fig_contrib, width="stretch", config=PLOTLY_CONFIG)
+                            else:
+                                st.caption("No overlap between portfolio symbols and feature data.")
+                        else:
+                            st.caption("No target weights found — run a rebalance first.")
+                    except Exception as _ce:
+                        st.caption(f"Contribution analysis unavailable: {_ce}")
+
                 else:
                     st.info("Could not compute IC — price data unavailable.")
 

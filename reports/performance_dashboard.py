@@ -607,12 +607,26 @@ with tab_ov:
     if stats is None:
         st.warning("No equity curve available. Ensure data and features are populated.")
     else:
+        # Bootstrap 95% CI on Sharpe ratio (500 resamples, lightweight)
+        _sharpe_ci = None
+        if daily_rets is not None and len(daily_rets) > 30:
+            try:
+                _bs = np.array([
+                    (lambda s: s.mean() / s.std() * np.sqrt(252) if s.std() > 1e-10 else 0)(
+                        daily_rets.sample(len(daily_rets), replace=True)
+                    )
+                    for _ in range(500)
+                ])
+                _sharpe_ci = f"95% CI [{np.percentile(_bs, 2.5):.2f}, {np.percentile(_bs, 97.5):.2f}]"
+            except Exception:
+                pass
+
         # ── KPI row 1 ─────────────────────────────────────────────────────────
         c1, c2, c3, c4 = st.columns(4)
         for col, label, val, delta, dup, accent in [
             (c1, "Total Return",  f"{stats['total']:.1%}",   None, None,        COLORS["positive"]),
             (c2, "CAGR",          f"{stats['cagr']:.1%}",    None, None,        COLORS["teal"]),
-            (c3, "Sharpe Ratio",  f"{stats['sharpe']:.2f}",  None, None,        COLORS["blue"]),
+            (c3, "Sharpe Ratio",  f"{stats['sharpe']:.2f}",  _sharpe_ci, None, COLORS["blue"]),
             (c4, "Sortino Ratio", f"{stats['sortino']:.2f}", None, None,        COLORS["purple"]),
         ]:
             col.markdown(kpi_card(label, val, accent=accent), unsafe_allow_html=True)
