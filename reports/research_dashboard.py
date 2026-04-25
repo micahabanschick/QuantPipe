@@ -1253,7 +1253,6 @@ with tab_kalman:
         _kcols[1].markdown(kpi_card("Mean Innovation",
                                     f"{float(np.mean(_kr.innovations)):+.5f}",
                                     delta="≈0 if well-calibrated",
-                                    delta_color="off" if hasattr(None, "x") else None,
                                     accent=COLORS["gold"]), unsafe_allow_html=True)
 
         # Current market beta (first factor)
