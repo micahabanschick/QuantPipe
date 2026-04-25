@@ -9,27 +9,20 @@ Type=simple
 User=quantpipe
 WorkingDirectory=/opt/ibgateway
 
-# Virtual display + IBC env vars
-Environment=DISPLAY=:99
-Environment=IBC_PATH=/opt/ibc
-Environment=TWS_PATH=/opt/ibgateway
-Environment=IBC_INI=/opt/ibc/config.ini
-Environment=GATEWAY_OR_TWS=gateway
-Environment=JAVA_PATH=/usr/bin/java
-
-# Give Xvfb a moment to be ready before launching Gateway
+# Give Xvfb a moment to be ready
 ExecStartPre=/bin/sleep 5
 
-ExecStart=/bin/bash /opt/ibc/scripts/gateway.sh
+ExecStart=/bin/bash /opt/quantpipe/deploy/ibkr/start_gateway.sh
 
 StandardOutput=append:/var/log/quantpipe/ibgateway.log
 StandardError=append:/var/log/quantpipe/ibgateway.log
 
-# IB Gateway auto-restarts daily; systemd should restart it if it crashes
+# Only restart on crash — not if credentials are missing (exit 1)
 Restart=on-failure
 RestartSec=60
+StartLimitIntervalSec=300
+StartLimitBurst=3
 
-# Resource limits — Gateway is Java-based, needs headroom
 MemoryMax=1G
 CPUQuota=60%
 
