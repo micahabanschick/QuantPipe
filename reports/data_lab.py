@@ -258,81 +258,66 @@ with tab_ingest:
 
         if not series_id:
             st.info("Pick a popular series or enter a custom series ID above.")
-            series_id = None
-
-        if series_id is not None:
-         # Show series metadata
-         with st.spinner(f"Fetching metadata for {series_id}…"):
-            info = fred.get_series_info(series_id)
-        st.markdown(
-            f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'
-            f'border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:0.80rem;">'
-            f'<b style="color:{COLORS["gold"]};">{info["id"]}</b> — '
-            f'<span style="color:{COLORS["text"]};">{info["title"]}</span><br>'
-            f'<span style="color:{COLORS["text_muted"]};">Units: {info["units"]} · '
-            f'Frequency: {info["frequency"]} · Last updated: {info["last_updated"]}</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-        fd1, fd2 = st.columns(2)
-        with fd1:
-            fred_start = st.date_input("Start date", value=date(2015, 1, 1), key="fred_start")
-        with fd2:
-            fred_end   = st.date_input("End date",   value=date.today(),      key="fred_end")
-
-        source_name = st.text_input(
-            "Save as", value=f"fred_{series_id.lower()}", key="fred_savename"
-        )
-
-        if st.button("⬇ Pull from FRED", key="fred_pull"):
-            with st.spinner(f"Pulling {series_id} from {fred_start} to {fred_end}…"):
-                try:
-                    raw_pl = fred.get_series(series_id, start=str(fred_start), end=str(fred_end))
-                    if raw_pl.is_empty():
-                        st.error("No data returned. Check the series ID and date range.")
-                except Exception as exc:
-                    st.error(f"FRED API error: {exc}")
-
-            raw_pd = raw_pl.to_pandas()
-            st.success(f"Pulled {len(raw_pd):,} rows for {series_id}")
-
-            # Preview
-            st.markdown(section_label("Preview"), unsafe_allow_html=True)
-            n_null = raw_pd[series_id].isnull().sum()
-            p1, p2, p3 = st.columns(3)
-            p1.metric("Rows",        f"{len(raw_pd):,}")
-            p2.metric("Null values", f"{n_null:,}")
-            p3.metric("Date range",  f"{raw_pd['date'].min().date()} → {raw_pd['date'].max().date()}")
-
-            st.dataframe(raw_pd.head(10), use_container_width=True, hide_index=True)
-
-            fig_fred = go.Figure(go.Scatter(
-                x=raw_pd["date"], y=raw_pd[series_id],
-                mode="lines", line=dict(color=COLORS["gold"], width=1.8),
-                name=series_id,
-                hovertemplate="%{x}<br>%{y}<extra></extra>",
-            ))
-            apply_theme(fig_fred, title=f"{info['title']} ({info['units']})", height=260)
-            st.plotly_chart(fig_fred, use_container_width=True, config=PLOTLY_CONFIG)
-
-            # Save + record history
-            out_path = ALT_DIR / f"{source_name}.parquet"
-            raw_pl.write_parquet(out_path)
-            _save_meta(source_name, {
-                "source":         "FRED",
-                "series_id":      series_id,
-                "title":          info.get("title", ""),
-                "units":          info.get("units", ""),
-                "frequency":      info.get("frequency", ""),
-                "last_refreshed": datetime.now().isoformat(timespec="seconds"),
-                "rows":           len(raw_pd),
-                "date_from":      str(fred_start),
-                "date_to":        str(fred_end),
-            })
-            st.success(f"Saved to `data/alt/{source_name}.parquet`")
-            st.info("Open the **Tradability Check** tab to analyse this signal.")
-
+        else:
+            with st.spinner(f"Fetching metadata for {series_id}…"):
+                info = fred.get_series_info(series_id)
+            st.markdown(
+                f'<div style="background:{COLORS["card_bg"]};border:1px solid {COLORS["border"]};'
+                f'border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:0.80rem;">'
+                f'<b style="color:{COLORS["gold"]};">{info["id"]}</b> — '
+                f'<span style="color:{COLORS["text"]};">{info["title"]}</span><br>'
+                f'<span style="color:{COLORS["text_muted"]};">Units: {info["units"]} · '
+                f'Frequency: {info["frequency"]} · Last updated: {info["last_updated"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            fd1, fd2 = st.columns(2)
+            with fd1:
+                fred_start = st.date_input("Start date", value=date(2015, 1, 1), key="fred_start")
+            with fd2:
+                fred_end = st.date_input("End date", value=date.today(), key="fred_end")
+            source_name = st.text_input(
+                "Save as", value=f"fred_{series_id.lower()}", key="fred_savename"
+            )
+            if st.button("⬇ Pull from FRED", key="fred_pull"):
+                _pull_ok, raw_pl = False, None
+                with st.spinner(f"Pulling {series_id} from {fred_start} to {fred_end}…"):
+                    try:
+                        raw_pl = fred.get_series(series_id, start=str(fred_start), end=str(fred_end))
+                        _pull_ok = not raw_pl.is_empty()
+                        if not _pull_ok:
+                            st.error("No data returned. Check the series ID and date range.")
+                    except Exception as exc:
+                        st.error(f"FRED API error: {exc}")
+                if _pull_ok and raw_pl is not None:
+                    raw_pd = raw_pl.to_pandas()
+                    st.success(f"Pulled {len(raw_pd):,} rows for {series_id}")
+                    st.markdown(section_label("Preview"), unsafe_allow_html=True)
+                    p1, p2, p3 = st.columns(3)
+                    p1.metric("Rows", f"{len(raw_pd):,}")
+                    p2.metric("Null values", f"{raw_pd[series_id].isnull().sum():,}")
+                    p3.metric("Date range",
+                              f"{raw_pd['date'].min().date()} → {raw_pd['date'].max().date()}")
+                    st.dataframe(raw_pd.head(10), use_container_width=True, hide_index=True)
+                    fig_fred = go.Figure(go.Scatter(
+                        x=raw_pd["date"], y=raw_pd[series_id],
+                        mode="lines", line=dict(color=COLORS["gold"], width=1.8),
+                        name=series_id, hovertemplate="%{x}<br>%{y}<extra></extra>",
+                    ))
+                    apply_theme(fig_fred, title=f"{info['title']} ({info['units']})", height=260)
+                    st.plotly_chart(fig_fred, use_container_width=True, config=PLOTLY_CONFIG)
+                    out_path = ALT_DIR / f"{source_name}.parquet"
+                    raw_pl.write_parquet(out_path)
+                    _save_meta(source_name, {
+                        "source": "FRED", "series_id": series_id,
+                        "title": info.get("title", ""), "units": info.get("units", ""),
+                        "frequency": info.get("frequency", ""),
+                        "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                        "rows": len(raw_pd),
+                        "date_from": str(fred_start), "date_to": str(fred_end),
+                    })
+                    st.success(f"Saved to `data/alt/{source_name}.parquet`")
+                    st.info("Open the **Tradability Check** tab to analyse this signal.")
 
     # ── Upload path (only when FRED not selected) ──────────────────────────────
     if not _is_fred:
