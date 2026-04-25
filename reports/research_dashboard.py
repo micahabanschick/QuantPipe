@@ -83,12 +83,6 @@ def _walk_forward(
         return str(exc)
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    st.header("Controls")
-    lookback_years = st.slider("Feature lookback (years)", 1, 7, 6)
-
 # ── Page header ───────────────────────────────────────────────────────────────
 
 st.markdown(
@@ -99,6 +93,18 @@ st.markdown(
     ),
     unsafe_allow_html=True,
 )
+
+# ── Controls ──────────────────────────────────────────────────────────────────
+
+_ctrl, _spacer = st.columns([2, 6])
+with _ctrl:
+    lookback_years = st.select_slider(
+        "Feature lookback",
+        options=[1, 2, 3, 4, 5, 6, 7],
+        value=6,
+        format_func=lambda x: f"{x} yr",
+        key="research_lookback",
+    )
 
 # ── Universe + feature load ───────────────────────────────────────────────────
 
