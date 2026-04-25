@@ -194,6 +194,20 @@ html, body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }}
 
+/* ── Strip opaque backgrounds from Streamlit's fixed header / toolbar ──────── */
+header[data-testid="stHeader"],
+[data-testid="stHeader"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"],
+[data-testid="stSidebarCollapsedControl"] > div,
+[data-testid="collapsedControl"] {{
+    background: transparent !important;
+    background-color: transparent !important;
+    box-shadow: none !important;
+    border-bottom: none !important;
+}}
+
 /* ── Background — html/body is the true visual background in Streamlit 1.56 ── */
 html, body, #root {{
     background:
