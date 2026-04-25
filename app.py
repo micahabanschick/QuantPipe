@@ -23,11 +23,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Logo — must be called before st.navigation() to appear above nav links ────
-
-if _LOGO.exists():
-    st.logo(str(_LOGO), size="large")
-
 # ── CSS ────────────────────────────────────────────────────────────────────────
 
 NAV_CSS = f"""
@@ -57,24 +52,17 @@ NAV_CSS = f"""
     padding-left: 10px;
 }}
 
-/* ── Logo — sharp rendering + radial gradient fade at all edges ──────────── */
-[data-testid="stLogo"],
-[data-testid="stSidebarHeader"] {{
-    padding: 8px 8px 4px;
-    background: transparent;
-}}
-[data-testid="stLogo"] img,
-[data-testid="stSidebarHeader"] img {{
+/* ── Sidebar logo image — sharp + radial gradient fade at edges ──────────── */
+[data-testid="stSidebar"] [data-testid="stImage"] img {{
     image-rendering: -webkit-optimize-contrast;
     image-rendering: high-quality;
     width: 100% !important;
-    max-width: 220px;
     height: auto;
-
-    /* Radial mask: fully opaque at the circular logo, fades at all edges */
+    display: block;
+    margin: 0 auto;
     -webkit-mask-image: radial-gradient(
         ellipse 78% 78% at 50% 52%,
-        black           45%,
+        black            45%,
         rgba(0,0,0,0.95) 55%,
         rgba(0,0,0,0.7)  65%,
         rgba(0,0,0,0.35) 78%,
@@ -82,7 +70,7 @@ NAV_CSS = f"""
     );
     mask-image: radial-gradient(
         ellipse 78% 78% at 50% 52%,
-        black           45%,
+        black            45%,
         rgba(0,0,0,0.95) 55%,
         rgba(0,0,0,0.7)  65%,
         rgba(0,0,0,0.35) 78%,
@@ -157,6 +145,9 @@ pg = st.navigation(
 # ── Sidebar status + footer (renders below nav links) ─────────────────────────
 
 with st.sidebar:
+    if _LOGO.exists():
+        st.image(str(_LOGO), use_container_width=True)
+
     st.markdown(f"""
 <div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
 <div style="display:flex;align-items:center;gap:7px;padding:0 4px 4px;">
