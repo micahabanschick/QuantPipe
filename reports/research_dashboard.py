@@ -63,6 +63,37 @@ def _prices(symbols: tuple, start_str: str, end_str: str) -> pl.DataFrame | None
 
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _hurst_for_factor(symbols_t: tuple, factor: str,
+                      start_s: str, end_s: str) -> dict[str, float]:
+    from research.long_memory import hurst_rs
+    feats = _features(symbols_t, start_s, end_s)
+    if feats is None:
+        return {}
+    out: dict[str, float] = {}
+    for sym in symbols_t:
+        pv = factor_pivot_from_features(feats, [sym], factor)
+        if sym in pv.columns:
+            arr = pv[sym].dropna().values
+            if len(arr) >= 30:
+                out[sym] = hurst_rs(arr)
+    return out
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _ts_prices(sym: str, start_str: str, end_str: str) -> "pd.Series | None":
+    try:
+        bars = load_bars([sym], date.fromisoformat(start_str), date.fromisoformat(end_str), "equity")
+        if bars.is_empty():
+            return None
+        price_col = "adj_close" if "adj_close" in bars.columns else "close"
+        s = bars.sort("date").to_pandas().set_index("date")[price_col]
+        s.index = pd.to_datetime(s.index)
+        return s.dropna()
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=600)
 def _walk_forward(
     symbols: tuple,
@@ -121,8 +152,8 @@ if _symbols:
     with st.spinner("Loading features?"):
         features_df = _features(_symbols, str(_start), str(_end))
 
-tab_factor, tab_signal_analysis, tab_wfv, tab_mc = st.tabs(
-    ["  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  "]
+tab_factor, tab_signal_analysis, tab_wfv, tab_mc, tab_ts = st.tabs(
+    ["  Factor Analysis  ", "  Signal Analysis  ", "  Walk-Forward  ", "  Monte Carlo  ", "  Time Series  "]
 )
 
 # ???????????????????????????????????????????????????????????????????????????????
@@ -470,6 +501,61 @@ with tab_factor:
                     st.plotly_chart(fig_fcorr, width="stretch", config=PLOTLY_CONFIG)
                 except Exception:
                     st.info("Factor correlation unavailable.")
+
+            st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+            st.markdown(section_label("Long Memory (Hurst Exponent)"), unsafe_allow_html=True)
+            st.caption(
+                "H > 0.55 = persistent / trending.  "
+                "H ~ 0.50 = random walk.  "
+                "H < 0.45 = mean-reverting / contrarian."
+            )
+            _hurst_map = _hurst_for_factor(
+                tuple(sorted(selected_syms)), selected_factor,
+                str(_start), str(_end),
+            )
+            if _hurst_map:
+                from research.long_memory import hurst_label as _hlabel
+                _h_syms = sorted(_hurst_map, key=lambda s: _hurst_map[s], reverse=True)
+                _h_vals = [_hurst_map[s] for s in _h_syms]
+                _h_lbls = [_hlabel(v) for v in _h_vals]
+                _h_cols = [
+                    COLORS["positive"] if v > 0.55 else
+                    COLORS["negative"] if v < 0.45 else
+                    COLORS["neutral"]
+                    for v in _h_vals
+                ]
+                fig_hurst = go.Figure(go.Bar(
+                    x=_h_syms, y=_h_vals,
+                    marker=dict(color=_h_cols, line=dict(width=0)),
+                    text=[f"{v:.3f}  {l}" for v, l in zip(_h_vals, _h_lbls)],
+                    textposition="outside",
+                    textfont=dict(size=9, color=COLORS["text"]),
+                    hovertemplate="<b>%{x}</b>: H = %{y:.3f}<extra></extra>",
+                ))
+                fig_hurst.add_hline(
+                    y=0.5, line=dict(color=COLORS["border"], width=1.5, dash="dot"),
+                    annotation_text="H=0.50 random walk",
+                    annotation_font=dict(size=9, color=COLORS["text_muted"]),
+                    annotation_position="top right",
+                )
+                apply_theme(fig_hurst)
+                fig_hurst.update_layout(
+                    height=260,
+                    yaxis=dict(range=[0, 1.05], showgrid=False, title="Hurst exponent"),
+                    xaxis=dict(showgrid=False),
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_hurst, width="stretch", config=PLOTLY_CONFIG)
+                st.dataframe(
+                    pd.DataFrame({
+                        "Symbol":  _h_syms,
+                        "H (R/S)": [f"{v:.4f}" for v in _h_vals],
+                        "Regime":  _h_lbls,
+                    }),
+                    hide_index=True, use_container_width=True,
+                )
+            else:
+                st.caption("Not enough data to compute Hurst exponents (need >= 30 observations per symbol).")
 
 
 # ???????????????????????????????????????????????????????????????????????????????
@@ -841,14 +927,26 @@ with tab_wfv:
         st.error(f"Walk-forward failed: {wfv_result}")
     else:
         folds = wfv_result.folds
+        rows        = fold_summary(wfv_result)
+        sharpe_vals = [r["OOS Sharpe"] for r in rows]
+        cagr_vals   = [r["OOS CAGR"]   for r in rows]
+        dd_vals     = [r["OOS Max DD"]  for r in rows]
+        fold_labels = [f"Fold {r['Fold']}  {r['Test Start'][:7]}" for r in rows]
+        _hit_rate   = sum(v > 0 for v in sharpe_vals) / max(len(sharpe_vals), 1)
+        _worst_sh   = min(sharpe_vals) if sharpe_vals else 0.0
+        _hit_accent = (COLORS["positive"] if _hit_rate >= 0.6 else
+                       COLORS["warning"]  if _hit_rate >= 0.5 else
+                       COLORS["negative"])
+        _worst_accent = COLORS["positive"] if _worst_sh >= 0 else COLORS["negative"]
 
-        # ?? Summary KPIs ??????????????????????????????????????????????????????
         st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
         c1.markdown(kpi_card("OOS Sharpe", f"{wfv_result.combined_sharpe:.3f}",        accent=COLORS["teal"]),     unsafe_allow_html=True)
         c2.markdown(kpi_card("OOS CAGR",   f"{wfv_result.combined_cagr:.1%}",          accent=COLORS["blue"]),     unsafe_allow_html=True)
         c3.markdown(kpi_card("OOS Max DD",  f"{wfv_result.combined_max_drawdown:.1%}",  accent=COLORS["negative"]), unsafe_allow_html=True)
         c4.markdown(kpi_card("Folds",       str(len(folds)),                            accent=COLORS["neutral"]),  unsafe_allow_html=True)
+        c5.markdown(kpi_card("Hit Rate",    f"{_hit_rate:.0%}",                         accent=_hit_accent),        unsafe_allow_html=True)
+        c6.markdown(kpi_card("Worst Fold",  f"{_worst_sh:.3f}",                         accent=_worst_accent),      unsafe_allow_html=True)
 
         st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
 
@@ -880,7 +978,6 @@ with tab_wfv:
 
         # ?? Per-fold table ????????????????????????????????????????????????????
         st.markdown(section_label("Per-Fold Performance"), unsafe_allow_html=True)
-        rows = fold_summary(wfv_result)
         fold_df = pd.DataFrame(rows)
         fold_df["OOS CAGR"]   = fold_df["OOS CAGR"].map("{:.1%}".format)
         fold_df["OOS Max DD"] = fold_df["OOS Max DD"].map("{:.1%}".format)
@@ -889,9 +986,6 @@ with tab_wfv:
 
         # ?? Per-fold bar charts ???????????????????????????????????????????????
         col_sharpe_bar, col_cagr_bar = st.columns(2)
-        sharpe_vals = [r["OOS Sharpe"] for r in rows]
-        cagr_vals   = [r["OOS CAGR"] for r in rows]   # raw float before formatting
-        fold_labels = [f"Fold {r['Fold']}  {r['Test Start'][:7]}" for r in rows]
 
         with col_sharpe_bar:
             fig_sb = go.Figure(go.Bar(
@@ -920,6 +1014,80 @@ with tab_wfv:
             fig_cb.update_layout(height=240, title="OOS CAGR by Fold",
                                   yaxis=dict(tickformat=".0%", showgrid=False), xaxis=dict(showgrid=False), showlegend=False)
             st.plotly_chart(fig_cb, width="stretch", config=PLOTLY_CONFIG)
+
+        st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Per-Fold Max Drawdown"), unsafe_allow_html=True)
+        fig_dd = go.Figure(go.Bar(
+            x=fold_labels, y=[v * 100 for v in dd_vals],
+            marker=dict(color=COLORS["negative"], line=dict(width=0)),
+            text=[f"{v:.1%}" for v in dd_vals], textposition="outside",
+            textfont=dict(size=11, color=COLORS["text"]),
+            hovertemplate="<b>%{x}</b>: %{y:.2f}%<extra>Max DD</extra>",
+        ))
+        fig_dd.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_dd)
+        fig_dd.update_layout(
+            height=220, title="OOS Max Drawdown by Fold",
+            yaxis=dict(title="Max Drawdown (%)", showgrid=False),
+            xaxis=dict(showgrid=False),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_dd, width="stretch", config=PLOTLY_CONFIG)
+
+        st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Sharpe Stability Across Folds"), unsafe_allow_html=True)
+        if len(sharpe_vals) >= 2:
+            _fold_seq  = list(range(1, len(rows) + 1))
+            _slope, _intercept = np.polyfit(_fold_seq, sharpe_vals, 1)
+            _trend_y   = [_slope * x + _intercept for x in _fold_seq]
+            _trend_dir = ("negative" if _slope < -0.05 else
+                          "positive" if _slope >  0.05 else "flat")
+            _trend_msg = {
+                "negative": "Sharpe declining across folds -- possible overfitting or regime change.",
+                "positive": "Sharpe improving across folds -- strategy adapts well to new data.",
+                "flat":     "Sharpe stable across folds -- regime-robust signal.",
+            }[_trend_dir]
+            _stab_col, _stab_cap = st.columns([2, 1])
+            with _stab_col:
+                fig_stab = go.Figure()
+                fig_stab.add_trace(go.Scatter(
+                    x=_fold_seq, y=_trend_y,
+                    mode="lines",
+                    line=dict(color=COLORS["warning"], width=1.5, dash="dash"),
+                    name=f"Trend (slope {_slope:+.3f})",
+                    hoverinfo="skip",
+                ))
+                fig_stab.add_trace(go.Scatter(
+                    x=_fold_seq, y=sharpe_vals,
+                    mode="markers+text",
+                    marker=dict(color=COLORS["gold"], size=10,
+                                line=dict(color=COLORS["text"], width=1)),
+                    text=[f"F{i}" for i in _fold_seq],
+                    textposition="top center",
+                    textfont=dict(size=9, color=COLORS["text"]),
+                    name="OOS Sharpe",
+                    hovertemplate="Fold %{x}: Sharpe = %{y:.3f}<extra></extra>",
+                ))
+                fig_stab.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+                apply_theme(fig_stab, legend_inside=True)
+                fig_stab.update_layout(
+                    height=240,
+                    xaxis=dict(title="Fold", showgrid=False, tickmode="linear"),
+                    yaxis=dict(title="OOS Sharpe"),
+                )
+                st.plotly_chart(fig_stab, width="stretch", config=PLOTLY_CONFIG)
+            with _stab_cap:
+                st.markdown(
+                    f'<div style="margin-top:60px;color:{COLORS["neutral"]};font-size:0.82rem;">'
+                    f"<b>Trend:</b> {_trend_dir} ({_slope:+.3f} per fold)<br><br>"
+                    f"{_trend_msg}<br><br>"
+                    f'<span style="color:{COLORS["text_muted"]};font-size:0.74rem;">'
+                    "Negative slope signals overfitting. Flat/positive = regime-robust."
+                    "</span></div>",
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("Need at least 2 folds for stability analysis.")
 
 # ???????????????????????????????????????????????????????????????????????????????
 # TAB 5 - MONTE CARLO BOOTSTRAP
@@ -1029,6 +1197,57 @@ with tab_mc:
     rs4.markdown(kpi_card("Skew",       f"{r.ret_skew:.3f}",       accent=COLORS["warning"]),  unsafe_allow_html=True)
     rs5.markdown(kpi_card("Kurt",       f"{r.ret_kurt:.3f}",       accent=COLORS["warning"]),  unsafe_allow_html=True)
     rs6.markdown(kpi_card("Block Size", str(r.block_size),         accent=COLORS["neutral"]),  unsafe_allow_html=True)
+
+    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Return Autocorrelation (Serial Dependence)"), unsafe_allow_html=True)
+    st.caption(
+        f"Bars outside the dashed +/-{r.acf_ci:.3f} lines (95% CI) indicate statistically significant "
+        "serial dependence. Significant ACF(r^2) = volatility clustering -- consider increasing block size."
+    )
+    _acf_col1, _acf_col2 = st.columns(2)
+    _acf_lags = list(range(1, len(r.acf_returns) + 1))
+    with _acf_col1:
+        fig_acf = go.Figure(go.Bar(
+            x=_acf_lags, y=r.acf_returns,
+            marker=dict(
+                color=[COLORS["positive"] if abs(v) > r.acf_ci else COLORS["neutral"]
+                       for v in r.acf_returns],
+                line=dict(width=0),
+            ),
+            opacity=0.8,
+            hovertemplate="Lag %{x}: %{y:.3f}<extra>ACF(r)</extra>",
+        ))
+        fig_acf.add_hline(y=r.acf_ci,  line=dict(color=COLORS["border"], width=1, dash="dot"))
+        fig_acf.add_hline(y=-r.acf_ci, line=dict(color=COLORS["border"], width=1, dash="dot"))
+        fig_acf.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_acf, title="ACF of Returns")
+        fig_acf.update_layout(
+            height=220, showlegend=False,
+            xaxis=dict(title="Lag (periods)", showgrid=False, tickmode="linear"),
+            yaxis=dict(title="Autocorrelation"),
+        )
+        st.plotly_chart(fig_acf, width="stretch", config=PLOTLY_CONFIG)
+    with _acf_col2:
+        fig_acf2 = go.Figure(go.Bar(
+            x=_acf_lags, y=r.acf_squared,
+            marker=dict(
+                color=[COLORS["warning"] if abs(v) > r.acf_ci else COLORS["neutral"]
+                       for v in r.acf_squared],
+                line=dict(width=0),
+            ),
+            opacity=0.8,
+            hovertemplate="Lag %{x}: %{y:.3f}<extra>ACF(r^2)</extra>",
+        ))
+        fig_acf2.add_hline(y=r.acf_ci,  line=dict(color=COLORS["border"], width=1, dash="dot"))
+        fig_acf2.add_hline(y=-r.acf_ci, line=dict(color=COLORS["border"], width=1, dash="dot"))
+        fig_acf2.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_acf2, title="ACF of Squared Returns (Volatility Clustering)")
+        fig_acf2.update_layout(
+            height=220, showlegend=False,
+            xaxis=dict(title="Lag (periods)", showgrid=False, tickmode="linear"),
+            yaxis=dict(title="Autocorrelation"),
+        )
+        st.plotly_chart(fig_acf2, width="stretch", config=PLOTLY_CONFIG)
 
     st.markdown("<div style='height:18px'/>", unsafe_allow_html=True)
 
@@ -1157,6 +1376,58 @@ with tab_mc:
             st.plotly_chart(fig_d, width="stretch", config=PLOTLY_CONFIG)
 
     # ?? Section C: Target Achievement ?????????????????????????????????????????
+    st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+    _dist3_col1, _dist3_col2 = st.columns(2)
+    with _dist3_col1:
+        _sor_med = float(np.median(r.sortino_dist))
+        fig_sor  = go.Figure()
+        fig_sor.add_trace(go.Histogram(
+            x=r.sortino_dist, nbinsx=80,
+            marker=dict(color=COLORS["purple"], line=dict(width=0)), opacity=0.65,
+            name="Bootstrap", histnorm="probability density",
+            hovertemplate="%{x:.3f}: %{y:.4f}<extra></extra>",
+        ))
+        fig_sor.add_vline(x=_sor_med, line=dict(color=COLORS["text"], width=1.5, dash="dash"),
+                          annotation_text=f"Med {_sor_med:.2f}", annotation_font_size=9)
+        fig_sor.add_vline(x=r.orig_sortino, line=dict(color=COLORS["warning"], width=2),
+                          annotation_text=f"Actual {r.orig_sortino:.2f}", annotation_font_size=9,
+                          annotation_position="top left")
+        apply_theme(fig_sor, legend_inside=True)
+        fig_sor.update_layout(
+            height=240, title=dict(text="Sortino Ratio", font=dict(size=11)),
+            showlegend=False, bargap=0.02,
+        )
+        st.plotly_chart(fig_sor, width="stretch", config=PLOTLY_CONFIG)
+    with _dist3_col2:
+        _tw_arr  = np.array(r.terminal_values)
+        _tw_med  = float(np.median(_tw_arr))
+        _tw_orig = float(r.orig_equity[-1]) if r.orig_equity else float(mc_capital)
+        fig_tw   = go.Figure()
+        fig_tw.add_trace(go.Histogram(
+            x=_tw_arr / 1_000, nbinsx=80,
+            marker=dict(color=COLORS["blue"], line=dict(width=0)), opacity=0.65,
+            name="Bootstrap", histnorm="probability density",
+            hovertemplate="$%{x:,.0f}K: %{y:.4f}<extra></extra>",
+        ))
+        fig_tw.add_vline(x=mc_capital / 1_000,
+                         line=dict(color=COLORS["negative"], width=1.5, dash="dot"),
+                         annotation_text="Initial", annotation_font_size=9,
+                         annotation_position="top right")
+        fig_tw.add_vline(x=_tw_med / 1_000,
+                         line=dict(color=COLORS["text"], width=1.5, dash="dash"),
+                         annotation_text=f"Med ${_tw_med/1_000:,.0f}K", annotation_font_size=9)
+        fig_tw.add_vline(x=_tw_orig / 1_000,
+                         line=dict(color=COLORS["warning"], width=2),
+                         annotation_text=f"Actual ${_tw_orig/1_000:,.0f}K", annotation_font_size=9,
+                         annotation_position="top left")
+        apply_theme(fig_tw, legend_inside=True)
+        fig_tw.update_layout(
+            height=240, title=dict(text="Terminal Wealth Distribution ($K)", font=dict(size=11)),
+            showlegend=False, bargap=0.02,
+            xaxis=dict(title="Terminal Wealth ($K)"),
+        )
+        st.plotly_chart(fig_tw, width="stretch", config=PLOTLY_CONFIG)
+
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Joint Target Achievement"), unsafe_allow_html=True)
 
@@ -1253,6 +1524,38 @@ with tab_mc:
 
     # ?? Section F: Summary Table ??????????????????????????????????????????????
     st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Value at Risk & Expected Shortfall"), unsafe_allow_html=True)
+    st.caption("Computed from the simulated terminal wealth distribution. VaR = worst-outcome threshold; ES (CVaR) = expected loss given breach. Positive = loss relative to initial capital.")
+    _tw_full    = np.array(r.terminal_values)
+    _var95_val  = float(np.percentile(_tw_full, 5))
+    _var99_val  = float(np.percentile(_tw_full, 1))
+    _es95_mask  = _tw_full <= _var95_val
+    _es99_mask  = _tw_full <= _var99_val
+    _es95_val   = float(_tw_full[_es95_mask].mean()) if _es95_mask.any() else _var95_val
+    _es99_val   = float(_tw_full[_es99_mask].mean()) if _es99_mask.any() else _var99_val
+    _var95_loss = mc_capital - _var95_val
+    _var99_loss = mc_capital - _var99_val
+    _es95_loss  = mc_capital - _es95_val
+    _es99_loss  = mc_capital - _es99_val
+
+    def _loss_label(v: float) -> str:
+        return f"${abs(v):,.0f} {'loss' if v > 0 else 'gain'}"
+
+    _vc1, _vc2, _vc3, _vc4 = st.columns(4)
+    _vc1.markdown(kpi_card("VaR 95%", _loss_label(_var95_loss),
+                            accent=COLORS["negative"] if _var95_loss > 0 else COLORS["positive"]),
+                  unsafe_allow_html=True)
+    _vc2.markdown(kpi_card("VaR 99%", _loss_label(_var99_loss),
+                            accent=COLORS["negative"] if _var99_loss > 0 else COLORS["positive"]),
+                  unsafe_allow_html=True)
+    _vc3.markdown(kpi_card("ES 95%",  _loss_label(_es95_loss),
+                            accent=COLORS["negative"] if _es95_loss > 0 else COLORS["positive"]),
+                  unsafe_allow_html=True)
+    _vc4.markdown(kpi_card("ES 99%",  _loss_label(_es99_loss),
+                            accent=COLORS["negative"] if _es99_loss > 0 else COLORS["positive"]),
+                  unsafe_allow_html=True)
+
+    st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Summary Table"), unsafe_allow_html=True)
 
     _sum_df = pd.DataFrame(r.summary_rows)
@@ -1274,6 +1577,257 @@ with tab_mc:
     st.dataframe(_sum_display, width="stretch", hide_index=True)
 
 st.caption("QuantPipe - for research and paper trading only. Not investment advice.")
+
+# ===============================================================================
+# TAB: TIME SERIES
+# ===============================================================================
+
+with tab_ts:
+    from research.spectral import (
+        compute_psd, dominant_cycles, fft_filter,
+        haar_wavelet_1d, estimate_gbm_params, gbm_paths,
+        acf as _spec_acf,
+    )
+
+    # ── Controls ───────────────────────────────────────────────────────────────
+    _ts_c1, _ts_c2 = st.columns([1, 3])
+    with _ts_c1:
+        ts_sym = st.selectbox(
+            "Asset", sorted(_sym_list) if _sym_list else ["SPY"],
+            index=(sorted(_sym_list).index("SPY") if _sym_list and "SPY" in _sym_list else 0),
+            key="ts_sym",
+        )
+    with _ts_c2:
+        ts_cutoff = st.select_slider(
+            "Trend cutoff (trading days)",
+            options=[5, 10, 20, 40, 63], value=20,
+            key="ts_cutoff",
+            help="FFT low-pass cutoff: signals longer than this are classified as 'trend'.",
+        )
+
+    _ts_s = _ts_prices(ts_sym, str(_start), str(_end))
+    if _ts_s is None or len(_ts_s) < 30:
+        st.warning("Not enough price data for this asset/lookback. Try extending the lookback slider.")
+    else:
+        _ts_log    = np.log(_ts_s.values)
+        _ts_log_dm = _ts_log - _ts_log.mean()
+        _ts_rets   = _ts_s.pct_change().dropna().values
+        _ts_dates  = _ts_s.index
+
+        # ── Section 1: Power Spectral Density ──────────────────────────────────
+        st.markdown(section_label("Power Spectral Density"), unsafe_allow_html=True)
+        st.caption(
+            "Welch PSD of demeaned log-prices. Peaks reveal dominant cycles in the price series. "
+            "x-axis shows cycle period in trading days."
+        )
+        _freqs, _power = compute_psd(_ts_log_dm)
+        _cycles = dominant_cycles(_freqs, _power, top_n=5)
+
+        if len(_freqs) > 0:
+            # Convert frequency axis to period (days)
+            _period_axis = np.where(_freqs > 0, 1.0 / _freqs, np.inf)
+            _mask = (_period_axis >= 2) & (_period_axis <= len(_ts_s))
+            _fig_psd = go.Figure(go.Scatter(
+                x=_period_axis[_mask], y=_power[_mask],
+                fill="tozeroy", fillcolor="rgba(74,144,217,0.12)",
+                line=dict(color=COLORS["blue"], width=2),
+                hovertemplate="Period: %{x:.0f}d<br>Power: %{y:.4f}<extra></extra>",
+            ))
+            for _cyc in _cycles:
+                _fig_psd.add_vline(
+                    x=_cyc["period_days"],
+                    line=dict(color=COLORS["gold"], width=1.5, dash="dot"),
+                    annotation_text=f"{_cyc['period_days']:.0f}d ({_cyc['label']})",
+                    annotation_font=dict(size=9, color=COLORS["gold"]),
+                    annotation_position="top left",
+                )
+            apply_theme(_fig_psd)
+            _fig_psd.update_layout(
+                height=260,
+                xaxis=dict(title="Cycle period (trading days)", type="log", showgrid=False),
+                yaxis=dict(title="Power", showgrid=False),
+                showlegend=False,
+            )
+            st.plotly_chart(_fig_psd, width="stretch", config=PLOTLY_CONFIG)
+
+            if _cycles:
+                _cyc_cols = st.columns(len(_cycles))
+                for _ci, (_cyc, _col) in enumerate(zip(_cycles, _cyc_cols)):
+                    _col.markdown(
+                        kpi_card(
+                            _cyc["label"],
+                            f"{_cyc['period_days']:.0f}d",
+                            accent=COLORS["series"][_ci % len(COLORS["series"])],
+                            delta=f"{_cyc['rel_power_pct']:.1f}% of power",
+                        ),
+                        unsafe_allow_html=True,
+                    )
+
+        # ── Section 2: FFT Trend / Cycle Decomposition ─────────────────────────
+        st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Frequency Filter Decomposition"), unsafe_allow_html=True)
+        st.caption(
+            f"Brick-wall FFT filter with cutoff = {ts_cutoff}d. "
+            "Trend = low-frequency component. Cycle = residual (everything faster than the cutoff)."
+        )
+        _cutoff_frac = 1.0 / ts_cutoff
+        _trend  = fft_filter(_ts_log_dm, _cutoff_frac, mode="low")
+        _cycle  = _ts_log_dm - _trend
+
+        _fft_c1, _fft_c2 = st.columns(2)
+        with _fft_c1:
+            _fig_trend = go.Figure()
+            _fig_trend.add_trace(go.Scatter(
+                x=_ts_dates, y=_ts_log_dm,
+                line=dict(color=COLORS["neutral"], width=1, dash="dot"), opacity=0.5,
+                name="Original (log, demeaned)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.4f}<extra></extra>",
+            ))
+            _fig_trend.add_trace(go.Scatter(
+                x=_ts_dates, y=_trend,
+                line=dict(color=COLORS["positive"], width=2),
+                name=f"Trend (>{ts_cutoff}d)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.4f}<extra>Trend</extra>",
+            ))
+            apply_theme(_fig_trend, legend_inside=True)
+            _fig_trend.update_layout(
+                height=240, title="Trend vs Original",
+                yaxis=dict(showgrid=False), xaxis=dict(showgrid=False),
+            )
+            st.plotly_chart(_fig_trend, width="stretch", config=PLOTLY_CONFIG)
+        with _fft_c2:
+            _cyc_cols_v = [COLORS["positive"] if v >= 0 else COLORS["negative"] for v in _cycle]
+            _fig_cycle = go.Figure(go.Bar(
+                x=_ts_dates, y=_cycle,
+                marker=dict(color=_cyc_cols_v, line=dict(width=0)), opacity=0.7,
+                name=f"Cycle (<{ts_cutoff}d)",
+                hovertemplate="%{x|%Y-%m-%d}: %{y:.4f}<extra>Cycle</extra>",
+            ))
+            _fig_cycle.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+            apply_theme(_fig_cycle)
+            _fig_cycle.update_layout(
+                height=240, title=f"Cyclical Component (<{ts_cutoff}d)",
+                yaxis=dict(showgrid=False), xaxis=dict(showgrid=False), showlegend=False,
+            )
+            st.plotly_chart(_fig_cycle, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Section 3: Haar Wavelet Decomposition ──────────────────────────────
+        st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Haar Wavelet Decomposition"), unsafe_allow_html=True)
+        st.caption(
+            "3-level Haar decomposition of daily returns. "
+            "Approx = low-frequency trend. Detail L1 = finest scale (1-2d). "
+            "Energy in each level shows which time scale dominates volatility."
+        )
+        _wav_levels = haar_wavelet_1d(_ts_rets, levels=3)
+        _wav_labels = ["Approximation (trend)", "Detail L1 (fine)", "Detail L2 (medium)", "Detail L3 (coarse)"]
+        _wav_colors = [COLORS["teal"], COLORS["blue"], COLORS["purple"], COLORS["gold"]]
+        _wav_energies = [float(np.sum(lv**2)) for lv in _wav_levels]
+        _wav_total = max(sum(_wav_energies), 1e-12)
+
+        _wav_ncols = min(len(_wav_levels), 4)
+        _wav_cols = st.columns(_wav_ncols)
+        for _wi, (_wlv, _wlbl, _wcol, _wcl) in enumerate(zip(_wav_levels, _wav_labels, _wav_cols, _wav_colors)):
+            _pct = _wav_energies[_wi] / _wav_total * 100
+            _fig_w = go.Figure(go.Bar(
+                y=_wlv, x=list(range(len(_wlv))),
+                marker=dict(color=[_wcl if v >= 0 else COLORS["negative"] for v in _wlv], line=dict(width=0)),
+                opacity=0.75,
+                hovertemplate="Coeff %{x}: %{y:.4f}<extra></extra>",
+            ))
+            _fig_w.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+            apply_theme(_fig_w, title=f"{_wlbl}<br>{_pct:.1f}% energy")
+            _fig_w.update_layout(
+                height=180, showlegend=False,
+                yaxis=dict(showgrid=False), xaxis=dict(showgrid=False, title="Coefficient index"),
+            )
+            _wav_cols[_wi].plotly_chart(_fig_w, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Section 4: GBM Simulation ──────────────────────────────────────────
+        st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Geometric Brownian Motion Simulation"), unsafe_allow_html=True)
+        st.caption(
+            "500 GBM paths calibrated to historical drift and volatility. "
+            "The actual price path is shown in gold. "
+            "If the actual path lies consistently outside the fan, the GBM assumption is violated."
+        )
+        _mu_ann, _sig_ann = estimate_gbm_params(_ts_s.values)
+        _T    = len(_ts_s) - 1
+        _S0   = float(_ts_s.iloc[0])
+        _paths = gbm_paths(_S0, _mu_ann, _sig_ann, _T, n_paths=500, seed=42)
+        _pcts  = np.percentile(_paths, [5, 25, 50, 75, 95], axis=0)
+        _t_ax  = list(range(_T + 1))
+
+        _gbm_kpi1, _gbm_kpi2, _gbm_kpi3, _gbm_kpi4 = st.columns(4)
+        _gbm_kpi1.markdown(kpi_card("Est. Drift (ann.)",   f"{_mu_ann:.1%}",  accent=COLORS["positive"] if _mu_ann >= 0 else COLORS["negative"]), unsafe_allow_html=True)
+        _gbm_kpi2.markdown(kpi_card("Est. Vol (ann.)",     f"{_sig_ann:.1%}", accent=COLORS["warning"]),  unsafe_allow_html=True)
+        _gbm_kpi3.markdown(kpi_card("P95 Terminal",        f"${_pcts[4,-1]:,.0f}", accent=COLORS["blue"]), unsafe_allow_html=True)
+        _gbm_kpi4.markdown(kpi_card("P5 Terminal",         f"${_pcts[0,-1]:,.0f}", accent=COLORS["neutral"]), unsafe_allow_html=True)
+
+        _fig_gbm = go.Figure()
+        _fig_gbm.add_trace(go.Scatter(
+            x=_t_ax + _t_ax[::-1], y=list(_pcts[4]) + list(_pcts[0][::-1]),
+            fill="toself", fillcolor="rgba(65,130,200,0.10)", line=dict(width=0),
+            name="5th-95th", showlegend=True, hoverinfo="skip",
+        ))
+        _fig_gbm.add_trace(go.Scatter(
+            x=_t_ax + _t_ax[::-1], y=list(_pcts[3]) + list(_pcts[1][::-1]),
+            fill="toself", fillcolor="rgba(65,130,200,0.22)", line=dict(width=0),
+            name="25th-75th", showlegend=True, hoverinfo="skip",
+        ))
+        _fig_gbm.add_trace(go.Scatter(
+            x=_t_ax, y=_pcts[2],
+            line=dict(color=COLORS["blue"], width=2), name="Median GBM",
+            hovertemplate="Day %{x}: $%{y:,.0f}<extra>Median</extra>",
+        ))
+        _fig_gbm.add_trace(go.Scatter(
+            x=_t_ax, y=_ts_s.values,
+            line=dict(color=COLORS["gold"], width=2.5, dash="dash"), name="Actual",
+            hovertemplate="Day %{x}: $%{y:,.0f}<extra>Actual</extra>",
+        ))
+        apply_theme(_fig_gbm, legend_inside=False)
+        _fig_gbm.update_layout(
+            height=340,
+            xaxis=dict(title="Trading day", showgrid=False),
+            yaxis=dict(title="Price ($)", tickprefix="$", tickformat=",.0f"),
+        )
+        st.plotly_chart(_fig_gbm, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Section 5: Autocorrelation ─────────────────────────────────────────
+        st.markdown("<div style='height:14px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Autocorrelation (Returns & Volatility Clustering)"), unsafe_allow_html=True)
+        st.caption(
+            "ACF of returns tests for serial correlation (momentum / mean-reversion). "
+            "ACF of squared returns tests for volatility clustering (ARCH effects). "
+            "Bars outside dashed lines are statistically significant at 95% CI."
+        )
+        _acf_lags = list(range(1, 21))
+        _acf_r    = _spec_acf(_ts_rets, max_lag=20)
+        _acf_sq   = _spec_acf(_ts_rets ** 2, max_lag=20)
+        _acf_ci   = 1.96 / np.sqrt(len(_ts_rets))
+
+        _acf_c1, _acf_c2 = st.columns(2)
+        for _acf_col, _acf_vals, _acf_title, _sig_color in [
+            (_acf_c1, _acf_r,  "ACF of Returns",                 COLORS["positive"]),
+            (_acf_c2, _acf_sq, "ACF of Squared Returns (ARCH)",  COLORS["warning"]),
+        ]:
+            with _acf_col:
+                _bar_cols = [_sig_color if abs(v) > _acf_ci else COLORS["neutral"] for v in _acf_vals]
+                _fig_acf  = go.Figure(go.Bar(
+                    x=_acf_lags, y=list(_acf_vals),
+                    marker=dict(color=_bar_cols, line=dict(width=0)), opacity=0.8,
+                    hovertemplate="Lag %{x}: %{y:.3f}<extra></extra>",
+                ))
+                _fig_acf.add_hline(y=_acf_ci,  line=dict(color=COLORS["border"], width=1, dash="dot"))
+                _fig_acf.add_hline(y=-_acf_ci, line=dict(color=COLORS["border"], width=1, dash="dot"))
+                _fig_acf.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+                apply_theme(_fig_acf, title=_acf_title)
+                _fig_acf.update_layout(
+                    height=240, showlegend=False,
+                    xaxis=dict(title="Lag (days)", showgrid=False, tickmode="linear"),
+                    yaxis=dict(title="Autocorrelation"),
+                )
+                st.plotly_chart(_fig_acf, width="stretch", config=PLOTLY_CONFIG)
 
 
 # ???????????????????????????????????????????????????????????????????????????????

@@ -405,6 +405,52 @@ if not eq.empty:
         fig_dd.update_layout(yaxis=dict(ticksuffix="%"))
         st.plotly_chart(fig_dd, use_container_width=True)
 
+    # ── Daily P&L bars ────────────────────────────────────────────────────────
+    if len(eq) > 5:
+        _dr = eq.pct_change().dropna()
+        fig_pnl = go.Figure(go.Bar(
+            x=_dr.index, y=(_dr * 100).values,
+            marker=dict(
+                color=["rgba(0,212,170,0.75)" if v >= 0 else "rgba(255,75,75,0.75)"
+                       for v in _dr.values],
+                line=dict(width=0),
+            ),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f}%<extra></extra>",
+        ))
+        fig_pnl.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_pnl, title="Daily P&L (%)", height=200)
+        fig_pnl.update_layout(
+            yaxis=dict(ticksuffix="%", showgrid=False),
+            xaxis=dict(showgrid=False),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_pnl, use_container_width=True)
+
+    # ── Rolling 21-day return ─────────────────────────────────────────────────
+    if len(eq) > 25:
+        _roll21 = (
+            eq.pct_change()
+            .rolling(21)
+            .apply(lambda x: (1 + x).prod() - 1, raw=True)
+            .dropna()
+        ) * 100
+        fig_roll = go.Figure()
+        fig_roll.add_trace(go.Scatter(
+            x=_roll21.index, y=_roll21.values,
+            fill="tozeroy",
+            fillcolor="rgba(0,212,170,0.07)",
+            line=dict(color=COLORS["positive"], width=2),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f}%<extra>21d return</extra>",
+        ))
+        fig_roll.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_roll, title="Rolling 21-Day Return (%)", height=200)
+        fig_roll.update_layout(
+            yaxis=dict(ticksuffix="%", showgrid=False),
+            xaxis=dict(showgrid=False),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_roll, use_container_width=True)
+
 else:
     st.info("No price history available yet. Run `orchestration/generate_signals.py` then a rebalance.")
 
@@ -423,10 +469,11 @@ with col_pos:
         # Compute dollar values if we have a NAV
         current_nav = metrics.get("nav", _INITIAL_NAV)
         latest_tw = latest_tw.copy()
-        latest_tw["value ($)"] = (latest_tw["weight"] * current_nav).round(0).astype(int)
-        latest_tw["weight (%)"] = (latest_tw["weight"] * 100).round(2)
-
-        display = latest_tw[["symbol", "weight (%)", "value ($)"]].reset_index(drop=True)
+        display = pd.DataFrame({
+            "Symbol":     latest_tw["symbol"].values,
+            "Weight":     [f"{w*100:.1f}%" for w in latest_tw["weight"].values],
+            "Value":      [f"${w*current_nav:,.0f}" for w in latest_tw["weight"].values],
+        })
         st.caption(f"As of rebalance {latest_date}")
         st.dataframe(display, use_container_width=True, hide_index=True)
 
@@ -458,6 +505,29 @@ with col_trades:
         st.dataframe(display_orders.head(30), use_container_width=True, hide_index=True)
     else:
         st.info("No orders recorded yet.")
+
+# ── Win / Loss statistics ─────────────────────────────────────────────────────
+if not eq.empty and len(eq) > 5:
+    _wr = eq.pct_change().dropna()
+    _wins  = _wr[_wr > 0]
+    _losses = _wr[_wr < 0]
+    _win_rate   = float(len(_wins) / len(_wr)) if len(_wr) > 0 else 0.0
+    _avg_win    = float(_wins.mean())   if len(_wins)   > 0 else 0.0
+    _avg_loss   = float(_losses.mean()) if len(_losses) > 0 else 0.0
+    _payoff     = abs(_avg_win / _avg_loss) if abs(_avg_loss) > 1e-10 else 0.0
+    _pf_num     = float(_wins.sum())
+    _pf_den     = float(_losses.abs().sum())
+    _profit_fac = _pf_num / _pf_den if _pf_den > 1e-10 else 0.0
+
+    st.markdown("### Win / Loss Analysis")
+    _wl1, _wl2, _wl3, _wl4, _wl5 = st.columns(5)
+    _wl1.metric("Win Rate",       f"{_win_rate:.1%}")
+    _wl2.metric("Avg Win",        f"{_avg_win:.2%}")
+    _wl3.metric("Avg Loss",       f"{_avg_loss:.2%}")
+    _wl4.metric("Payoff Ratio",   f"{_payoff:.2f}", help="Avg win / Avg loss (>1 = favourable)")
+    _wl5.metric("Profit Factor",  f"{_profit_fac:.2f}", help="Total wins / Total losses (>1 = net positive)")
+
+    st.markdown("---")
 
 # ── Deployment history ────────────────────────────────────────────────────────
 if deploy_evt:

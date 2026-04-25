@@ -2,9 +2,9 @@
 
 An end-to-end quantitative finance pipeline for systematic equity and crypto trading. Built around a **Sector × Size × Style ETF rotation** framework with regime-adaptive overlays, a multi-strategy portfolio management layer, and direct Interactive Brokers execution.
 
-**Stack:** Python 3.13 · Polars · DuckDB · Parquet · cvxpy · PyPortfolioOpt · scipy · ib_insync · CCXT · Streamlit · Plotly · `uv`
+**Stack:** Python 3.13 · Polars · DuckDB · Parquet · cvxpy · PyPortfolioOpt · scipy · ib_insync · CCXT · Streamlit · Plotly · FRED API · `uv`
 
-**Status:** Phases 0–6 complete. Portfolio management, multi-strategy blending, IB paper/live trading, and real-time monitoring dashboards all operational.
+**Status:** Phases 0–8 complete. Portfolio management, multi-strategy blending, IB paper/live trading, real-time monitoring dashboards, and graduate-level time-series analytics all operational.
 
 **Live results (canary, 6-year backtest):** Sharpe 1.036 · CAGR 17.1% · Max DD −14.3%
 
@@ -53,9 +53,9 @@ Data flows in one direction through clearly separated layers. No module reaches 
     ▼
 [orchestration]       ← daily pipeline, signal generation, rebalance, kill-switch
     ▼
-[reports]             ← 7-dashboard Streamlit app
+[reports]             ← 9-dashboard Streamlit app
     ▼
-[research]            ← Monte Carlo, walk-forward research tools (Jupyter-compatible)
+[research]            ← time-series analytics library (Kalman, spectral, long-memory, MC)
 ```
 
 ---
@@ -71,7 +71,8 @@ QuantPipe/
 ├── data_adapters/
 │   ├── base.py                     # DataAdapter protocol + OHLCV schema
 │   ├── yfinance_adapter.py         # equity/ETF data (retry + dead-letter)
-│   └── ccxt_adapter.py             # crypto OHLCV (pagination guard + retry)
+│   ├── ccxt_adapter.py             # crypto OHLCV (pagination guard + retry)
+│   └── fred_adapter.py             # FRED macro/financial series (pure requests)
 ├── storage/
 │   ├── parquet_store.py            # atomic reads/writes, file-locked partitions
 │   └── universe.py                 # universe registry
@@ -114,11 +115,14 @@ QuantPipe/
 ├── reports/
 │   ├── _theme.py                   # shared Plotly theme + CSS
 │   ├── health_dashboard.py         # pipeline status, heartbeat, data freshness
-│   ├── performance_dashboard.py    # equity curve, drawdown, factor exposure
-│   ├── strategy_lab.py             # interactive backtest runner (all strategies)
-│   ├── research_dashboard.py       # Monte Carlo, walk-forward research tools
-│   ├── portfolio_dashboard.py      # multi-strategy management (6 tabs)
-│   ├── paper_trading_dashboard.py  # paper account monitoring + equity curve
+│   ├── data_lab.py                 # alt-data ingestion, FRED connector, tradability checks
+│   ├── performance_dashboard.py    # equity curve, drawdown, factor exposure, Q-Q plot
+│   ├── strategy_lab.py             # code editor, backtester, parameter sweep, AI assistant
+│   ├── research_dashboard.py       # 5-tab research: factor analysis, signal, walk-forward,
+│   │                               #   Monte Carlo, time-series (spectral/GBM/wavelet)
+│   ├── kalman_dashboard.py         # TVP Kalman filter — dynamic factor betas
+│   ├── portfolio_dashboard.py      # multi-strategy management (6 tabs) + efficient frontier
+│   ├── paper_trading_dashboard.py  # paper account equity curve, P&L bars, win/loss stats
 │   ├── live_trading_dashboard.py   # live IBKR account monitoring
 │   └── instructions.py             # in-app guide and glossary
 ├── strategies/
@@ -128,7 +132,13 @@ QuantPipe/
 │   └── backtest_runner.py          # subprocess runner used by Strategy Lab
 ├── research/
 │   ├── __init__.py
-│   └── monte_carlo.py              # block-bootstrap Monte Carlo (overflow-safe)
+│   ├── factor_analysis.py          # IC, ICResult, factor statistics
+│   ├── kalman_filter.py            # TVP regression — KalmanResult, kalman_smooth_betas
+│   ├── long_memory.py              # Hurst exponent — R/S analysis, DFA, rolling Hurst
+│   ├── monte_carlo.py              # block-bootstrap Monte Carlo (overflow-safe)
+│   ├── signal_scanner.py           # universe snapshot, momentum ranking
+│   ├── spectral.py                 # Welch PSD, FFT filter, Haar wavelet, GBM simulation
+│   └── walk_forward_runner.py      # WFVConfig, fold_summary, oos_equity_normalised
 ├── tests/
 │   └── test_adapters.py            # live-network adapter tests (@pytest.mark.network)
 ├── data/
@@ -155,37 +165,52 @@ QuantPipe/
 
 ## Dashboards
 
-The Streamlit app (`streamlit run app.py`) provides seven dashboards:
+The Streamlit app (`streamlit run app.py`) provides nine dashboards:
 
 ### Pipeline Health
 Real-time pipeline status read from `.pipeline_heartbeat.json`. Shows last run time, data freshness, ingestion coverage, and alert configuration.
 
-### Performance
-Strategy equity curve vs SPY benchmark, drawdown chart, rolling Sharpe, factor exposure heatmap, and return attribution.
-
-### Strategy Lab
-Interactive backtest runner. Select any strategy from `strategies/`, adjust parameters, and run a full backtest with tearsheet metrics, equity curve, and trade log. Results are cached by strategy mtime + 24hr TTL.
+### Data Lab
+Alt-data exploration hub. Connects to the FRED API (20 curated macro/financial series), supports CSV/JSON upload, applies cleaning transforms (fill, outlier, resample, normalise), and runs tradability checks (Spearman IC at multiple lags, rolling IC, multi-signal comparison, promote-to-feature flow).
 
 ### Research
-Monte Carlo fan chart (block bootstrap, overflow-safe), walk-forward validation across rolling windows, and distribution analysis.
+Five-tab research workbench:
+- **Factor Analysis** — factor time-series, distribution, IC, IC lookback stability, Hurst exponent, factor correlation
+- **Signal Analysis** — IC decay with significance testing, regime-conditioned IC, turnover cost simulation, composite signal builder
+- **Walk-Forward** — multi-fold OOS validation with hit rate, Sharpe stability scatter, and per-fold DD bars
+- **Monte Carlo** — block-bootstrap fan chart, metric distributions (Sharpe/Calmar/Sortino/MaxDD), VaR/ES, ACF diagnostics, convergence checks
+- **Time Series** — Welch PSD, FFT frequency filter, Haar wavelet decomposition, GBM simulation, autocorrelation
+
+### Kalman Filter
+Standalone TVP regression dashboard. Dynamic factor betas updated daily via Kalman predict-update loop. Shows filtered vs OLS betas with ±1σ confidence band, innovations, posterior variance, and factor loading heatmap.
+
+### Strategy Lab
+Full strategy development environment: ACE code editor with syntax highlighting, backtest runner (subprocess JSON protocol), parameter sweep (Sharpe/CAGR/MaxDD heatmap), walk-forward IS/OOS split with overfitting ratio, persistent run history, AI coding assistant (Claude API, Apply-to-Editor).
+
+### Performance
+Four-tab tearsheet:
+- **Overview** — equity curve vs benchmark, trailing returns (grouped bars), annual returns bar chart
+- **Portfolio** — holdings, sector donut, weight history, contribution analysis
+- **Risk** — VaR/CVaR, stress scenarios, rolling vol/drawdown, factor exposure, return attribution
+- **Analytics** — monthly heatmap, return distribution, correlation matrix, rolling Sharpe/Sortino, Q-Q plot
 
 ### Portfolio Management
 Six-tab multi-strategy control centre:
-- **Overview** — deployed allocation pie, blended equity curve vs components vs SPY
-- **Comparison** — side-by-side metrics table, overlaid equity curves, drawdown, rolling Sharpe
-- **Optimizer** — strategy correlation heatmap, allocation optimizer (equal / inverse-vol / min-variance / max-Sharpe via scipy), one-click deploy
+- **Overview** — blended portfolio KPIs, allocation pie, blended equity curve vs components vs SPY
+- **Comparison** — metrics table, overlaid equity curves, drawdown, rolling Sharpe, monthly return heatmaps
+- **Optimizer** — correlation heatmap, 4 optimization methods with bootstrap CI bars, efficient frontier (2,000 random portfolios)
 - **Deployment** — per-strategy active toggles, weight sliders, save config
-- **Blended Preview** — live target weights table + position pie
-- **Trade** — IB connection settings, auto-detect port scan, paper/live mode selector, pre-flight check, execute rebalance (streams subprocess output live)
+- **Drift Monitor** — target vs actual weight drift with alert thresholds
+- **Trade** — IB connection settings, auto-detect port scan, paper/live mode, pre-flight check, execute rebalance
 
 ### Paper Trading
 Live monitoring of the paper account:
-- Daily equity curve reconstructed from `target_weights × bronze-layer prices`, anchored at post-rebalance NAV snapshots
-- Vertical dotted lines at every deployment config change (with version + strategy labels)
-- Drawdown shading and rebalance dot markers
-- KPI cards: NAV, total return, CAGR, Sharpe, max drawdown
-- Current positions table and pie chart
-- Trade history from the order journal
+- Daily equity curve from `target_weights × bronze prices`, anchored at post-rebalance NAV snapshots
+- Deployment version markers, drawdown shading, rebalance dots
+- Daily P&L bar chart and rolling 21-day return
+- Win/loss statistics: win rate, avg win/loss, payoff ratio, profit factor
+- Current positions table (formatted weights + dollar values) and pie chart
+- Trade history and slippage analysis
 
 ### Live Trading
 Minimal IBKR live account monitor: TCP connection probe, read-only live snapshot (NAV + open positions), historical live NAV chart. Full live execution is triggered from the Portfolio → Trade tab.
@@ -245,7 +270,17 @@ Current strategies:
 `backtest_runner.py` is invoked as a subprocess by both the Strategy Lab dashboard and `portfolio/multi_strategy.py`. It emits a single JSON payload to stdout and progress lines to stderr.
 
 ### `research`
-`monte_carlo.py` implements block bootstrap Monte Carlo with log-cumsum overflow protection (capped at 1,000,000× initial capital). The `run()` function validates the input return series for unrealistic per-period returns before simulating.
+Pure-analytics time-series library (no Streamlit, no Plotly). All modules follow the typed-dataclass pattern.
+
+- **`kalman_filter.py`** — TVP regression via Kalman predict-update loop (`KalmanResult` dataclass). `kalman_smooth_betas()` accepts any factor return matrix; `kalman_hedge_ratio()` is a convenience wrapper for pair trading.
+- **`long_memory.py`** — Hurst exponent estimation via R/S analysis (`hurst_rs`) and DFA (`hurst_dfa`); `rolling_hurst()` for time-varying analysis; `hurst_label()` for regime classification.
+- **`monte_carlo.py`** — circular block-bootstrap Monte Carlo with log-cumsum overflow protection. Validates input returns for unrealistic magnitudes before simulating.
+- **`spectral.py`** — Welch PSD (`compute_psd`), dominant cycle detection, brick-wall FFT filter (`fft_filter`), Haar wavelet decomposition (`haar_wavelet_1d`), GBM simulation (`gbm_paths`), and autocorrelation (`acf`).
+- **`factor_analysis.py`** — Information Coefficient computation, `ICResult` dataclass, factor distribution statistics.
+- **`walk_forward_runner.py`** — Thin orchestration layer: loads prices/features, runs `backtest.walk_forward`, returns `WalkForwardResult`.
+
+### `data_adapters`
+`fred_adapter.py` wraps the FRED REST API using `requests` (no new dependencies). `POPULAR_SERIES` provides 20 curated macro/financial series (UNRATE, T10Y2Y, VIXCLS, etc.). `get_series()`, `get_series_info()`, `search_series()` are the public API. The FRED API key is read from `FRED_API_KEY` in `.env`.
 
 ---
 
@@ -300,6 +335,7 @@ uv sync --all-extras
 | `PUSHOVER_TOKEN` | Pushover app token | — |
 | `PUSHOVER_USER` | Pushover user key | — |
 | `NTFY_TOPIC` | ntfy.sh topic (alternative) | — |
+| `FRED_API_KEY` | FRED REST API key (Data Lab) | — |
 
 ---
 
@@ -386,6 +422,7 @@ Paper Trading dashboard        →  equity curve with deployment markers
 | 5 | Reporting dashboards (Health, Performance, Strategy Lab, Research) | ✅ Complete |
 | 6 | Paper trading loop: execution layer, rebalance orchestration | ✅ Complete |
 | 7 | Multi-strategy portfolio management, IBKR integration, trading dashboards | ✅ Complete |
+| 8 | Time-series analytics (Kalman, Hurst, spectral, GBM), Data Lab (FRED), dashboard enhancements across all 9 pages | ✅ Complete |
 
 ---
 

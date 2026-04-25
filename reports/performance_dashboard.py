@@ -537,6 +537,42 @@ if daily_rets is not None and benchmark_sym != "None" and eq_pd is not None:
     except Exception:
         pass
 
+_bench_trailing: dict[str, float | None] = {}
+if benchmark_sym != "None" and eq_pd is not None:
+    try:
+        _btr_raw = _load_benchmark(
+            benchmark_sym,
+            eq_pd.index[0].date().isoformat(),
+            eq_pd.index[-1].date().isoformat(),
+        )
+        if _btr_raw is not None:
+            _btr = _btr_raw.copy()
+            _btr.index = pd.to_datetime(_btr.index)
+            _btr = _btr.sort_index().reindex(eq_pd.index, method="ffill").dropna()
+            if not _btr.empty:
+                _btr_last    = float(_btr.iloc[-1])
+                _btr_last_ts = _btr.index[-1]
+
+                def _bback(n: int) -> float | None:
+                    return _btr_last / _btr.iloc[-n] - 1 if len(_btr) > n else None
+
+                def _bsince(year: int, month: int, day: int = 1) -> float | None:
+                    cut = pd.Timestamp(year, month, day)
+                    sub = _btr[_btr.index >= cut]
+                    return _btr_last / sub.iloc[0] - 1 if len(sub) > 1 else None
+
+                _bqm = ((_btr_last_ts.month - 1) // 3) * 3 + 1
+                _bench_trailing = {
+                    "MTD": _bsince(_btr_last_ts.year, _btr_last_ts.month),
+                    "QTD": _bsince(_btr_last_ts.year, _bqm),
+                    "YTD": _bsince(_btr_last_ts.year, 1),
+                    "1Y":  _bback(252),
+                    "3Y":  _bback(756),
+                    "5Y":  _bback(1260),
+                }
+    except Exception:
+        pass
+
 _dl1, _dl2, _dl3, _dl4 = st.columns([1, 1, 1, 5])
 
 with _dl1:
@@ -718,26 +754,75 @@ with tab_ov:
 
         tr_labels = [k for k, v in trailing.items() if v is not None]
         tr_values = [v for v in trailing.values() if v is not None]
-        tr_colors = [COLORS["positive"] if v >= 0 else COLORS["negative"] for v in tr_values]
 
-        fig_tr = go.Figure(go.Bar(
-            x=tr_labels,
-            y=tr_values,
-            marker=dict(color=tr_colors, line=dict(width=0)),
-            text=[f"{v:.1%}" for v in tr_values],
-            textposition="outside",
-            textfont=dict(size=12, color=COLORS["text"]),
-            hovertemplate="<b>%{x}</b>: %{y:.2%}<extra></extra>",
+        fig_tr = go.Figure()
+        fig_tr.add_trace(go.Bar(
+            x=tr_labels, y=tr_values, name="Strategy",
+            marker=dict(
+                color=[COLORS["positive"] if v >= 0 else COLORS["negative"] for v in tr_values],
+                line=dict(width=0),
+            ),
+            text=[f"{v:.1%}" for v in tr_values], textposition="outside",
+            textfont=dict(size=11, color=COLORS["text"]),
+            hovertemplate="<b>%{x}</b>: %{y:.2%}<extra>Strategy</extra>",
         ))
+        if _bench_trailing:
+            _bt_common = [k for k in tr_labels if _bench_trailing.get(k) is not None]
+            _bt_vals   = [_bench_trailing[k] for k in _bt_common]
+            fig_tr.add_trace(go.Bar(
+                x=_bt_common, y=_bt_vals, name=benchmark_sym,
+                marker=dict(color=COLORS["neutral"], line=dict(width=0)),
+                opacity=0.6,
+                text=[f"{v:.1%}" for v in _bt_vals], textposition="outside",
+                textfont=dict(size=11, color=COLORS["text_muted"]),
+                hovertemplate=f"<b>%{{x}}</b>: %{{y:.2%}}<extra>{benchmark_sym}</extra>",
+            ))
         fig_tr.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
-        apply_theme(fig_tr)
+        apply_theme(fig_tr, legend_inside=True)
         fig_tr.update_layout(
-            height=220,
+            height=240, barmode="group",
             yaxis=dict(tickformat=".1%", showgrid=False),
             xaxis=dict(showgrid=False),
-            showlegend=False,
         )
         st.plotly_chart(fig_tr, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Annual returns ────────────────────────────────────────────────────
+        st.markdown(section_label("Annual Returns"), unsafe_allow_html=True)
+        _ann_rets = daily_rets.resample("YE").apply(lambda x: (1 + x).prod() - 1).dropna()
+        _yr_labels = [str(d.year) for d in _ann_rets.index]
+        _yr_vals   = _ann_rets.values.tolist()
+        fig_ann = go.Figure()
+        fig_ann.add_trace(go.Bar(
+            x=_yr_labels, y=_yr_vals, name="Strategy",
+            marker=dict(
+                color=[COLORS["positive"] if v >= 0 else COLORS["negative"] for v in _yr_vals],
+                line=dict(width=0),
+            ),
+            text=[f"{v:.1%}" for v in _yr_vals], textposition="outside",
+            textfont=dict(size=11, color=COLORS["text"]),
+            hovertemplate="<b>%{x}</b>: %{y:.1%}<extra>Strategy</extra>",
+        ))
+        if bench_pd is not None and not bench_pd.empty:
+            _bench_ann = bench_pd.pct_change().resample("YE").apply(
+                lambda x: (1 + x).prod() - 1
+            ).dropna()
+            _byr_labels = [str(d.year) for d in _bench_ann.index]
+            _byr_vals   = _bench_ann.values.tolist()
+            fig_ann.add_trace(go.Bar(
+                x=_byr_labels, y=_byr_vals, name=benchmark_sym,
+                marker=dict(color=COLORS["neutral"], line=dict(width=0)), opacity=0.6,
+                text=[f"{v:.1%}" for v in _byr_vals], textposition="outside",
+                textfont=dict(size=10, color=COLORS["text_muted"]),
+                hovertemplate=f"<b>%{{x}}</b>: %{{y:.1%}}<extra>{benchmark_sym}</extra>",
+            ))
+        fig_ann.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_ann, legend_inside=True)
+        fig_ann.update_layout(
+            height=240, barmode="group",
+            yaxis=dict(tickformat=".0%", showgrid=False),
+            xaxis=dict(showgrid=False),
+        )
+        st.plotly_chart(fig_ann, width="stretch", config=PLOTLY_CONFIG)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1293,5 +1378,47 @@ with tab_analytics:
         apply_subplot_theme(fig_ra, height=380)
         fig_ra.update_layout(hovermode="x unified", showlegend=True)
         st.plotly_chart(fig_ra, width="stretch", config=PLOTLY_CONFIG)
+
+        # ── Q-Q plot ───────────────────────────────────────────────────────────
+        st.markdown(section_label("Normal Q-Q Plot"), unsafe_allow_html=True)
+        st.caption(
+            "Points on the diagonal reference line indicate normally-distributed returns. "
+            "Upward curvature in the left tail (highlighted red) = fat left tail / excess kurtosis."
+        )
+        from scipy.stats import probplot as _probplot
+        _qq_r = stats["daily_rets"]
+        _qq_osm, _qq_osr = _probplot(_qq_r, dist="norm", fit=False)
+        _qq_mean, _qq_std = float(_qq_r.mean()), float(_qq_r.std())
+        _qq_min, _qq_max  = float(min(_qq_osm)), float(max(_qq_osm))
+
+        fig_qq = go.Figure()
+        fig_qq.add_trace(go.Scatter(
+            x=[_qq_min, _qq_max],
+            y=[_qq_min * _qq_std + _qq_mean, _qq_max * _qq_std + _qq_mean],
+            mode="lines",
+            line=dict(color=COLORS["warning"], width=2, dash="dash"),
+            name="Normal reference",
+            hoverinfo="skip",
+        ))
+        _qq_colors = [
+            COLORS["negative"] if q < -2 else
+            COLORS["positive"] if q >  2 else
+            COLORS["blue"]
+            for q in _qq_osm
+        ]
+        fig_qq.add_trace(go.Scatter(
+            x=list(_qq_osm), y=list(_qq_osr),
+            mode="markers",
+            marker=dict(color=_qq_colors, size=4, opacity=0.75),
+            name="Returns",
+            hovertemplate="Theoretical z: %{x:.2f}<br>Actual: %{y:.3%}<extra></extra>",
+        ))
+        apply_theme(fig_qq, legend_inside=True)
+        fig_qq.update_layout(
+            height=300,
+            xaxis=dict(title="Theoretical quantiles (z-score)", showgrid=False),
+            yaxis=dict(title="Sample return quantiles", tickformat=".2%"),
+        )
+        st.plotly_chart(fig_qq, width="stretch", config=PLOTLY_CONFIG)
 
 st.caption("QuantPipe — for research and paper trading only. Not investment advice.")

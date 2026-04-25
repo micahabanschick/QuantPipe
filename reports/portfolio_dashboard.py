@@ -20,7 +20,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from reports._theme import COLORS, apply_theme, badge, page_header, CSS
+from reports._theme import COLORS, apply_theme, badge, page_header, CSS, kpi_card, section_label
 
 log = logging.getLogger(__name__)
 
@@ -222,6 +222,26 @@ def _tab_overview(results: dict, config):
         fig_pie.update_layout(showlegend=False, paper_bgcolor=COLORS["card_bg"])
         st.plotly_chart(fig_pie, use_container_width=True)
 
+    # Blended portfolio KPIs
+    if not blended_eq.empty:
+        _bret_s = blended_eq.pct_change().dropna()
+        _n_yrs  = max(len(blended_eq) / 252, 1e-6)
+        _b_cagr = (blended_eq.iloc[-1] / blended_eq.iloc[0]) ** (1 / _n_yrs) - 1
+        _b_vol  = float(_bret_s.std() * np.sqrt(252))
+        _b_sh   = _b_cagr / _b_vol if _b_vol > 1e-10 else 0
+        _b_peak = blended_eq.cummax()
+        _b_dd   = float(((blended_eq - _b_peak) / _b_peak).min())
+        _b_cal  = _b_cagr / abs(_b_dd) if abs(_b_dd) > 1e-10 else 0
+
+        st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Blended Portfolio"), unsafe_allow_html=True)
+        _k1, _k2, _k3, _k4 = st.columns(4)
+        _k1.markdown(kpi_card("Blended CAGR",   f"{_b_cagr:.1%}", accent=COLORS["positive"]), unsafe_allow_html=True)
+        _k2.markdown(kpi_card("Blended Sharpe",  f"{_b_sh:.2f}",  accent=COLORS["teal"]),     unsafe_allow_html=True)
+        _k3.markdown(kpi_card("Blended Max DD",  f"{_b_dd:.1%}",  accent=COLORS["negative"]), unsafe_allow_html=True)
+        _k4.markdown(kpi_card("Blended Calmar",  f"{_b_cal:.2f}", accent=COLORS["blue"]),     unsafe_allow_html=True)
+        st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
+
     # Blended equity chart
     if not blended_eq.empty:
         fig = go.Figure()
@@ -331,6 +351,30 @@ def _tab_comparison(results: dict):
     fig_sh.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
     apply_theme(fig_sh, height=260)
     st.plotly_chart(fig_sh, use_container_width=True)
+
+    st.markdown("### Monthly Returns")
+    _mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    for i, (slug, r) in enumerate(results.items()):
+        eq      = _equity_series(r)
+        monthly = eq.resample("ME").last().pct_change().dropna()
+        mdf = monthly.to_frame("ret")
+        mdf["Year"]  = mdf.index.year
+        mdf["Month"] = mdf.index.strftime("%b")
+        pivot = mdf.pivot_table(values="ret", index="Year", columns="Month")
+        pivot = pivot.reindex(columns=[m for m in _mo if m in pivot.columns])
+        z    = pivot.values
+        text = [[f"{v:.1%}" if v == v else "" for v in row] for row in z]
+        fig_hm = go.Figure(go.Heatmap(
+            z=z, x=pivot.columns.tolist(), y=[str(y) for y in pivot.index.tolist()],
+            text=text, texttemplate="%{text}", textfont=dict(size=10, color=COLORS["text"]),
+            colorscale="RdYlGn", zmid=0, showscale=True,
+            colorbar=dict(tickformat=".0%", thickness=12, len=0.8),
+            hovertemplate="<b>%{y} %{x}</b>: %{text}<extra></extra>",
+        ))
+        apply_theme(fig_hm, title=f"{r.name} — Monthly Returns",
+                    height=max(160, 32 * len(pivot) + 60))
+        fig_hm.update_layout(yaxis=dict(autorange="reversed"), xaxis=dict(side="top"))
+        st.plotly_chart(fig_hm, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -471,6 +515,57 @@ def _tab_optimizer(results: dict, config, metas: list):
             st.success("Deployment config saved.")
             st.cache_resource.clear()
             st.rerun()
+
+    # Efficient frontier
+    st.markdown("### Efficient Frontier")
+    _n_sims   = 2000
+    _n_assets = len(ret_matrix.columns)
+    _rng      = np.random.default_rng(42)
+    _rw       = _rng.dirichlet(np.ones(_n_assets), size=_n_sims)
+    _cov      = ret_matrix.cov().values
+    _port_v, _port_r, _port_sh = [], [], []
+    for _w in _rw:
+        _pr = float(ret_matrix.mul(_w, axis=1).sum(axis=1).mean() * 252)
+        _pv = float(np.sqrt(max(_w @ _cov @ _w, 0)) * np.sqrt(252))
+        _port_v.append(_pv)
+        _port_r.append(_pr)
+        _port_sh.append(_pr / _pv if _pv > 1e-10 else 0)
+
+    fig_ef = go.Figure(go.Scatter(
+        x=_port_v, y=_port_r, mode="markers",
+        marker=dict(color=_port_sh, colorscale="RdYlGn", size=4, opacity=0.45,
+                    colorbar=dict(title="Sharpe", thickness=12)),
+        hovertemplate="Vol: %{x:.1%}<br>Ret: %{y:.1%}<extra>Random portfolio</extra>",
+        showlegend=False,
+    ))
+    for _i, _col in enumerate(ret_matrix.columns):
+        _sr = float(ret_matrix[_col].mean() * 252)
+        _sv = float(ret_matrix[_col].std() * np.sqrt(252))
+        fig_ef.add_trace(go.Scatter(
+            x=[_sv], y=[_sr], mode="markers+text",
+            marker=dict(symbol="diamond", size=12, color=_color(_i)),
+            text=[slug_to_name.get(_col, _col)], textposition="top center",
+            textfont=dict(size=10, color=COLORS["text"]),
+            name=slug_to_name.get(_col, _col),
+        ))
+    if "opt_result" in st.session_state:
+        _ao = st.session_state["opt_result"]
+        _wo = np.array([_ao.get(c, 0.0) for c in ret_matrix.columns])
+        if _wo.sum() > 0:
+            _wo = _wo / _wo.sum()
+        _or = float(ret_matrix.mul(_wo, axis=1).sum(axis=1).mean() * 252)
+        _ov = float(np.sqrt(max(_wo @ _cov @ _wo, 0)) * np.sqrt(252))
+        fig_ef.add_trace(go.Scatter(
+            x=[_ov], y=[_or], mode="markers", name="Optimized",
+            marker=dict(symbol="star", size=18, color=COLORS["gold"]),
+        ))
+    apply_theme(fig_ef, title="Efficient Frontier (2,000 random portfolios)", height=380)
+    fig_ef.update_layout(
+        xaxis=dict(title="Annual Volatility", tickformat=".0%"),
+        yaxis=dict(title="Annual Return",     tickformat=".0%"),
+    )
+    st.plotly_chart(fig_ef, use_container_width=True)
+    st.caption("Dots = random portfolios (colour = Sharpe ratio). ◆ = individual strategies. ★ = optimizer result.")
 
 
 def _save_allocations(allocs: dict, results: dict, config, metas: list):

@@ -168,10 +168,10 @@ pg = st.navigation(
                     title="Research",              icon="🔬"),
             st.Page("reports/kalman_dashboard.py",
                     title="Kalman Filter",         icon="📡"),
-            st.Page("reports/performance_dashboard.py",
-                    title="Performance",           icon="📈"),
             st.Page("reports/strategy_lab.py",
                     title="Strategy Lab",          icon="⚗️"),
+            st.Page("reports/performance_dashboard.py",
+                    title="Performance",           icon="📈"),
         ],
         "Management": [
             st.Page("reports/portfolio_dashboard.py",
