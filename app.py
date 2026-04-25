@@ -157,32 +157,14 @@ with st.sidebar:
     color: {COLORS['gold']};
     text-shadow: 0 0 18px rgba(201,162,39,0.35), 0 0 6px rgba(201,162,39,0.2);
   ">QUANT<span style="
-      display:inline-flex;
-      flex-direction:column;
-      align-items:center;
-      justify-content:center;
-      gap:0;
-      height:1em;
+      color:{COLORS['green']};
+      font-size:0.92em;
+      letter-spacing:0;
+      text-shadow:0 0 10px {COLORS['green']}AA, 0 0 22px {COLORS['green']}55;
       vertical-align:middle;
-      margin: 0 0.04em;
       position:relative;
-      top:-0.04em;
-    "><span style="
-        display:block;
-        width:2px;
-        height:0.55em;
-        background:{COLORS['green']};
-        border-radius:1px;
-        box-shadow:0 0 6px {COLORS['green']}99;
-      "></span><span style="
-        display:block;
-        width:7px;
-        height:2px;
-        background:{COLORS['green']};
-        border-radius:1px;
-        margin-top:-1px;
-        box-shadow:0 0 6px {COLORS['green']}99;
-      "></span></span>PE</div>
+      top:-0.03em;
+    ">Π</span>PE</div>
   <div style="
     font-family:'Rajdhani', 'Segoe UI', sans-serif;
     font-size: 0.58rem;
