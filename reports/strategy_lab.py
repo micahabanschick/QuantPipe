@@ -1097,7 +1097,7 @@ def _render_wf_tab(main_py: Path, default_params: dict) -> None:
 
 st.markdown(page_header(
     "Strategy Lab",
-    "Edit strategy code · Run backtests · Sweep parameters · Validate out-of-sample performance",
+    "Write, backtest, and optimise signal strategies with integrated parameter sweep and walk-forward validation.",
 ), unsafe_allow_html=True)
 
 # ── Strategy selector ─────────────────────────────────────────────────────────

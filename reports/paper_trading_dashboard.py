@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config.settings import DATA_DIR
-from reports._theme import COLORS, apply_theme, badge
+from reports._theme import COLORS, apply_theme, badge, page_header
 
 log = logging.getLogger(__name__)
 
@@ -241,8 +241,13 @@ def _add_deployment_vlines(fig: go.Figure, events: list[dict], eq: pd.Series) ->
 # Dashboard
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.markdown("## Paper Trading")
-st.caption("Live portfolio monitoring — equity curve updates after each rebalance.")
+st.markdown(
+    page_header(
+        "Paper Trading",
+        "Track live paper account NAV, review order history, and monitor position drift after each rebalance.",
+    ),
+    unsafe_allow_html=True,
+)
 
 # ── Refresh controls ──────────────────────────────────────────────────────────
 hdr_left, hdr_mid, hdr_right = st.columns([3, 2, 1])

@@ -40,7 +40,7 @@ ALT_DIR.mkdir(parents=True, exist_ok=True)
 st.markdown(
     page_header(
         "Data Lab",
-        "Alternative data ingestion · cleaning · tradability analysis",
+        "Ingest and clean alternative data sources, then test their predictive power before building them into the pipeline.",
         date.today().strftime("%B %d, %Y"),
     ),
     unsafe_allow_html=True,

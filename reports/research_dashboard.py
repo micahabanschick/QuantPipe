@@ -87,8 +87,8 @@ def _walk_forward(
 
 st.markdown(
     page_header(
-        "QuantPipe — Research",
-        "Factor analysis · Signal diagnostics · Walk-forward validation",
+        "Research",
+        "Analyse factor quality and signal robustness before committing to a strategy.",
         date.today().strftime("%B %d, %Y"),
     ),
     unsafe_allow_html=True,

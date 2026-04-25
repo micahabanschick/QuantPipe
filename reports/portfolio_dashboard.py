@@ -20,7 +20,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from reports._theme import COLORS, apply_theme, badge
+from reports._theme import COLORS, apply_theme, badge, page_header, CSS
 
 log = logging.getLogger(__name__)
 
@@ -898,8 +898,14 @@ def _run_ibkr_rebalance(host: str, port: int, client_id: int,
 # Main
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.markdown("## Portfolio Management")
-st.caption("Compare strategies, optimise allocations, and control execution.")
+st.markdown(CSS, unsafe_allow_html=True)
+st.markdown(
+    page_header(
+        "Portfolio",
+        "Blend and optimise multi-strategy allocations, monitor drift, and execute rebalances.",
+    ),
+    unsafe_allow_html=True,
+)
 
 metas = _discover()
 config = _load_config()

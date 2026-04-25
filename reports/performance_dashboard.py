@@ -378,8 +378,8 @@ portfolio_log_pd: pd.DataFrame | None = (
 
 st.markdown(
     page_header(
-        "QuantPipe — Performance",
-        "Cross-sectional momentum · Top-5 ETFs · Equal weight · Monthly rebalance",
+        "Performance",
+        "Evaluate backtest results, risk metrics, factor exposure, and return analytics.",
         date.today().strftime("%B %d, %Y"),
     ),
     unsafe_allow_html=True,
