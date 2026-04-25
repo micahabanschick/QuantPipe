@@ -5,6 +5,7 @@ Run with:  streamlit run app.py
 
 import base64
 import contextlib
+import io
 from datetime import datetime
 from pathlib import Path
 
@@ -142,25 +143,39 @@ pg = st.navigation(
 # ── Sidebar status + footer (renders below nav links) ─────────────────────────
 
 with st.sidebar:
-    _display_logo = _LOGO_FULL if _LOGO_FULL.exists() else _LOGO
-    if _display_logo.exists():
-        _img_b64 = base64.b64encode(_display_logo.read_bytes()).decode()
+    if _LOGO.exists() and _LOGO_WORDS.exists():
+        from PIL import Image
+        import numpy as np
+
+        def _crop_b64(path: Path, pad: int = 6, threshold: int = 20) -> str:
+            img = Image.open(path).convert('RGBA')
+            a = np.array(img)[:, :, 3]
+            rows = np.where(a.max(axis=1) > threshold)[0]
+            cols = np.where(a.max(axis=0) > threshold)[0]
+            box = (
+                max(0, int(cols[0])  - pad),
+                max(0, int(rows[0])  - pad),
+                min(img.width,  int(cols[-1]) + pad),
+                min(img.height, int(rows[-1]) + pad),
+            )
+            buf = io.BytesIO()
+            img.crop(box).save(buf, format='PNG')
+            return base64.b64encode(buf.getvalue()).decode()
+
+        _c = _crop_b64(_LOGO)       # circle only
+        _w = _crop_b64(_LOGO_WORDS) # words only
+
+        # Circle is 349px wide in orig; words 423px wide — words ~21% wider.
+        # Scale both so circle sits at 72% of sidebar, words at ~87%.
         st.markdown(f"""
-<div style="width:82%; margin:0 auto;
-            filter:drop-shadow(0 0 10px rgba(201,162,39,0.28))
-                   drop-shadow(0 0 24px rgba(201,162,39,0.12));">
-  <img src="data:image/png;base64,{_img_b64}"
-       style="width:100%; display:block;
-              -webkit-mask-image:radial-gradient(
-                ellipse 88% 92% at 50% 42%,
-                black 30%, rgba(0,0,0,.95) 42%,
-                rgba(0,0,0,.78) 54%, rgba(0,0,0,.45) 65%,
-                rgba(0,0,0,.15) 76%, transparent 88%);
-              mask-image:radial-gradient(
-                ellipse 88% 92% at 50% 42%,
-                black 30%, rgba(0,0,0,.95) 42%,
-                rgba(0,0,0,.78) 54%, rgba(0,0,0,.45) 65%,
-                rgba(0,0,0,.15) 76%, transparent 88%);"/>
+<div style="text-align:center; padding:0; margin:0;">
+  <img src="data:image/png;base64,{_c}"
+       style="width:72%; display:block; margin:0 auto;
+              filter:drop-shadow(0 0 10px rgba(201,162,39,0.30))
+                     drop-shadow(0 0 22px rgba(201,162,39,0.12));"/>
+  <img src="data:image/png;base64,{_w}"
+       style="width:87%; display:block; margin:4px auto 0;
+              filter:drop-shadow(0 0 7px rgba(201,162,39,0.25));"/>
 </div>
 """, unsafe_allow_html=True)
 
