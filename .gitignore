@@ -64,3 +64,6 @@ htmlcov/
 *_key.txt
 *_secret.txt
 credentials*.json
+
+# Local runbooks and private notes (machine-specific, never commit)
+*.local.md
