@@ -258,7 +258,6 @@ with tab_ingest:
 
         if not series_id:
             st.info("Pick a popular series or enter a custom series ID above.")
-            st.stop()
 
         # Show series metadata
         with st.spinner(f"Fetching metadata for {series_id}…"):
@@ -290,10 +289,8 @@ with tab_ingest:
                     raw_pl = fred.get_series(series_id, start=str(fred_start), end=str(fred_end))
                     if raw_pl.is_empty():
                         st.error("No data returned. Check the series ID and date range.")
-                        st.stop()
                 except Exception as exc:
                     st.error(f"FRED API error: {exc}")
-                    st.stop()
 
             raw_pd = raw_pl.to_pandas()
             st.success(f"Pulled {len(raw_pd):,} rows for {series_id}")
@@ -334,10 +331,10 @@ with tab_ingest:
             st.success(f"Saved to `data/alt/{source_name}.parquet`")
             st.info("Open the **Tradability Check** tab to analyse this signal.")
 
-        st.stop()   # don't render the upload section when FRED is selected
 
-    # ── Upload path ─────────────────────────────────────────────────────────────
-    st.markdown(section_label("Upload Alternative Data"), unsafe_allow_html=True)
+    # ── Upload path (only when FRED not selected) ──────────────────────────────
+    if not _is_fred:
+        st.markdown(section_label("Upload Alternative Data"), unsafe_allow_html=True)
     st.caption(
         "CSV or JSON. Must contain a date column and at least one numeric signal column. "
         "Panel data (date × symbol) is supported — map the symbol column below."
@@ -396,7 +393,6 @@ with tab_ingest:
                     st.rerun()
         else:
             st.info("No alt data files saved yet. Use FRED pull or upload a file above.")
-        st.stop()
 
     # ── Parse ──────────────────────────────────────────────────────────────────
     try:
@@ -407,7 +403,6 @@ with tab_ingest:
             raw_df = pd.read_csv(StringIO(raw_text))
     except Exception as exc:
         st.error(f"Could not parse file: {exc}")
-        st.stop()
 
     st.markdown(section_label(f"Raw Preview — {uploaded.name}"), unsafe_allow_html=True)
     st.markdown(
@@ -460,7 +455,6 @@ with tab_ingest:
 
     if not signal_cols:
         st.warning("Select at least one signal column to continue.")
-        st.stop()
 
     # ── Cleaning controls ──────────────────────────────────────────────────────
     st.markdown(section_label("Cleaning Options"), unsafe_allow_html=True)
