@@ -3,6 +3,7 @@
 Run with:  streamlit run app.py
 """
 
+import contextlib
 from datetime import datetime
 from pathlib import Path
 
@@ -22,10 +23,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Navigation-link CSS overlay ────────────────────────────────────────────────
+# ── Logo — must be called before st.navigation() to appear above nav links ────
+
+if _LOGO.exists():
+    st.logo(str(_LOGO), size="large")
+
+# ── CSS ────────────────────────────────────────────────────────────────────────
 
 NAV_CSS = f"""
 <style>
+/* ── Nav links ───────────────────────────────────────────────────────────── */
 [data-testid="stSidebarNavLink"] {{
     border-radius: 6px;
     padding: 8px 12px;
@@ -49,9 +56,38 @@ NAV_CSS = f"""
     margin: 14px 0 3px !important;
     padding-left: 10px;
 }}
-/* Sidebar logo area */
-[data-testid="stSidebar"] img {{
-    border-radius: 8px;
+
+/* ── Logo — sharp rendering + radial gradient fade at all edges ──────────── */
+[data-testid="stLogo"],
+[data-testid="stSidebarHeader"] {{
+    padding: 8px 8px 4px;
+    background: transparent;
+}}
+[data-testid="stLogo"] img,
+[data-testid="stSidebarHeader"] img {{
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: high-quality;
+    width: 100% !important;
+    max-width: 220px;
+    height: auto;
+
+    /* Radial mask: fully opaque at the circular logo, fades at all edges */
+    -webkit-mask-image: radial-gradient(
+        ellipse 78% 78% at 50% 52%,
+        black           45%,
+        rgba(0,0,0,0.95) 55%,
+        rgba(0,0,0,0.7)  65%,
+        rgba(0,0,0,0.35) 78%,
+        transparent      92%
+    );
+    mask-image: radial-gradient(
+        ellipse 78% 78% at 50% 52%,
+        black           45%,
+        rgba(0,0,0,0.95) 55%,
+        rgba(0,0,0,0.7)  65%,
+        rgba(0,0,0,0.35) 78%,
+        transparent      92%
+    );
 }}
 </style>
 """
@@ -73,15 +109,13 @@ def _probe() -> tuple[str, str, str]:
 
     last_run = "—"
     if log.exists():
-        try:
+        with contextlib.suppress(Exception):
             lines = log.read_text(errors="replace").splitlines()
             for line in reversed(lines):
                 if "Pipeline complete" in line:
                     parts = line.split()
                     last_run = f"{parts[0]} {parts[1]}" if len(parts) >= 2 else "unknown"
                     break
-        except Exception:
-            pass
 
     if age_h > 48:
         return "STALE", COLORS["warning"], last_run
@@ -89,44 +123,6 @@ def _probe() -> tuple[str, str, str]:
 
 
 status_label, status_color, last_run = _probe()
-
-# ── Sidebar header ─────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    # Logo — shows image if present, falls back to text wordmark
-    if _LOGO.exists():
-        st.image(str(_LOGO), width=180)
-        st.markdown(
-            f'<div class="qp-logo-divider"></div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(f"""
-<div style="padding:14px 4px 4px;">
-  <div style="font-size:1.35rem;font-weight:900;letter-spacing:-0.03em;
-              background:linear-gradient(135deg,{COLORS['gold']},{COLORS['green']});
-              -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-              background-clip:text;">QUANTPIPE</div>
-  <div style="color:{COLORS['neutral']};font-size:0.65rem;letter-spacing:0.12em;
-              text-transform:uppercase;margin-top:1px;">Research &amp; Live Trading</div>
-</div>
-<div style="height:1px;background:linear-gradient(90deg,{COLORS['gold']}60,transparent);
-            margin:8px 0 16px;"></div>
-""", unsafe_allow_html=True)
-
-    # Pipeline status
-    st.markdown(f"""
-<div style="display:flex;align-items:center;gap:7px;padding:0 4px 4px;">
-  <span style="width:7px;height:7px;border-radius:50%;
-               background:{status_color};display:inline-block;flex-shrink:0;"></span>
-  <span style="color:{status_color};font-size:0.72rem;font-weight:700;
-               letter-spacing:0.06em;">{status_label}</span>
-  <span style="color:{COLORS['text_muted']};font-size:0.67rem;margin-left:2px;">
-    {last_run}
-  </span>
-</div>
-<div style="border-top:1px solid {COLORS['border']};margin:6px 0 4px;"></div>
-""", unsafe_allow_html=True)
 
 # ── Navigation ─────────────────────────────────────────────────────────────────
 
@@ -158,13 +154,23 @@ pg = st.navigation(
     position="sidebar",
 )
 
-# ── Sidebar footer ─────────────────────────────────────────────────────────────
+# ── Sidebar status + footer (renders below nav links) ─────────────────────────
 
 with st.sidebar:
     st.markdown(f"""
-<div style="padding:14px 4px 8px;border-top:1px solid {COLORS['border']};margin-top:12px;">
+<div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
+<div style="display:flex;align-items:center;gap:7px;padding:0 4px 4px;">
+  <span style="width:7px;height:7px;border-radius:50%;
+               background:{status_color};display:inline-block;flex-shrink:0;"></span>
+  <span style="color:{status_color};font-size:0.72rem;font-weight:700;
+               letter-spacing:0.06em;">{status_label}</span>
+  <span style="color:{COLORS['text_muted']};font-size:0.67rem;margin-left:2px;">
+    {last_run}
+  </span>
+</div>
+<div style="padding:0 4px 8px;border-top:1px solid {COLORS['border']};margin-top:10px;">
   <div style="color:{COLORS['neutral']};font-size:0.66rem;font-weight:700;
-              text-transform:uppercase;letter-spacing:0.09em;margin-bottom:7px;">
+              text-transform:uppercase;letter-spacing:0.09em;margin:10px 0 7px;">
     Quick Commands
   </div>
   <div style="background:{COLORS['card_bg']};border:1px solid {COLORS['border']};
