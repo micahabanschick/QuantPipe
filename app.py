@@ -162,6 +162,8 @@ pg = st.navigation(
         "Dashboards": [
             st.Page("reports/health_dashboard.py",
                     title="Pipeline Health",       icon="🔧"),
+            st.Page("reports/data_lab.py",
+                    title="Data Lab",              icon="🧪"),
             st.Page("reports/performance_dashboard.py",
                     title="Performance",           icon="📈"),
             st.Page("reports/strategy_lab.py",
