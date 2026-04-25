@@ -52,16 +52,37 @@ NAV_CSS = f"""
     padding-left: 10px;
 }}
 
-/* ── Sidebar logo — strip all container chrome ───────────────────────────── */
+/* ── Sidebar logo container ───────────────────────────────────────────────── */
 [data-testid="stSidebar"] [data-testid="stImage"] {{
     background: transparent !important;
     border: none !important;
     padding: 0 !important;
-    margin: 0 !important;
+    margin: 0 auto !important;
     line-height: 0;
+    position: relative;
 }}
 
-/* ── Sidebar logo image — sharp + deep feathered radial blend ────────────── */
+/* Colour overlay: sidebar bg radiates inward from all edges,
+   physically painting over the image corners with the sidebar colour */
+[data-testid="stSidebar"] [data-testid="stImage"]::after {{
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: 0;
+    background: radial-gradient(
+        circle at 50% 50%,
+        transparent           28%,
+        {COLORS['surface']}1A 42%,
+        {COLORS['surface']}55 54%,
+        {COLORS['surface']}99 64%,
+        {COLORS['surface']}CC 73%,
+        {COLORS['surface']}EE 82%,
+        {COLORS['surface']}   90%
+    );
+}}
+
+/* ── Sidebar logo image — sharp + deep mask fade ─────────────────────────── */
 [data-testid="stSidebar"] [data-testid="stImage"] img {{
     image-rendering: -webkit-optimize-contrast;
     image-rendering: high-quality;
@@ -69,32 +90,27 @@ NAV_CSS = f"""
     height: auto;
     display: block;
     margin: 0 auto;
-
-    /* Long, gradual fade — opaque at core, ghost-transparent at all edges.
-       Starts fading at 28% so the transition is imperceptibly slow. */
     -webkit-mask-image: radial-gradient(
         circle at 50% 50%,
-        black             28%,
-        rgba(0,0,0,0.97)  36%,
-        rgba(0,0,0,0.90)  44%,
-        rgba(0,0,0,0.75)  52%,
-        rgba(0,0,0,0.52)  60%,
-        rgba(0,0,0,0.28)  68%,
-        rgba(0,0,0,0.10)  76%,
-        rgba(0,0,0,0.02)  84%,
-        transparent       92%
+        black             24%,
+        rgba(0,0,0,0.96)  33%,
+        rgba(0,0,0,0.85)  42%,
+        rgba(0,0,0,0.65)  51%,
+        rgba(0,0,0,0.38)  60%,
+        rgba(0,0,0,0.14)  70%,
+        rgba(0,0,0,0.03)  80%,
+        transparent       88%
     );
     mask-image: radial-gradient(
         circle at 50% 50%,
-        black             28%,
-        rgba(0,0,0,0.97)  36%,
-        rgba(0,0,0,0.90)  44%,
-        rgba(0,0,0,0.75)  52%,
-        rgba(0,0,0,0.52)  60%,
-        rgba(0,0,0,0.28)  68%,
-        rgba(0,0,0,0.10)  76%,
-        rgba(0,0,0,0.02)  84%,
-        transparent       92%
+        black             24%,
+        rgba(0,0,0,0.96)  33%,
+        rgba(0,0,0,0.85)  42%,
+        rgba(0,0,0,0.65)  51%,
+        rgba(0,0,0,0.38)  60%,
+        rgba(0,0,0,0.14)  70%,
+        rgba(0,0,0,0.03)  80%,
+        transparent       88%
     );
 }}
 </style>
@@ -166,8 +182,8 @@ pg = st.navigation(
 
 with st.sidebar:
     if _LOGO.exists():
-        # 2/3 width, centred — columns give [1/6 gap | 4/6 image | 1/6 gap]
-        _l, _c, _r = st.columns([1, 4, 1])
+        # 1/3 width, centred — columns give [1/3 gap | 1/3 image | 1/3 gap]
+        _l, _c, _r = st.columns([1, 1, 1])
         with _c:
             st.image(str(_LOGO), use_container_width=True)
 
