@@ -194,18 +194,32 @@ html, body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }}
 
-/* ── Strip opaque backgrounds from Streamlit's fixed header / toolbar ──────── */
+/* ── Strip opaque backgrounds from ALL Streamlit chrome elements ───────────── */
 header[data-testid="stHeader"],
 [data-testid="stHeader"],
 [data-testid="stToolbar"],
 [data-testid="stDecoration"],
 [data-testid="stStatusWidget"],
+
+/* Sidebar chrome — collapse button, nav wrapper, top padding area */
+[data-testid="stSidebarCollapsedControl"],
 [data-testid="stSidebarCollapsedControl"] > div,
-[data-testid="collapsedControl"] {{
+[data-testid="collapsedControl"],
+[data-testid="stSidebarHeader"],
+[data-testid="stSidebarNavItems"] > div:first-child,
+
+/* Remove any top offset Streamlit adds to account for header height */
+section[data-testid="stSidebar"] > div:first-child {{
     background: transparent !important;
     background-color: transparent !important;
     box-shadow: none !important;
     border-bottom: none !important;
+}}
+
+/* Pull sidebar to very top — remove header-height offset */
+section[data-testid="stSidebar"] {{
+    top: 0 !important;
+    padding-top: 0 !important;
 }}
 
 /* ── Background — html/body is the true visual background in Streamlit 1.56 ── */
