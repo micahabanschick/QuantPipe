@@ -1197,6 +1197,14 @@ st.caption("QuantPipe — for research and paper trading only. Not investment ad
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab_kalman:
+    # ── DEBUG: remove after fix confirmed ──────────────────────────────────────
+    st.write(f"DEBUG A — tab body running. _sym_list len={len(_sym_list) if _sym_list else 0}")
+    try:
+        _dbg_kr, _ = _kalman_compute("SPY", 1e-4, 126, str(_start), str(_end), _symbols)
+        st.write(f"DEBUG B — _kalman_compute OK. dates={len(_dbg_kr.dates)}, ll={_dbg_kr.log_likelihood:.1f}")
+    except Exception as _dbg_e:
+        st.error(f"DEBUG B FAILED: {_dbg_e}")
+    # ── END DEBUG ──────────────────────────────────────────────────────────────
     st.markdown(
         f'<p style="color:{COLORS["neutral"]};font-size:0.84rem;margin-bottom:12px;">'
         "Time-varying parameter (TVP) regression — the Kalman filter tracks how each"
