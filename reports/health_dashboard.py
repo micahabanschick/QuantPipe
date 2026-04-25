@@ -3,9 +3,12 @@
 Tabs: Status · Data Quality · Logs
 """
 
+import subprocess
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import polars as pl
 import plotly.graph_objects as go
@@ -297,6 +300,93 @@ with tab_status:
     c3.markdown(kpi_card("Scheduler",       "Task Scheduler", accent=COLORS["neutral"]), unsafe_allow_html=True)
 
 
+# ── Data Quality helpers ───────────────────────────────────────────────────────
+
+def _availability_heatmap(df: pl.DataFrame, symbols: list[str],
+                           start_d: date, end_d: date, title: str):
+    """Build a date×symbol availability heatmap (1=present, 0=missing)."""
+    all_dates = pd.date_range(start_d, end_d, freq="B")  # business days only
+    present = (
+        df.select(["date", "symbol"])
+        .with_columns(pl.col("date").cast(pl.Date))
+        .to_pandas()
+        .assign(present=1)
+        .pivot_table(index="date", columns="symbol", values="present", fill_value=0)
+    )
+    present.index = pd.to_datetime(present.index)
+    present = present.reindex(all_dates, fill_value=0)
+    present = present.reindex(columns=sorted(symbols), fill_value=0)
+
+    z      = present.values.T.tolist()
+    x_labs = [d.strftime("%m/%d") for d in present.index]
+    y_labs = list(present.columns)
+
+    fig = go.Figure(go.Heatmap(
+        z=z, x=x_labs, y=y_labs,
+        colorscale=[[0, COLORS["negative"]], [1, COLORS["green"]]],
+        showscale=False,
+        hovertemplate="<b>%{y}</b> on %{x}: %{z}<extra></extra>",
+        xgap=1, ygap=1,
+    ))
+    apply_theme(fig, title=title)
+    fig.update_layout(
+        height=max(220, 18 * len(y_labs)),
+        yaxis=dict(showgrid=False, tickfont=dict(size=10)),
+        xaxis=dict(showgrid=False, tickangle=-45, tickfont=dict(size=9)),
+    )
+    return fig
+
+
+def _schema_validation(df: pl.DataFrame, spike_threshold: float = 0.15) -> pd.DataFrame:
+    """Per-symbol schema checks: nulls, zero prices, and single-day spikes."""
+    price_col = "adj_close" if "adj_close" in df.columns else "close"
+    results = []
+    for sym, grp in df.sort("date").partition_by("symbol", as_dict=True).items():
+        prices = grp[price_col].drop_nulls()
+        n      = len(grp)
+        n_null = grp[price_col].null_count()
+        n_zero = (grp[price_col].fill_null(0) <= 0).sum()
+        rets   = prices.pct_change().drop_nulls()
+        n_spike = (rets.abs() > spike_threshold).sum()
+        issues = []
+        if n_null > 0:
+            issues.append(f"{n_null} null prices")
+        if n_zero > 0:
+            issues.append(f"{n_zero} zero/neg prices")
+        if n_spike > 0:
+            issues.append(f"{n_spike} day(s) >{spike_threshold*100:.0f}% move")
+        results.append({
+            "symbol":    sym,
+            "rows":      n,
+            "null_close":n_null,
+            "zero_price":n_zero,
+            "spike_days":int(n_spike),
+            "verdict":   "⚠ Issues" if issues else "✓ Clean",
+            "details":   ", ".join(issues) if issues else "—",
+        })
+    return pd.DataFrame(results).sort_values("symbol")
+
+
+def _trigger_reingest(asset_class: str, days_back: int = 30) -> str:
+    """Run targeted backfill for the last N days of an asset class."""
+    start_str = (date.today() - timedelta(days=days_back)).isoformat()
+    script    = PROJECT_ROOT / "orchestration" / "backfill_history.py"
+    cmd = [sys.executable, str(script),
+           "--asset-class", asset_class, "--start", start_str]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=300, cwd=str(PROJECT_ROOT),
+        )
+        if result.returncode == 0:
+            return f"✓ Re-ingest complete ({asset_class}, last {days_back} days)"
+        return f"✗ Re-ingest failed:\n{result.stderr[-500:]}"
+    except subprocess.TimeoutExpired:
+        return "✗ Timed out after 5 minutes"
+    except Exception as exc:
+        return f"✗ Error: {exc}"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — DATA QUALITY
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -304,23 +394,24 @@ with tab_status:
 with tab_data:
     eq_symbols = list_symbols("equity")
     cr_symbols = list_symbols("crypto")
+    end_d      = date.today()
+    start_d    = end_d - timedelta(days=LOOKBACK)
 
+    # ── Universe Coverage ──────────────────────────────────────────────────────
     st.markdown(section_label("Universe Coverage"), unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     c1.metric("Equity Symbols", len(eq_symbols))
     c2.metric("Crypto Symbols", len(cr_symbols))
     c3.metric("Total Symbols",  len(eq_symbols) + len(cr_symbols))
+    st.markdown("<div style='height:6px'/>", unsafe_allow_html=True)
 
-    st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
-
-    st.markdown(section_label(f"Equity Symbol Status — Last {LOOKBACK} Days"), unsafe_allow_html=True)
-    end_d   = date.today()
-    start_d = end_d - timedelta(days=LOOKBACK)
-
+    # ── Equity ─────────────────────────────────────────────────────────────────
     if eq_symbols:
-        sample = sorted(eq_symbols)[:26]
-        df_bars = load_bars(sample, start_d, end_d, asset_class="equity")
+        sample   = sorted(eq_symbols)[:26]
+        df_bars  = load_bars(sample, start_d, end_d, asset_class="equity")
+
         if not df_bars.is_empty():
+            # Status table
             counts = (
                 df_bars.group_by("symbol")
                 .agg(
@@ -331,60 +422,76 @@ with tab_data:
                 .sort("symbol")
                 .with_columns(
                     pl.when(pl.col("latest_date") < (end_d - timedelta(days=5)))
-                    .then(pl.lit("STALE"))
-                    .otherwise(pl.lit("OK"))
-                    .alias("status")
+                    .then(pl.lit("STALE")).otherwise(pl.lit("OK")).alias("status")
                 )
             )
-            n_stale = counts.filter(pl.col("status") == "STALE").height
-            if n_stale > 0:
-                st.warning(f"{n_stale} symbol(s) stale (latest date > 5 days old)")
-            else:
-                st.success("All symbols have fresh data")
-
             counts_pd = counts.to_pandas()
-            col_tbl, col_chart = st.columns([1, 2])
+            stale_eq  = counts_pd[counts_pd["status"] == "STALE"]["symbol"].tolist()
 
-            with col_tbl:
-                st.dataframe(
-                    counts_pd.style.apply(
-                        lambda col: [
-                            f"color:{COLORS['negative']};font-weight:600" if v == "STALE"
-                            else f"color:{COLORS['positive']}"
-                            for v in col
-                        ] if col.name == "status" else [""] * len(col),
-                        axis=0,
-                    ),
-                    width="stretch", hide_index=True, height=420,
-                )
+            if stale_eq:
+                st.warning(f"{len(stale_eq)} equity symbol(s) stale: {', '.join(stale_eq)}")
+            else:
+                st.success("All equity symbols have fresh data")
 
-            with col_chart:
-                counts_sorted = counts_pd.sort_values("rows", ascending=True)
-                bar_c = [
-                    COLORS["negative"] if s == "STALE" else COLORS["positive"]
-                    for s in counts_sorted["status"]
-                ]
-                fig_rc = go.Figure(go.Bar(
-                    x=counts_sorted["rows"], y=counts_sorted["symbol"], orientation="h",
-                    marker=dict(color=bar_c, line=dict(width=0)),
-                    text=counts_sorted["rows"], textposition="outside",
-                    textfont=dict(color=COLORS["neutral"], size=10),
-                    hovertemplate="<b>%{y}</b>: %{x} rows<extra></extra>",
-                ))
-                apply_theme(fig_rc, title="Rows per Symbol")
-                fig_rc.update_layout(
-                    height=max(300, 22 * len(counts_sorted)),
-                    yaxis=dict(showgrid=False), xaxis=dict(showgrid=False), showlegend=False,
-                )
-                st.plotly_chart(fig_rc, width="stretch", config=PLOTLY_CONFIG)
+            # ── 1. Historical availability heatmap ────────────────────────────
+            st.markdown(section_label(f"Equity Data Availability — Last {LOOKBACK} Days"),
+                        unsafe_allow_html=True)
+            st.plotly_chart(
+                _availability_heatmap(df_bars, sample, start_d, end_d,
+                                      "Green = data present · Red = missing"),
+                use_container_width=True, config=PLOTLY_CONFIG,
+            )
+
+            # ── 2. Schema validation ──────────────────────────────────────────
+            st.markdown(section_label("Equity Schema Validation (>15% daily move = spike)"),
+                        unsafe_allow_html=True)
+            schema_eq = _schema_validation(df_bars, spike_threshold=0.15)
+            issues_eq = schema_eq[schema_eq["verdict"] != "✓ Clean"]
+            if issues_eq.empty:
+                st.success("No schema issues detected in equity data")
+            else:
+                st.warning(f"{len(issues_eq)} symbol(s) with data quality issues")
+
+            st.dataframe(
+                schema_eq.style.apply(
+                    lambda col: [
+                        f"color:{COLORS['negative']};font-weight:600"
+                        if v == "⚠ Issues" else f"color:{COLORS['positive']}"
+                        for v in col
+                    ] if col.name == "verdict" else [""] * len(col),
+                    axis=0,
+                ),
+                use_container_width=True, hide_index=True,
+            )
+
+            # ── Row counts chart (existing, kept) ─────────────────────────────
+            st.markdown(section_label("Row Counts per Symbol"), unsafe_allow_html=True)
+            counts_sorted = counts_pd.sort_values("rows", ascending=True)
+            bar_c = [COLORS["negative"] if s == "STALE" else COLORS["positive"]
+                     for s in counts_sorted["status"]]
+            fig_rc = go.Figure(go.Bar(
+                x=counts_sorted["rows"], y=counts_sorted["symbol"], orientation="h",
+                marker=dict(color=bar_c, line=dict(width=0)),
+                text=counts_sorted["rows"], textposition="outside",
+                textfont=dict(color=COLORS["neutral"], size=10),
+                hovertemplate="<b>%{y}</b>: %{x} rows<extra></extra>",
+            ))
+            apply_theme(fig_rc, title="")
+            fig_rc.update_layout(
+                height=max(300, 22 * len(counts_sorted)),
+                yaxis=dict(showgrid=False), xaxis=dict(showgrid=False), showlegend=False,
+            )
+            st.plotly_chart(fig_rc, use_container_width=True, config=PLOTLY_CONFIG)
         else:
             st.warning("No equity data found for this window.")
     else:
         st.info("No equity symbols in storage. Run backfill first.")
 
+    # ── Crypto ─────────────────────────────────────────────────────────────────
     if cr_symbols:
-        st.markdown(section_label(f"Crypto Symbol Status — Last {LOOKBACK} Days"), unsafe_allow_html=True)
-        cr_bars = load_bars(sorted(cr_symbols)[:9], start_d, end_d, asset_class="crypto")
+        cr_sample = sorted(cr_symbols)[:10]
+        cr_bars   = load_bars(cr_sample, start_d, end_d, asset_class="crypto")
+
         if not cr_bars.is_empty():
             cr_counts = (
                 cr_bars.group_by("symbol")
@@ -395,18 +502,77 @@ with tab_data:
                     .then(pl.lit("STALE")).otherwise(pl.lit("OK")).alias("status")
                 )
             )
-            cr_pd = cr_counts.to_pandas()
-            st.dataframe(
-                cr_pd.style.apply(
-                    lambda col: [
-                        f"color:{COLORS['negative']}" if v == "STALE"
-                        else f"color:{COLORS['positive']}"
-                        for v in col
-                    ] if col.name == "status" else [""] * len(col),
-                    axis=0,
-                ),
-                width="stretch", hide_index=True,
+            cr_pd      = cr_counts.to_pandas()
+            stale_cr   = cr_pd[cr_pd["status"] == "STALE"]["symbol"].tolist()
+
+            st.markdown(section_label(f"Crypto Data Availability — Last {LOOKBACK} Days"),
+                        unsafe_allow_html=True)
+            if stale_cr:
+                st.warning(f"{len(stale_cr)} crypto symbol(s) stale: {', '.join(stale_cr)}")
+            else:
+                st.success("All crypto symbols have fresh data")
+
+            st.plotly_chart(
+                _availability_heatmap(cr_bars, cr_sample, start_d, end_d,
+                                      "Green = data present · Red = missing"),
+                use_container_width=True, config=PLOTLY_CONFIG,
             )
+
+            st.markdown(section_label("Crypto Schema Validation (>30% daily move = spike)"),
+                        unsafe_allow_html=True)
+            schema_cr = _schema_validation(cr_bars, spike_threshold=0.30)
+            issues_cr = schema_cr[schema_cr["verdict"] != "✓ Clean"]
+            if issues_cr.empty:
+                st.success("No schema issues detected in crypto data")
+            else:
+                st.warning(f"{len(issues_cr)} crypto symbol(s) with data quality issues")
+            st.dataframe(schema_cr, use_container_width=True, hide_index=True)
+
+    # ── 3. Re-ingest trigger ───────────────────────────────────────────────────
+    st.markdown(section_label("Re-Ingest Stale Data"), unsafe_allow_html=True)
+    st.caption(
+        "Runs a targeted backfill for the last 30 days of the selected asset class. "
+        "All symbols in that class are refreshed — this takes 1–3 minutes."
+    )
+
+    all_stale = []
+    if eq_symbols and "stale_eq" in dir():
+        all_stale += [(s, "equity") for s in stale_eq]
+    if cr_symbols and "stale_cr" in dir():
+        all_stale += [(s, "crypto") for s in stale_cr]
+
+    ri_col1, ri_col2 = st.columns([2, 1])
+    with ri_col1:
+        if all_stale:
+            selected = st.selectbox(
+                "Stale symbol to re-ingest",
+                options=[f"{s} ({ac})" for s, ac in all_stale],
+                key="dq_reingest_select",
+            )
+            target_ac = "equity" if "(equity)" in selected else "crypto"
+        else:
+            st.selectbox("Stale symbol to re-ingest",
+                         options=["— all symbols fresh —"],
+                         disabled=True, key="dq_reingest_select")
+            target_ac = None
+
+    with ri_col2:
+        st.markdown("<div style='height:28px'/>", unsafe_allow_html=True)
+        trigger = st.button(
+            "▶ Re-Ingest",
+            disabled=(target_ac is None),
+            key="dq_reingest_btn",
+            use_container_width=True,
+        )
+
+    if trigger and target_ac:
+        with st.spinner(f"Re-ingesting {target_ac} data for last 30 days…"):
+            msg = _trigger_reingest(target_ac, days_back=30)
+        if msg.startswith("✓"):
+            st.success(msg)
+            st.cache_data.clear()
+        else:
+            st.error(msg)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
