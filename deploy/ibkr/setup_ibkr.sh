@@ -77,10 +77,35 @@ else
     warn "$IBC_CONFIG already exists — not overwriting"
 fi
 
-# ── 6. Ownership ──────────────────────────────────────────────────────────────
-chown -R "$APP_USER:$APP_USER" "$IBC_DIR" "$GW_DIR"
+# ── 6. Fix IBC script permissions (unzip doesn't preserve +x) ────────────────
+log "Fixing IBC script permissions..."
+chmod +x "$IBC_DIR"/*.sh "$IBC_DIR/scripts/"*.sh 2>/dev/null || true
 
-# ── 7. Install systemd services ───────────────────────────────────────────────
+# ── 7. Patch gatewaystart.sh with correct server paths ───────────────────────
+# IBC hardcodes ~/Jts and version 1019 — patch to match our install
+log "Patching gatewaystart.sh paths..."
+GW_VERSION=$(ls "$GW_DIR/jars/" | grep 'jts4launch-' | grep -o '[0-9]*' | head -1)
+GW_VERSION=${GW_VERSION:-1037}
+log "  Detected IB Gateway version: $GW_VERSION"
+
+sed -i \
+    -e "s|^TWS_MAJOR_VRSN=.*|TWS_MAJOR_VRSN=${GW_VERSION}|" \
+    -e "s|^IBC_INI=.*|IBC_INI=${IBC_CONFIG}|" \
+    -e "s|^TWS_PATH=.*|TWS_PATH=/opt/Jts|" \
+    -e "s|^TWS_SETTINGS_PATH=.*|TWS_SETTINGS_PATH=${GW_DIR}|" \
+    -e "s|^LOG_PATH=.*|LOG_PATH=${LOG_DIR}|" \
+    "$IBC_DIR/gatewaystart.sh"
+
+# IBC expects: TWS_PATH/ibgateway/<version>/jars
+# Create that symlink structure pointing at our actual install
+log "Creating IBC directory structure symlink..."
+mkdir -p /opt/Jts/ibgateway
+ln -sfn "$GW_DIR" "/opt/Jts/ibgateway/${GW_VERSION}"
+
+# ── 8. Ownership ──────────────────────────────────────────────────────────────
+chown -R "$APP_USER:$APP_USER" "$IBC_DIR" "$GW_DIR" /opt/Jts
+
+# ── 9. Install systemd services ───────────────────────────────────────────────
 log "Installing systemd services..."
 DEPLOY_DIR="/opt/quantpipe/deploy"
 cp "$DEPLOY_DIR/systemd/quantpipe-xvfb.service"      /etc/systemd/system/
