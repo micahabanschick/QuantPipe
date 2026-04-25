@@ -240,10 +240,8 @@ section[data-testid="stMain"] {{
     background: transparent !important;
 }}
 
-/* ── Sidebar — brand-coloured gradient ───────────────────────────────────── */
-[data-testid="stSidebar"],
-[data-testid="stSidebar"] > div,
-[data-testid="stSidebar"] > div > div {{
+/* ── Sidebar — gradient on outermost element only ────────────────────────── */
+section[data-testid="stSidebar"] {{
     background:
         radial-gradient(ellipse 140% 40% at 50% 0%,
             rgba(107,47,160,0.22) 0%, transparent 60%),
@@ -254,6 +252,16 @@ section[data-testid="stMain"] {{
             #0D1228 65%,
             {COLORS['surface']} 100%
         ) !important;
+}}
+
+/* All inner sidebar wrappers transparent + remove header-offset padding */
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] > div > div,
+section[data-testid="stSidebar"] > div > div > div {{
+    background: transparent !important;
+    background-color: transparent !important;
+    padding-top: 0 !important;
+    margin-top: 0 !important;
 }}
 
 [data-testid="block-container"] {{
