@@ -194,17 +194,23 @@ html, body {{
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }}
 
-/* Main app — subtle brand-colour radial glows in opposite corners */
+/* Main app background — target every layer Streamlit uses */
+.stApp,
+[data-testid="stApp"],
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main,
+section[data-testid="stMain"] {{
+    background-color: {COLORS['bg']} !important;
+}}
+/* Ambient brand glows — applied to the outermost layer */
+.stApp,
 [data-testid="stApp"] {{
     background:
-        radial-gradient(ellipse 60% 40% at 15% 0%,
-            rgba(107,47,160,0.07) 0%, transparent 60%),
-        radial-gradient(ellipse 50% 35% at 85% 100%,
-            rgba(201,162,39,0.05) 0%, transparent 55%),
+        radial-gradient(ellipse 55% 35% at 12% 0%,
+            rgba(107,47,160,0.09) 0%, transparent 65%),
+        radial-gradient(ellipse 45% 30% at 88% 100%,
+            rgba(201,162,39,0.07) 0%, transparent 60%),
         {COLORS['bg']} !important;
-}}
-[data-testid="stAppViewContainer"] > .main {{
-    background: transparent;
 }}
 [data-testid="block-container"] {{
     padding-top: 24px;
@@ -325,27 +331,32 @@ html, body {{
 }}
 
 /* ══════════════════════════════════════════════════════════════════════════════
-   BUTTONS
+   BUTTONS — all Streamlit button variants share the same gold style
 ══════════════════════════════════════════════════════════════════════════════ */
-[data-testid="stButton"] > button {{
+[data-testid="stButton"] > button,
+[data-testid="stDownloadButton"] > button,
+[data-testid="stLinkButton"] > a {{
     background: transparent !important;
     border: 1px solid {COLORS['gold']} !important;
     color: {COLORS['gold']} !important;
     border-radius: 6px !important;
     font-weight: 600 !important;
     font-size: 0.78rem !important;
-    letter-spacing: 0.06em !important;
-    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
     padding: 7px 20px !important;
-    transition: all 0.18s ease !important;
+    transition: background 0.18s ease, box-shadow 0.18s ease, color 0.18s ease !important;
     box-shadow: none !important;
+    text-decoration: none !important;
 }}
-[data-testid="stButton"] > button:hover {{
+[data-testid="stButton"] > button:hover,
+[data-testid="stDownloadButton"] > button:hover,
+[data-testid="stLinkButton"] > a:hover {{
     background: {COLORS['gold']} !important;
     color: {COLORS['bg_void']} !important;
-    box-shadow: 0 0 20px rgba(201,162,39,0.30) !important;
+    box-shadow: 0 0 20px rgba(201,162,39,0.28) !important;
 }}
-[data-testid="stButton"] > button:disabled {{
+[data-testid="stButton"] > button:disabled,
+[data-testid="stDownloadButton"] > button:disabled {{
     opacity: 0.35 !important;
 }}
 

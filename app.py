@@ -33,26 +33,37 @@ st.set_page_config(
 NAV_CSS = f"""
 <style>
 /* ── Nav links ───────────────────────────────────────────────────────────── */
-[data-testid="stSidebarNavLink"] {{
+/* ── Nav links — target both the link and its inner text span ───────────── */
+[data-testid="stSidebarNavLink"],
+[data-testid="stSidebarNavLink"] span,
+[data-testid="stSidebarNavLink"] p {{
     border-radius: 7px;
     padding: 8px 12px;
     margin: 2px 4px;
     transition: background 0.15s ease, color 0.15s ease;
-    color: {COLORS['neutral']};
-    font-size: 0.83rem;
-    font-weight: 500;
+    color: {COLORS['neutral']} !important;
+    font-size: 0.83rem !important;
+    font-weight: 500 !important;
     letter-spacing: 0.01em;
+    text-decoration: none !important;
 }}
-[data-testid="stSidebarNavLink"]:hover {{
-    background: rgba(201,162,39,0.06);
-    color: {COLORS['text']};
+[data-testid="stSidebarNavLink"]:hover,
+[data-testid="stSidebarNavLink"]:hover span,
+[data-testid="stSidebarNavLink"]:hover p {{
+    background: rgba(201,162,39,0.07) !important;
+    color: {COLORS['text']} !important;
 }}
 [data-testid="stSidebarNavLink"][aria-current="page"] {{
-    background: rgba(201,162,39,0.10);
-    border-left: 3px solid {COLORS['gold']};
-    padding-left: 9px;
-    color: {COLORS['gold']};
-    font-weight: 600;
+    background: rgba(201,162,39,0.13) !important;
+    border-left: 3px solid {COLORS['gold']} !important;
+    padding-left: 9px !important;
+    border-radius: 0 7px 7px 0 !important;
+}}
+[data-testid="stSidebarNavLink"][aria-current="page"],
+[data-testid="stSidebarNavLink"][aria-current="page"] span,
+[data-testid="stSidebarNavLink"][aria-current="page"] p {{
+    color: {COLORS['gold']} !important;
+    font-weight: 700 !important;
 }}
 [data-testid="stSidebarNavSeparator"] p {{
     color: {COLORS['text_muted']} !important;
