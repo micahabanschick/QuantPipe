@@ -101,13 +101,34 @@ st.markdown(CSS + NAV_CSS, unsafe_allow_html=True)
 
 # ── Lightweight status probe ───────────────────────────────────────────────────
 
-def _probe() -> tuple[str, str, str]:
+def _next_run_utc() -> str:
+    """Return the next Mon–Fri 06:15 UTC run as a short human string."""
+    from datetime import timezone, timedelta
+    now = datetime.now(timezone.utc)
+    candidate = now.replace(hour=6, minute=15, second=0, microsecond=0)
+    # Step forward day-by-day until we land on a future weekday slot
+    for offset in range(8):
+        t = candidate + timedelta(days=offset)
+        if t > now and t.weekday() < 5:   # Mon=0 … Fri=4
+            days = (t.date() - now.date()).days
+            if days == 0:
+                return f"today {t.strftime('%H:%M')} UTC"
+            if days == 1:
+                return f"tomorrow {t.strftime('%H:%M')} UTC"
+            return f"{t.strftime('%a %H:%M')} UTC"
+    return "—"
+
+
+def _probe() -> tuple[str, str, str, str, int]:
+    """Return (status_label, color, last_run, next_run, n_positions)."""
     tw  = DATA_DIR / "gold" / "equity" / "target_weights.parquet"
     eq  = DATA_DIR / "bronze" / "equity" / "daily"
     log = LOGS_DIR / "pipeline.log"
 
+    next_run = _next_run_utc()
+
     if not eq.exists() or not tw.exists():
-        return "NO DATA", COLORS["negative"], "—"
+        return "NO DATA", COLORS["negative"], "—", next_run, 0
 
     age_h = (datetime.now() - datetime.fromtimestamp(tw.stat().st_mtime)).total_seconds() / 3600
 
@@ -121,12 +142,18 @@ def _probe() -> tuple[str, str, str]:
                     last_run = f"{parts[0]} {parts[1]}" if len(parts) >= 2 else "unknown"
                     break
 
-    if age_h > 48:
-        return "STALE", COLORS["warning"], last_run
-    return "LIVE", COLORS["positive"], last_run
+    # Position count — lightweight: read only the symbol column
+    n_pos = 0
+    with contextlib.suppress(Exception):
+        import polars as pl
+        n_pos = pl.read_parquet(tw, columns=["symbol"])["symbol"].n_unique()
+
+    status = "STALE" if age_h > 48 else "LIVE"
+    color  = COLORS["warning"] if age_h > 48 else COLORS["positive"]
+    return status, color, last_run, next_run, n_pos
 
 
-status_label, status_color, last_run = _probe()
+status_label, status_color, last_run, next_run, n_positions = _probe()
 
 # ── Navigation ─────────────────────────────────────────────────────────────────
 
@@ -210,20 +237,43 @@ with st.sidebar:
 </div>
 """, unsafe_allow_html=True)
 
+    _pos_str = f"{n_positions} position{'s' if n_positions != 1 else ''}" if n_positions else "no positions"
     st.markdown(f"""
-<div style="border-top:1px solid {COLORS['border']};margin:8px 0 10px;"></div>
-<div style="display:flex;align-items:center;gap:7px;padding:0 4px 6px;">
-  <span style="width:7px;height:7px;border-radius:50%;
-               background:{status_color};display:inline-block;flex-shrink:0;"></span>
-  <span style="color:{status_color};font-size:0.72rem;font-weight:700;
-               letter-spacing:0.06em;">{status_label}</span>
-  <span style="color:{COLORS['text_muted']};font-size:0.67rem;margin-left:2px;">
-    {last_run}
-  </span>
-</div>
-<div style="color:{COLORS['text_muted']};font-size:0.60rem;
-            text-align:center;letter-spacing:0.02em;padding:6px 0 8px;">
-  v0.1 · Paper trading only · Not investment advice
+<div style="border-top:1px solid {COLORS['border']};margin:8px 4px 0;padding-top:10px;">
+
+  <!-- Status + positions row -->
+  <div style="display:flex;align-items:center;justify-content:space-between;
+              margin-bottom:6px;">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="width:7px;height:7px;border-radius:50%;
+                   background:{status_color};display:inline-block;flex-shrink:0;"></span>
+      <span style="color:{status_color};font-size:0.72rem;font-weight:700;
+                   letter-spacing:0.06em;">{status_label}</span>
+    </div>
+    <span style="color:{COLORS['neutral']};font-size:0.68rem;font-weight:600;">
+      {_pos_str}
+    </span>
+  </div>
+
+  <!-- Last run -->
+  <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+    <span style="color:{COLORS['text_muted']};font-size:0.63rem;
+                 text-transform:uppercase;letter-spacing:0.07em;">Last run</span>
+    <span style="color:{COLORS['neutral']};font-size:0.63rem;">{last_run}</span>
+  </div>
+
+  <!-- Next run -->
+  <div style="display:flex;justify-content:space-between;margin-bottom:10px;">
+    <span style="color:{COLORS['text_muted']};font-size:0.63rem;
+                 text-transform:uppercase;letter-spacing:0.07em;">Next run</span>
+    <span style="color:{COLORS['gold_dim']};font-size:0.63rem;">{next_run}</span>
+  </div>
+
+  <div style="color:{COLORS['text_muted']};font-size:0.59rem;
+              text-align:center;letter-spacing:0.02em;
+              border-top:1px solid {COLORS['border_dim']};padding-top:6px;">
+    v0.1 · Paper trading · Not investment advice
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
