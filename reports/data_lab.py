@@ -10,7 +10,7 @@ Tabs:
     Tradability      — IC at multiple lags, rolling IC, scatter, verdict
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 
