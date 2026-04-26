@@ -69,6 +69,21 @@ tab_reg, tab_ingest, tab_trade = st.tabs(
     ["  Source Registry  ", "  Ingest & Clean  ", "  Tradability Check  "]
 )
 
+# ── Shared: crypto symbol list (used in Source Registry + Tradability Check) ──
+
+@st.cache_data(ttl=300)
+def _crypto_symbols_available() -> list[str]:
+    """Return crypto symbols with data in the bronze layer."""
+    try:
+        from storage.parquet_store import list_symbols
+        syms = list_symbols("crypto")
+        return sorted(syms) if syms else []
+    except Exception:
+        return []
+
+
+_crypto_syms = _crypto_symbols_available()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — SOURCE REGISTRY
@@ -76,6 +91,7 @@ tab_reg, tab_ingest, tab_trade = st.tabs(
 
 with tab_reg:
     _fred_live = bool(FRED_API_KEY)
+    # _crypto section appended below after FRED block
     _fc        = COLORS["green"] if _fred_live else COLORS["negative"]
     _fbg       = "rgba(0,230,118,0.08)" if _fred_live else "rgba(255,77,77,0.08)"
     _flabel    = "LIVE" if _fred_live else "KEY MISSING"
@@ -144,6 +160,54 @@ with tab_reg:
   <ul style="margin:0;padding-left:16px;">{ex_html}</ul>
 </div>
 """, unsafe_allow_html=True)
+
+    # ── Crypto Market Data (live bronze layer) ─────────────────────────────────
+    st.markdown("<div style='height:6px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Crypto Market Data (Bronze Layer)"), unsafe_allow_html=True)
+    if not _crypto_syms:
+        st.info("No crypto data in the bronze layer yet. Run `orchestration/ingest_daily.py` to populate.")
+    else:
+        _cr_c1, _cr_c2 = st.columns([3, 1])
+        with _cr_c1:
+            _cr_selected = st.selectbox("Browse crypto symbol", _crypto_syms, key="reg_cr_sym")
+        with _cr_c2:
+            st.markdown("<div style='height:28px'/>", unsafe_allow_html=True)
+            _cr_view = st.button("View Price Chart", key="reg_cr_view", use_container_width=True)
+
+        if _cr_view and _cr_selected:
+            from datetime import timedelta
+            _cr_end   = date.today()
+            _cr_start = _cr_end - timedelta(days=365)
+            _cr_bars  = load_bars([_cr_selected], _cr_start, _cr_end, asset_class="crypto")
+            if not _cr_bars.is_empty():
+                _cr_pd  = _cr_bars.sort("date").to_pandas()
+                _cr_col = "adj_close" if "adj_close" in _cr_pd.columns else "close"
+                _cr_pd["date"] = pd.to_datetime(_cr_pd["date"])
+                fig_cr = go.Figure(go.Scatter(
+                    x=_cr_pd["date"], y=_cr_pd[_cr_col],
+                    mode="lines", line=dict(color=COLORS["gold"], width=2),
+                    hovertemplate="%{x|%Y-%m-%d}: $%{y:,.4f}<extra></extra>",
+                    fill="tozeroy", fillcolor="rgba(201,162,39,0.06)",
+                ))
+                apply_theme(fig_cr, title=f"{_cr_selected} — Daily Close (last 365 days)", height=280)
+                fig_cr.update_layout(yaxis=dict(title="Price (USDT)"), xaxis=dict(showgrid=False))
+                st.plotly_chart(fig_cr, use_container_width=True, config=PLOTLY_CONFIG)
+
+                _cr_latest = _cr_pd.iloc[-1]
+                _cr_ret_1m = (float(_cr_latest[_cr_col]) / float(_cr_pd.iloc[-22][_cr_col]) - 1) if len(_cr_pd) >= 22 else None
+                _cr_ret_ytd = (float(_cr_latest[_cr_col]) / float(_cr_pd.iloc[0][_cr_col]) - 1) if len(_cr_pd) > 1 else None
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Latest Close", f"${float(_cr_latest[_cr_col]):,.4f}")
+                if _cr_ret_1m is not None:
+                    k2.metric("1-Month Return", f"{_cr_ret_1m:+.1%}")
+                if _cr_ret_ytd is not None:
+                    k3.metric("YTD Return (365d)", f"{_cr_ret_ytd:+.1%}")
+            else:
+                st.warning(f"No data for {_cr_selected} in the bronze layer.")
+
+        st.caption(f"**{len(_crypto_syms)} crypto symbols** stored in bronze layer: " +
+                   ", ".join(f"`{s}`" for s in _crypto_syms[:10]) +
+                   (f" + {len(_crypto_syms)-10} more" if len(_crypto_syms) > 10 else ""))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -575,13 +639,20 @@ with tab_trade:
         # ── Multi-signal comparison ────────────────────────────────────────────
         with st.expander("Compare All Signals", expanded=False):
             st.caption("Ranks every saved signal by best IC against the selected equity target.")
-            _cmp_eq = st.selectbox("Equity target for comparison",
-                                    ["SPY", "QQQ", "IWM"], key="cmp_eq")
+            _cmp_eq = st.selectbox("Price target for comparison",
+                                    ["SPY", "QQQ", "IWM"] + [f"CRYPTO:{s}" for s in _crypto_syms[:5]],
+                                    key="cmp_eq")
             if st.button("Run Comparison", key="cmp_run"):
                 _rows = []
-                _cmp_bars = load_bars([_cmp_eq], date(2015,1,1), date.today(), "equity")
-                _cmp_pc   = "adj_close" if "adj_close" in _cmp_bars.columns else "close"
-                _cmp_px   = _cmp_bars.to_pandas().set_index("date")[_cmp_pc]
+                if _cmp_eq.startswith("CRYPTO:"):
+                    _cr_sym_cmp = _cmp_eq.split(":", 1)[1]
+                    _cmp_bars = load_bars([_cr_sym_cmp], date(2018,1,1), date.today(), "crypto")
+                    _cmp_pc   = "adj_close" if "adj_close" in _cmp_bars.columns else "close"
+                    _cmp_px   = _cmp_bars.sort("date").to_pandas().set_index("date")[_cmp_pc]
+                else:
+                    _cmp_bars = load_bars([_cmp_eq], date(2015,1,1), date.today(), "equity")
+                    _cmp_pc   = "adj_close" if "adj_close" in _cmp_bars.columns else "close"
+                    _cmp_px   = _cmp_bars.to_pandas().set_index("date")[_cmp_pc]
                 _cmp_px.index = pd.to_datetime(_cmp_px.index)
                 for _cf in _tfiles:
                     try:
@@ -615,9 +686,12 @@ with tab_trade:
         with _tc1:
             _tsrc = st.selectbox("Alt data source", [f.stem for f in _tfiles], key="tc_src")
         with _tc2:
-            _teq  = st.selectbox("Equity target",
-                                  ["SPY", "QQQ", "IWM", "Equal-weight universe"],
-                                  key="tc_eq")
+            _equity_targets = ["SPY", "QQQ", "IWM", "Equal-weight universe"]
+            _crypto_targets = [f"CRYPTO:{s}" for s in _crypto_syms[:8]]
+            _teq  = st.selectbox("Price target (equity or crypto)",
+                                  _equity_targets + (_crypto_targets if _crypto_targets else []),
+                                  key="tc_eq",
+                                  help="Select an equity ETF or a crypto symbol as the forward-return target")
         with _tc4:
             st.markdown("<div style='height:28px'/>", unsafe_allow_html=True)
             _trun = st.button("Run Analysis", key="tc_run", use_container_width=True)
@@ -648,7 +722,7 @@ with tab_trade:
                 _tend   = _tpd.index.max().date() if hasattr(_tpd.index.max(), "date") \
                           else date.today()
 
-                with st.spinner("Loading equity prices…"):
+                with st.spinner("Loading price data…"):
                     if _teq == "Equal-weight universe":
                         from storage.universe import universe_as_of_date
                         _syms = universe_as_of_date("equity", _tend)[:10]
@@ -657,6 +731,12 @@ with tab_trade:
                         _eqpx = (_bars.to_pandas()
                                       .pivot(index="date", columns="symbol", values=_pc)
                                       .mean(axis=1))
+                    elif _teq.startswith("CRYPTO:"):
+                        _cr_sym = _teq.split(":", 1)[1]
+                        _bars   = load_bars([_cr_sym], _tstart, _tend, "crypto")
+                        _pc     = "adj_close" if "adj_close" in _bars.columns else "close"
+                        _eqpx   = _bars.sort("date").to_pandas().set_index("date")[_pc]
+                        st.caption(f"Using crypto prices: **{_cr_sym}** (USDT)")
                     else:
                         _bars = load_bars([_teq], _tstart, _tend, "equity")
                         _pc   = "adj_close" if "adj_close" in _bars.columns else "close"
