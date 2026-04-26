@@ -392,6 +392,85 @@ with tab_status:
     c2.markdown(kpi_card("Daily Rebalance", "16:30 Mon–Fri",  accent=COLORS["purple"]), unsafe_allow_html=True)
     c3.markdown(kpi_card("Scheduler",       "Task Scheduler", accent=COLORS["neutral"]), unsafe_allow_html=True)
 
+    # ── Alert Channel Status ───────────────────────────────────────────────────
+    st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Alert Channels"), unsafe_allow_html=True)
+
+    try:
+        from config.settings import _get  # noqa: PLC0415
+        _pushover_token = _get("PUSHOVER_TOKEN", "")
+        _pushover_user  = _get("PUSHOVER_USER",  "")
+        _ntfy_topic     = _get("NTFY_TOPIC",     "")
+    except Exception:
+        import os
+        _pushover_token = os.getenv("PUSHOVER_TOKEN", "")
+        _pushover_user  = os.getenv("PUSHOVER_USER",  "")
+        _ntfy_topic     = os.getenv("NTFY_TOPIC",     "")
+
+    _push_ok = bool(_pushover_token and _pushover_user)
+    _ntfy_ok = bool(_ntfy_topic)
+
+    al1, al2, al3 = st.columns(3)
+    al1.markdown(
+        kpi_card("Pushover", "ACTIVE" if _push_ok else "NOT SET",
+                 accent=COLORS["positive"] if _push_ok else COLORS["text_muted"]),
+        unsafe_allow_html=True,
+    )
+    al2.markdown(
+        kpi_card("ntfy.sh", f"/{_ntfy_topic}" if _ntfy_ok else "NOT SET",
+                 accent=COLORS["positive"] if _ntfy_ok else COLORS["text_muted"]),
+        unsafe_allow_html=True,
+    )
+    al3.markdown(
+        kpi_card("Channels active", str(int(_push_ok) + int(_ntfy_ok)),
+                 accent=COLORS["positive"] if (_push_ok or _ntfy_ok) else COLORS["negative"]),
+        unsafe_allow_html=True,
+    )
+
+    if not (_push_ok or _ntfy_ok):
+        st.caption(
+            "No alert channels configured. Add `PUSHOVER_TOKEN`, `PUSHOVER_USER`, "
+            "or `NTFY_TOPIC` to your `.env` file to receive pipeline failure notifications."
+        )
+
+    # Test alert buttons
+    _ta1, _ta2, _ta3 = st.columns([1, 1, 4])
+    with _ta1:
+        if _push_ok and st.button("Test Pushover", key="test_pushover",
+                                   use_container_width=True):
+            try:
+                import requests as _req
+                _resp = _req.post(
+                    "https://api.pushover.net/1/messages.json",
+                    data=dict(token=_pushover_token, user=_pushover_user,
+                              title="QuantPipe Test", message="Alert channel working ✓"),
+                    timeout=8,
+                )
+                if _resp.status_code == 200:
+                    st.success("Pushover test sent successfully.")
+                else:
+                    st.error(f"Pushover returned {_resp.status_code}: {_resp.text[:200]}")
+            except Exception as _pe:
+                st.error(f"Pushover test failed: {_pe}")
+    with _ta2:
+        if _ntfy_ok and st.button("Test ntfy", key="test_ntfy",
+                                   use_container_width=True):
+            try:
+                import requests as _req
+                _resp = _req.post(
+                    f"https://ntfy.sh/{_ntfy_topic}",
+                    data="QuantPipe test alert — alert channel working ✓",
+                    timeout=8,
+                )
+                if _resp.status_code == 200:
+                    st.success(f"ntfy.sh message sent to /{_ntfy_topic}.")
+                else:
+                    st.error(f"ntfy returned {_resp.status_code}: {_resp.text[:200]}")
+            except Exception as _ne:
+                st.error(f"ntfy test failed: {_ne}")
+    if not _push_ok and not _ntfy_ok:
+        st.caption("Configure at least one channel above to enable test buttons.")
+
 
 # ── Data Quality helpers ───────────────────────────────────────────────────────
 

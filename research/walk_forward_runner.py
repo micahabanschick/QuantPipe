@@ -89,6 +89,7 @@ def fold_summary(result: WalkForwardResult) -> list[dict]:
             "Fold":       fold.fold + 1,
             "Test Start": str(fold.test_start),
             "Test End":   str(fold.test_end),
+            "IS Sharpe":  getattr(fold, "is_sharpe", 0.0),
             "OOS Sharpe": round(td.get("sharpe", 0.0), 3),
             "OOS CAGR":   td.get("cagr", 0.0),
             "OOS Max DD": td.get("max_drawdown", 0.0),

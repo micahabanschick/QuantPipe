@@ -332,4 +332,88 @@ for col, vals, title, sig_col in [
         )
         st.plotly_chart(fig_acf, use_container_width=True, config=PLOTLY_CONFIG)
 
+# ==============================================================================
+# Section 6 — Rolling Hurst Exponent
+# ==============================================================================
+
+st.markdown("<div style='height:16px'/>", unsafe_allow_html=True)
+st.markdown(section_label("Rolling Hurst Exponent (Long Memory)"), unsafe_allow_html=True)
+st.caption(
+    "H > 0.55 = persistent / trending.  H ~ 0.50 = random walk.  H < 0.45 = mean-reverting. "
+    "Computed on log-prices via R/S analysis in a rolling window."
+)
+
+from research.long_memory import rolling_hurst, hurst_rs, hurst_label as _hurst_label
+
+hurst_window = st.select_slider(
+    "Rolling window (days)", options=[63, 126, 252], value=126, key="ts_hurst_win",
+)
+
+with st.spinner("Computing Hurst exponents…"):
+    _h_full = hurst_rs(ts_log)
+    _h_lbl  = _hurst_label(_h_full)
+    _h_idxs, _h_vals = rolling_hurst(ts_log, window=hurst_window)
+
+_h_dates = [ts_dates[i] for i in _h_idxs] if len(_h_idxs) > 0 else []
+
+hk1, hk2, hk3, hk4 = st.columns(4)
+hk1.markdown(kpi_card("Full-Sample H (R/S)", f"{_h_full:.4f}",
+                        accent=COLORS["positive"] if _h_full > 0.55
+                        else COLORS["negative"] if _h_full < 0.45 else COLORS["neutral"]),
+             unsafe_allow_html=True)
+hk2.markdown(kpi_card("Regime", _h_lbl,
+                        accent=COLORS["positive"] if "Persistent" in _h_lbl
+                        else COLORS["negative"] if "Mean" in _h_lbl else COLORS["neutral"]),
+             unsafe_allow_html=True)
+hk3.markdown(kpi_card("Rolling Window", f"{hurst_window}d", accent=COLORS["blue"]),
+             unsafe_allow_html=True)
+if _h_vals:
+    hk4.markdown(kpi_card("Current H (rolling)", f"{float(_h_vals[-1]):.4f}",
+                            accent=COLORS["gold"]), unsafe_allow_html=True)
+
+if _h_dates and len(_h_dates) > 1:
+    _h_colors = [
+        COLORS["positive"] if v > 0.55 else
+        COLORS["negative"] if v < 0.45 else
+        COLORS["neutral"]
+        for v in _h_vals
+    ]
+    fig_hurst = go.Figure()
+    # Regime bands
+    fig_hurst.add_hrect(y0=0.55, y1=1.0,  fillcolor="rgba(0,212,170,0.05)", line_width=0)
+    fig_hurst.add_hrect(y0=0.0,  y1=0.45, fillcolor="rgba(255,77,77,0.05)",  line_width=0)
+    fig_hurst.add_trace(go.Scatter(
+        x=_h_dates, y=_h_vals, mode="lines",
+        line=dict(color=COLORS["gold"], width=2),
+        name=f"Rolling {hurst_window}d H",
+        hovertemplate="%{x|%Y-%m-%d}: H=%{y:.4f}<extra></extra>",
+    ))
+    fig_hurst.add_hline(y=0.5,  line=dict(color=COLORS["border"],   width=1.5, dash="dot"),
+                         annotation_text="H=0.50 random walk",
+                         annotation_font=dict(size=9, color=COLORS["text_muted"]),
+                         annotation_position="right")
+    fig_hurst.add_hline(y=0.55, line=dict(color=COLORS["positive"], width=1,   dash="dot"),
+                         annotation_text="0.55 persistent",
+                         annotation_font=dict(size=9, color=COLORS["positive"]),
+                         annotation_position="right")
+    fig_hurst.add_hline(y=0.45, line=dict(color=COLORS["negative"], width=1,   dash="dot"),
+                         annotation_text="0.45 mean-reverting",
+                         annotation_font=dict(size=9, color=COLORS["negative"]),
+                         annotation_position="right")
+    apply_theme(fig_hurst, legend_inside=True)
+    fig_hurst.update_layout(
+        height=280,
+        yaxis=dict(range=[0.2, 0.85], title="Hurst exponent H", showgrid=False),
+        xaxis=dict(showgrid=False),
+        showlegend=True,
+    )
+    st.plotly_chart(fig_hurst, use_container_width=True, config=PLOTLY_CONFIG)
+    st.caption(
+        "Green band = persistent / trending regime (H > 0.55). "
+        "Red band = mean-reverting regime (H < 0.45). "
+        "Centre = random walk. Use this to decide whether to apply momentum or mean-reversion signals."
+    )
+else:
+    st.info(f"Need at least {hurst_window} observations to compute rolling Hurst. Try reducing the window.")
+
 st.caption("QuantPipe — for research and paper trading only. Not investment advice.")

@@ -256,3 +256,103 @@ if K > 1:
     st.plotly_chart(fig_h, use_container_width=True, config=PLOTLY_CONFIG)
     st.caption("Colour shows direction and magnitude of each factor's contribution. "
                "Horizontal colour transitions indicate regime shifts.")
+
+# ── Dynamic Hedge Ratio ────────────────────────────────────────────────────────
+
+st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+st.markdown(section_label("Dynamic Hedge Ratio"), unsafe_allow_html=True)
+st.caption(
+    "Time-varying hedge ratio between two assets via Kalman filter. "
+    "Solid = Kalman dynamic ratio with ±1σ band. Dashed = static OLS ratio."
+)
+
+hedge_sym = st.selectbox(
+    "Hedge asset (denominator)",
+    options=sorted(_sym_list) if _sym_list else ["SPY"],
+    index=(sorted(_sym_list).index("SPY") if _sym_list and "SPY" in _sym_list else 0),
+    key="kf_hedge_sym",
+    help="The asset used as the hedge vehicle. e.g. SPY gives the beta-hedge ratio.",
+)
+
+if hedge_sym == sym:
+    st.info("Select a different asset from the **Asset** control above to compute the hedge ratio.")
+else:
+    @st.cache_data(ttl=300)
+    def _run_hedge_ratio(asset: str, hedge: str, _delta: float,
+                         start_s: str, end_s: str, syms_t: tuple):
+        import numpy as _np2
+        from research.kalman_filter import kalman_hedge_ratio
+        bars = _load_prices(syms_t, start_s, end_s)
+        if bars is None:
+            return None, None, None
+        price_col = "adj_close" if "adj_close" in bars.columns else "close"
+        _px = (bars.to_pandas()
+                   .pivot(index="date", columns="symbol", values=price_col)
+                   .sort_index())
+        _px.index = pd.to_datetime(_px.index)
+        if asset not in _px.columns or hedge not in _px.columns:
+            return None, None, None
+        asset_r = _px[asset].pct_change().dropna()
+        hedge_r = _px[hedge].pct_change().dropna()
+        common  = asset_r.index.intersection(hedge_r.index)
+        asset_r, hedge_r = asset_r.loc[common], hedge_r.loc[common]
+        betas, variances = kalman_hedge_ratio(asset_r, hedge_r, delta=_delta)
+        ols_ratio = float(_np2.cov(asset_r.values, hedge_r.values)[0, 1] /
+                          max(_np2.var(hedge_r.values), 1e-12))
+        return betas, variances, ols_ratio
+
+    with st.spinner(f"Computing dynamic hedge ratio ({sym} vs {hedge_sym})…"):
+        _hbetas, _hvars, _hols = _run_hedge_ratio(
+            sym, hedge_sym, delta, str(_start), str(_end), _symbols)
+
+    if _hbetas is None:
+        st.warning(f"Could not compute hedge ratio — check price data for {sym} and {hedge_sym}.")
+    else:
+        _hstds  = np.sqrt(np.clip(_hvars, 0, None))
+        _hdates = pd.to_datetime(kr.dates) if kr.dates else pd.DatetimeIndex([])
+        _n      = min(len(_hbetas), len(_hdates))
+        _hbetas, _hstds, _hdates = _hbetas[-_n:], _hstds[-_n:], _hdates[-_n:]
+
+        hk1, hk2, hk3 = st.columns(3)
+        hk1.markdown(kpi_card("Current Hedge Ratio",
+                               f"{float(_hbetas[-1]):.4f}" if _n else "—",
+                               accent=COLORS["gold"]),    unsafe_allow_html=True)
+        hk2.markdown(kpi_card("Static OLS Ratio",
+                               f"{_hols:.4f}" if _hols is not None else "—",
+                               accent=COLORS["neutral"]), unsafe_allow_html=True)
+        hk3.markdown(kpi_card("Uncertainty (1σ)",
+                               f"±{float(_hstds[-1]):.4f}" if _n else "—",
+                               accent=COLORS["warning"]), unsafe_allow_html=True)
+
+        fig_hr = go.Figure()
+        fig_hr.add_trace(go.Scatter(
+            x=list(_hdates) + list(_hdates[::-1]),
+            y=list(_hbetas + _hstds) + list((_hbetas - _hstds)[::-1]),
+            fill="toself", fillcolor="rgba(201,162,39,0.10)",
+            line=dict(width=0), name="±1σ band", hoverinfo="skip",
+        ))
+        fig_hr.add_trace(go.Scatter(
+            x=_hdates, y=_hbetas, mode="lines",
+            line=dict(color=COLORS["gold"], width=2.2),
+            name=f"Kalman ({sym}/{hedge_sym})",
+            hovertemplate="%{x|%Y-%m-%d}: ratio=%{y:.4f}<extra>Kalman</extra>",
+        ))
+        if _hols is not None:
+            fig_hr.add_hline(y=_hols,
+                              line=dict(color=COLORS["neutral"], width=1.5, dash="dash"),
+                              annotation_text=f"OLS {_hols:.3f}",
+                              annotation_font=dict(size=9, color=COLORS["neutral"]),
+                              annotation_position="right")
+        fig_hr.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_hr, legend_inside=True)
+        fig_hr.update_layout(
+            height=300,
+            yaxis=dict(title=f"Ratio ({sym} per unit {hedge_sym})", showgrid=False),
+            xaxis=dict(showgrid=False),
+        )
+        st.plotly_chart(fig_hr, use_container_width=True, config=PLOTLY_CONFIG)
+        _cur = float(_hbetas[-1]) if _n else 0
+        st.caption(
+            f"To hedge 1 unit of **{sym}**, hold **{_cur:.3f}** units of **{hedge_sym}**. "
+            "When Kalman diverges from OLS, the relationship is shifting — reduce size or refresh hedge."
+        )
