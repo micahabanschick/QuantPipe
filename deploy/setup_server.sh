@@ -179,15 +179,28 @@ chown "$APP_USER:$APP_USER" /var/log/quantpipe
 # ── 12. Install systemd services ──────────────────────────────────────────────
 log "Installing systemd services..."
 DEPLOY_DIR="$APP_DIR/deploy"
-for f in quantpipe-pipeline.service quantpipe-pipeline.timer quantpipe-streamlit.service; do
-    cp "$DEPLOY_DIR/systemd/$f" "/etc/systemd/system/$f"
+for f in \
+    quantpipe-pipeline.service \
+    quantpipe-pipeline.timer \
+    quantpipe-rebalance.service \
+    quantpipe-rebalance.timer \
+    quantpipe-streamlit.service \
+    quantpipe-backup.service \
+    quantpipe-backup.timer; do
+    [[ -f "$DEPLOY_DIR/systemd/$f" ]] && cp "$DEPLOY_DIR/systemd/$f" "/etc/systemd/system/$f"
 done
 systemctl daemon-reload
 
-# Enable pipeline timer (runs Mon-Fri 06:15 UTC)
+# Pipeline: ingest + signals, Mon-Fri 21:30 UTC (post-US-market-close)
 systemctl enable --now quantpipe-pipeline.timer
 
-# Enable Streamlit (auto-starts, accessible on VPN only)
+# Rebalance: execute paper trades, Mon-Fri 22:30 UTC (60 min after pipeline)
+systemctl enable --now quantpipe-rebalance.timer
+
+# Backup: nightly at 02:00 UTC
+systemctl enable --now quantpipe-backup.timer
+
+# Streamlit: dashboard, auto-starts and restarts on crash
 systemctl enable --now quantpipe-streamlit.service
 
 # ── 13. Vault ─────────────────────────────────────────────────────────────────
