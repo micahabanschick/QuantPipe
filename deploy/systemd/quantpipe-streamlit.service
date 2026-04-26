@@ -1,0 +1,32 @@
+[Unit]
+Description=QuantPipe Streamlit Dashboard
+After=network.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+
+[Service]
+Type=simple
+User=quantpipe
+WorkingDirectory=/opt/quantpipe
+EnvironmentFile=/opt/quantpipe/.env
+Environment="PATH=/opt/quantpipe/.venv/bin:/home/quantpipe/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Bind to VPN interface only — not reachable from the public internet
+ExecStart=/opt/quantpipe/.venv/bin/streamlit run app.py \
+    --server.address 10.0.0.1 \
+    --server.port 8501 \
+    --server.headless true \
+    --server.enableXsrfProtection false \
+    --browser.gatherUsageStats false
+
+StandardOutput=append:/var/log/quantpipe/streamlit.log
+StandardError=append:/var/log/quantpipe/streamlit.log
+
+# Restart automatically on crash, wait 5s between attempts
+Restart=on-failure
+RestartSec=5
+
+MemoryMax=1G
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

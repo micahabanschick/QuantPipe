@@ -159,6 +159,15 @@ def run_rebalance(
 
     today = as_of or date.today()
     mode = "paper" if ibkr_is_paper else "LIVE"
+
+    # Semantic label written to parquet files — used by dashboard to filter
+    # "paper" = simulated (paper broker or IBKR in paper mode)
+    # "live"  = real money (IBKR live account)
+    if broker_name == "ibkr":
+        snap_broker = "paper" if ibkr_is_paper else "live"
+    else:
+        snap_broker = "paper"   # built-in paper broker and ccxt are always paper
+
     log.info(f"======== Rebalance | {today} | broker={broker_name} "
              f"| mode={mode} | dry_run={dry_run} ========")
 
@@ -225,7 +234,7 @@ def run_rebalance(
             log.info("DRY RUN — skipping order placement")
             for order in orders:
                 append_order(
-                    ORDER_JOURNAL_PATH, today, broker_name,
+                    ORDER_JOURNAL_PATH, today, snap_broker,
                     order.symbol, order.qty,
                     est_price=prices.get(order.symbol, 0.0),
                     order_id="dry-run",
@@ -238,14 +247,14 @@ def run_rebalance(
                 try:
                     order_id = broker.place_order(order)
                     append_order(
-                        ORDER_JOURNAL_PATH, today, broker_name,
+                        ORDER_JOURNAL_PATH, today, snap_broker,
                         order.symbol, order.qty, est_price, order_id, "placed",
                     )
                     log.info(f"Placed order {order_id}: {order.symbol} qty={order.qty:+.0f}")
                     placed += 1
                 except Exception as exc:
                     append_order(
-                        ORDER_JOURNAL_PATH, today, broker_name,
+                        ORDER_JOURNAL_PATH, today, snap_broker,
                         order.symbol, order.qty, est_price, "failed", "failed",
                     )
                     log.error(f"Failed to place order for {order.symbol}: {exc}")
@@ -283,7 +292,7 @@ def run_rebalance(
                 from execution.trading_log import append_nav_snapshot
                 TRADING_HISTORY_PATH = DATA_DIR / "gold" / "equity" / "trading_history.parquet"
                 append_nav_snapshot(
-                    TRADING_HISTORY_PATH, today, broker_name,
+                    TRADING_HISTORY_PATH, today, snap_broker,
                     nav=recon.nav,
                     cash=broker.get_cash() if hasattr(broker, "get_cash") else 0.0,
                     n_positions=len([p for p in broker_positions_after if abs(p.qty) > 1e-9]),

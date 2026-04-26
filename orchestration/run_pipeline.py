@@ -124,6 +124,16 @@ def run_pipeline(skip_ingest: bool = False, as_of: date | None = None) -> int:
     if code != 0:
         failures.append(f"generate_signals (code={code})")
 
+    # Step 3 — pull scheduled FRED series (best-effort, never aborts pipeline)
+    from config.settings import FRED_API_KEY
+    if FRED_API_KEY:
+        from orchestration.pull_fred import main as pull_fred_main
+        code, _ = _run_step("pull_fred", pull_fred_main)
+        if code != 0:
+            log.warning("FRED pull had errors — check logs/fred.log (pipeline continues)")
+    else:
+        log.info("--- Step: pull_fred SKIPPED (no FRED_API_KEY) ---")
+
     # Summary
     total_elapsed = time.monotonic() - t_start
     log.info(f"======== Pipeline complete in {total_elapsed:.1f}s | "

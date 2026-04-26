@@ -1,0 +1,9 @@
+[theme]
+primaryColor             = "#C9A227"   # Gold — brand accent
+backgroundColor          = "#0A0D1A"   # Deep navy
+secondaryBackgroundColor = "#0F1325"   # Sidebar / panels
+textColor                = "#EEF2FF"   # Blue-white primary text
+
+[server]
+headless = true
+enableCORS = false

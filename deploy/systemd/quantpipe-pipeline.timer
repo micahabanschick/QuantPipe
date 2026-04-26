@@ -1,0 +1,16 @@
+[Unit]
+Description=QuantPipe Daily Pipeline — Mon-Fri 06:15 UTC
+Requires=quantpipe-pipeline.service
+
+[Timer]
+# 06:15 UTC on weekdays (adjust for your market timezone)
+OnCalendar=Mon-Fri 06:15:00 UTC
+
+# If the server was off at trigger time, run immediately on next boot
+Persistent=true
+
+# Add small random delay (0-3 min) to avoid thundering herd with other jobs
+RandomizedDelaySec=180
+
+[Install]
+WantedBy=timers.target

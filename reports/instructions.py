@@ -90,11 +90,13 @@ with tab_qs:
         st.markdown(section_label("Navigation"), unsafe_allow_html=True)
         nav_items = [
             ("🔧", "Pipeline Health",  "System status, data freshness, log viewer"),
-            ("📈", "Performance",      "Backtest tearsheet, portfolio analytics, risk"),
-            ("⚗️", "Strategy Lab",     "Code editor, backtester, parameter sweep"),
-            ("🔬", "Research",         "Factor analysis, walk-forward folds, Monte Carlo"),
-            ("💼", "Portfolio",        "Multi-strategy overview, optimizer, deployment"),
-            ("📄", "Paper Trading",    "Live equity curve and order history"),
+            ("🧪", "Data Lab",         "FRED connector, alt-data ingestion, tradability checks"),
+            ("🔬", "Research",         "Factor analysis, signal, walk-forward, Monte Carlo, time-series"),
+            ("⚗️", "Strategy Lab",     "Code editor, backtester, parameter sweep, AI assistant"),
+            ("📡", "Kalman Filter",    "TVP regression — dynamic factor betas with uncertainty bands"),
+            ("📈", "Performance",      "Backtest tearsheet, risk analytics, factor attribution, Q-Q plot"),
+            ("💼", "Portfolio",        "Multi-strategy blending, optimizer, efficient frontier"),
+            ("📄", "Paper Trading",    "Live equity curve, P&L bars, win/loss stats, order history"),
             ("📖", "Guide & Glossary", "This page"),
         ]
         for icon, title, desc in nav_items:
@@ -271,6 +273,47 @@ with tab_ref:
         _cols[0].markdown(f'<div style="color:{COLORS["text"]};font-size:0.83rem;padding:5px 0;border-top:1px solid {COLORS["border_dim"]};">{name}</div>', unsafe_allow_html=True)
         _cols[1].markdown(f'<div style="color:{COLORS["negative"]};font-family:monospace;font-size:0.83rem;font-weight:700;padding:5px 0;border-top:1px solid {COLORS["border_dim"]};">{val}</div>', unsafe_allow_html=True)
         _cols[2].markdown(f'<div style="color:{COLORS["neutral"]};font-size:0.82rem;padding:5px 0;border-top:1px solid {COLORS["border_dim"]};">{desc}</div>', unsafe_allow_html=True)
+
+    st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Time-Series Analytics Metrics"), unsafe_allow_html=True)
+    col_ts1, col_ts2 = st.columns(2)
+    with col_ts1:
+        for args in [
+            ("Hurst Exponent (H)", "log(R/S) / log(n)  [R/S method]",
+             "Measures long-range dependence. H > 0.55 = persistent/trending; "
+             "H ~ 0.50 = random walk (Brownian motion); H < 0.45 = mean-reverting.",
+             "Momentum factors typically have H > 0.55. Mean-reversion factors H < 0.45.",
+             COLORS["teal"]),
+            ("Power Spectral Density", "Welch PSD = E[|FFT(x)|^2] / fs",
+             "Decomposes a time series into its constituent frequencies. Peaks in the PSD "
+             "identify dominant cycles (weekly, monthly, quarterly).",
+             "A peak at period T means the series has a recurring pattern every T trading days.",
+             COLORS["blue"]),
+            ("FFT Filter (Trend/Cycle)", "X_filtered = IFFT(mask(FFT(x)))",
+             "Brick-wall frequency filter. Low-pass extracts the slow trend; "
+             "high-pass isolates fast cyclical noise.",
+             "Cutoff = 20d means signals longer than 20 days are 'trend'; shorter are 'cycle'.",
+             COLORS["purple"]),
+        ]:
+            st.markdown(mdef(*args), unsafe_allow_html=True)
+    with col_ts2:
+        for args in [
+            ("GBM Drift (mu)", "mu = mean(log_ret) * 252 + 0.5*sigma^2",
+             "Annualised drift of a Geometric Brownian Motion fitted to the price series. "
+             "Includes the Ito correction for the log-price to price transformation.",
+             "Positive mu = upward-trending process. Actual drift ≠ expected return due to vol drag.",
+             COLORS["positive"]),
+            ("GBM Volatility (sigma)", "sigma = std(log_ret) * sqrt(252)",
+             "Annualised diffusion coefficient. Determines how wide the GBM fan chart spreads over time.",
+             "Larger sigma = wider uncertainty fan and lower terminal median (vol drag effect).",
+             COLORS["warning"]),
+            ("ACF / ARCH Test", "rho_k = corr(r_t, r_{t-k})",
+             "Autocorrelation of returns at lag k. ACF of squared returns tests for ARCH/GARCH effects "
+             "(volatility clustering). Bars outside 95% CI (±1.96/sqrt(n)) are statistically significant.",
+             "Significant ACF(r^2) = volatility clusters. Larger block size in MC bootstrap recommended.",
+             COLORS["neutral"]),
+        ]:
+            st.markdown(mdef(*args), unsafe_allow_html=True)
 
     st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
     st.markdown(section_label("Strategy Lab Interface"), unsafe_allow_html=True)

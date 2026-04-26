@@ -1,0 +1,28 @@
+[Unit]
+Description=QuantPipe Daily Pipeline (ingest + signals)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=quantpipe
+WorkingDirectory=/opt/quantpipe
+EnvironmentFile=/opt/quantpipe/.env
+Environment="PATH=/opt/quantpipe/.venv/bin:/home/quantpipe/.local/bin:/usr/local/bin:/usr/bin:/bin"
+
+ExecStart=/opt/quantpipe/.venv/bin/python orchestration/run_pipeline.py
+
+# Capture output
+StandardOutput=append:/var/log/quantpipe/pipeline.log
+StandardError=append:/var/log/quantpipe/pipeline.log
+
+# Restart on failure (but not if the pipeline itself exited cleanly with code 1)
+SuccessExitStatus=0 1
+Restart=no
+
+# Resource limits — keep it light
+MemoryMax=1G
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target

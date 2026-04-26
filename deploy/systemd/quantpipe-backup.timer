@@ -1,0 +1,11 @@
+[Unit]
+Description=QuantPipe Daily Backup — 02:00 UTC
+Requires=quantpipe-backup.service
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

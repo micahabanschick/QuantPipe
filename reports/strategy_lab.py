@@ -566,6 +566,27 @@ def _render_ai_assistant(
 
 # ── Strategy validator ────────────────────────────────────────────────────────
 
+def _history_file(strat_dir: Path) -> Path:
+    return strat_dir / "run_history.json"
+
+
+def _load_history(strat_dir: Path) -> list[dict]:
+    f = _history_file(strat_dir)
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return []
+
+
+def _save_history(strat_dir: Path, hist: list[dict]) -> None:
+    try:
+        _history_file(strat_dir).write_text(json.dumps(hist, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _validate_strategy(main_py: Path) -> list[str]:
     """Return list of issues, or [] if the strategy is clean."""
     issues = []
@@ -835,7 +856,7 @@ def _run_sweep(
                                 feature_list=["momentum_12m_1m", "realized_vol_21d"])
     all_dates  = sorted(prices_all["date"].unique().to_list())
 
-    results: dict[tuple, float] = {}
+    results: dict[tuple, dict] = {}
     for lb in lookback_list:
         start_lb = date(end.year - lb, end.month, end.day)
         p_lb = prices_all.filter(pl.col("date") >= start_lb)
@@ -846,16 +867,21 @@ def _run_sweep(
                 sig = mod.get_signal(f_lb, rdates, top_n=tn, prices_df=p_lb)
                 wts = mod.get_weights(sig, weight_scheme=weight_scheme)
                 res = run_backtest(p_lb, wts, cost_bps=cost_bps)
-                results[(lb, tn)] = res.sharpe
+                results[(lb, tn)] = {"sharpe": res.sharpe, "cagr": res.cagr,
+                                     "max_drawdown": res.max_drawdown}
             except Exception:
-                results[(lb, tn)] = float("nan")
+                results[(lb, tn)] = {"sharpe": float("nan"), "cagr": float("nan"),
+                                     "max_drawdown": float("nan")}
 
-    grid = pd.DataFrame(index=lookback_list, columns=top_n_list, dtype=float)
-    for (lb, tn), sh in results.items():
-        grid.loc[lb, tn] = sh
-    grid.index.name   = "Lookback (years)"
-    grid.columns.name = "Top-N"
-    return grid
+    grids: dict[str, pd.DataFrame] = {}
+    for metric in ("sharpe", "cagr", "max_drawdown"):
+        g = pd.DataFrame(index=lookback_list, columns=top_n_list, dtype=float)
+        for (lb, tn), m in results.items():
+            g.loc[lb, tn] = m[metric]
+        g.index.name   = "Lookback (years)"
+        g.columns.name = "Top-N"
+        grids[metric] = g
+    return grids
 
 
 def _render_sweep_tab(main_py: Path, default_params: dict) -> None:
@@ -894,23 +920,33 @@ def _render_sweep_tab(main_py: Path, default_params: dict) -> None:
         n_cells = len(tn_list) * len(lb_list)
         with st.spinner(f"Grid search ({n_cells} backtests)…"):
             try:
-                grid = _run_sweep(main_py, tn_list, lb_list, sw_cost, sw_scheme)
-                st.session_state[sweep_key] = grid
+                grids = _run_sweep(main_py, tn_list, lb_list, sw_cost, sw_scheme)
+                st.session_state[sweep_key] = grids
             except Exception as exc:
                 st.error(f"Sweep failed: {exc}")
                 return
 
-    grid = st.session_state.get(sweep_key)
-    if grid is not None and isinstance(grid, pd.DataFrame):
-        best_idx    = grid.stack().idxmax()
+    grids = st.session_state.get(sweep_key)
+    if grids is not None and isinstance(grids, dict):
+        _metric_opts = {"Sharpe": "sharpe", "CAGR": "cagr", "Max Drawdown": "max_drawdown"}
+        _metric_fmt  = {"sharpe": "{:.3f}", "cagr": "{:+.1%}", "max_drawdown": "{:+.1%}"}
+        _metric_label = st.selectbox(
+            "Display metric", list(_metric_opts.keys()), key="sweep_metric_sel"
+        )
+        _metric_key = _metric_opts[_metric_label]
+        grid = grids[_metric_key]
+
+        _sharpe_grid = grids["sharpe"]
+        best_idx = _sharpe_grid.stack().idxmax()
         best_lb, best_tn = best_idx
-        best_sh = grid.loc[best_lb, best_tn]
-        st.success(f"Best: lookback={best_lb}y, top_n={best_tn} → Sharpe {best_sh:.3f}")
+        best_sh = _sharpe_grid.loc[best_lb, best_tn]
+        st.success(f"Best (Sharpe): lookback={best_lb}y, top_n={best_tn} → {best_sh:.3f}")
 
         z     = grid.values.tolist()
         x_lab = [str(c) for c in grid.columns.tolist()]
         y_lab = [str(i) for i in grid.index.tolist()]
-        text  = [[f"{v:.2f}" if v == v else "" for v in row] for row in z]
+        _fmt  = _metric_fmt[_metric_key]
+        text  = [[(_fmt.format(v) if v == v else "") for v in row] for row in z]
         vmax  = float(np.nanmax(grid.values))
         vmin  = float(np.nanmin(grid.values))
 
@@ -919,17 +955,17 @@ def _render_sweep_tab(main_py: Path, default_params: dict) -> None:
             text=text, texttemplate="%{text}", textfont=dict(size=11),
             colorscale=[[0.0,"#ff4b4b"],[0.5,COLORS["card_bg"]],[1.0,"#00d4aa"]],
             zmid=(vmax + vmin) / 2,
-            colorbar=dict(title="Sharpe", thickness=12, len=0.8,
+            colorbar=dict(title=_metric_label, thickness=12, len=0.8,
                           tickfont=dict(color=COLORS["neutral"], size=10)),
-            hovertemplate="Lookback=%{y}y  Top-N=%{x}<br>Sharpe=%{text}<extra></extra>",
+            hovertemplate=f"Lookback=%{{y}}y  Top-N=%{{x}}<br>{_metric_label}=%{{text}}<extra></extra>",
         ))
-        apply_theme(fig, title="Sharpe Heatmap — Lookback × Top-N", height=300)
+        apply_theme(fig, title=f"{_metric_label} Heatmap — Lookback × Top-N", height=300)
         fig.update_layout(
             xaxis=dict(title="Top-N positions"),
             yaxis=dict(title="Lookback years", autorange="reversed"),
         )
         st.plotly_chart(fig, config=PLOTLY_CONFIG, use_container_width=True)
-        st.dataframe(grid.style.format("{:.3f}"), use_container_width=True)
+        st.dataframe(grid.style.format(_fmt), use_container_width=True)
     elif not run_sweep:
         st.info("Configure the grid and click **Run Parameter Sweep**.")
 
@@ -1061,6 +1097,34 @@ def _render_wf_tab(main_py: Path, default_params: dict) -> None:
     m4.metric("IS Total Return", _d(is_m.get("total_return")),
               delta=f"OOS {_d(oos_m.get('total_return'))}", delta_color="normal")
 
+    _is_sh  = float(is_m.get("sharpe") or 0)
+    _oos_sh = float(oos_m.get("sharpe") or 0)
+    _ratio  = (_oos_sh / _is_sh) if abs(_is_sh) > 1e-6 else float("nan")
+    _decay  = _is_sh - _oos_sh
+    _r_valid = _ratio == _ratio  # nan check
+
+    if _r_valid and _ratio >= 0.75:
+        _r_accent, _r_label = COLORS["positive"], "Low overfitting risk"
+    elif _r_valid and _ratio >= 0.50:
+        _r_accent, _r_label = COLORS["warning"],  "Moderate overfitting"
+    else:
+        _r_accent, _r_label = COLORS["negative"], "High overfitting risk"
+
+    st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+    o1, o2, o3 = st.columns(3)
+    o1.markdown(kpi_card("Sharpe Retention",
+                          f"{_ratio:.2f}" if _r_valid else "n/a",
+                          accent=_r_accent,
+                          delta="OOS / IS Sharpe"),
+                unsafe_allow_html=True)
+    o2.markdown(kpi_card("Sharpe Decay",
+                          f"{_decay:+.3f}",
+                          accent=COLORS["negative"] if _decay > 0.3 else COLORS["warning"] if _decay > 0 else COLORS["positive"],
+                          delta="IS minus OOS"),
+                unsafe_allow_html=True)
+    o3.markdown(kpi_card("Overfitting Signal", _r_label, accent=_r_accent),
+                unsafe_allow_html=True)
+
     # Indexed equity curves overlaid
     fig = go.Figure()
     for label, color, eq_data in [
@@ -1097,7 +1161,7 @@ def _render_wf_tab(main_py: Path, default_params: dict) -> None:
 
 st.markdown(page_header(
     "Strategy Lab",
-    "Edit strategy code · Run backtests · Sweep parameters · Validate out-of-sample performance",
+    "Write, backtest, and optimise signal strategies with integrated parameter sweep and walk-forward validation.",
 ), unsafe_allow_html=True)
 
 # ── Strategy selector ─────────────────────────────────────────────────────────
@@ -1134,6 +1198,10 @@ with sel_col:
 selected_dir = strategy_options[selected_label]
 st.session_state["selected_strategy"] = str(selected_dir)
 main_py = _main_py(selected_dir)
+
+_hist_key = f"lab_history_{selected_dir.name}"
+if _hist_key not in st.session_state:
+    st.session_state[_hist_key] = _load_history(selected_dir)
 
 with disc_col:
     if st.button(
@@ -1290,11 +1358,9 @@ with right:
         st.session_state[result_key] = result_data
 
         if result_data.get("ok"):
-            history_key = f"lab_history_{selected_dir.name}"
-            hist = st.session_state.get(history_key, [])
             _m = result_data.get("metrics", {})
-            hist.append({
-                "Run #":    len(hist) + 1,
+            _hist_run = {
+                "Run #":    len(st.session_state.get(_hist_key, [])) + 1,
                 "Date":     date.today().isoformat(),
                 "Sharpe":   round(float(_m.get("sharpe") or 0), 3),
                 "CAGR":     f"{float(_m.get('cagr') or 0):+.1%}",
@@ -1302,8 +1368,11 @@ with right:
                 "Top-N":    int(top_n),
                 "Lookback": int(lookback_years),
                 "Cost bps": float(cost_bps),
-            })
-            st.session_state[history_key] = hist[-5:]
+            }
+            _hist_all = st.session_state.get(_hist_key, []) + [_hist_run]
+            _hist_all = _hist_all[-20:]
+            st.session_state[_hist_key] = _hist_all
+            _save_history(selected_dir, _hist_all)
 
         if not result_data.get("ok"):
             with results_ph.container():
@@ -1365,8 +1434,7 @@ if result_data and result_data.get("ok"):
 
 # ── Backtest History ──────────────────────────────────────────────────────────
 
-_hist_key = f"lab_history_{selected_dir.name}"
-_hist     = st.session_state.get(_hist_key, [])
+_hist = st.session_state.get(_hist_key, [])
 if len(_hist) >= 2:
     st.divider()
     st.markdown(section_label(f"Backtest History — {selected_label}"), unsafe_allow_html=True)

@@ -1,0 +1,15 @@
+[Unit]
+Description=X Virtual Framebuffer — headless display for IB Gateway
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1024x768x24 -ac +extension GLX +render -noreset
+Restart=always
+RestartSec=5
+
+# Keep the display alive — IB Gateway depends on it
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

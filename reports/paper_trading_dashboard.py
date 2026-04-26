@@ -22,7 +22,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from config.settings import DATA_DIR
-from reports._theme import COLORS, apply_theme, badge
+from reports._theme import COLORS, apply_theme, badge, page_header
 
 log = logging.getLogger(__name__)
 
@@ -94,9 +94,11 @@ def _build_equity_curve() -> pd.Series:
     if tw.empty:
         return pd.Series(dtype=float)
 
-    # Make date column consistent
-    tw["date"] = pd.to_datetime(tw["date"]).dt.date
-    rebal_dates = sorted(tw["date"].unique())
+    # Use rebalance_date (when the strategy actually traded) as the curve anchor,
+    # not date (when signals were computed, which may be today with no bronze data).
+    date_col = "rebalance_date" if "rebalance_date" in tw.columns else "date"
+    tw[date_col] = pd.to_datetime(tw[date_col]).dt.date
+    rebal_dates = sorted(tw[date_col].unique())
     all_symbols = tw["symbol"].unique().tolist()
 
     # Load prices from bronze layer
@@ -106,6 +108,7 @@ def _build_equity_curve() -> pd.Series:
         end = date.today()
         raw = load_bars(all_symbols, start, end, "equity")
         if raw.is_empty():
+            log.warning(f"No bronze prices found for {all_symbols} from {start} to {end}")
             return pd.Series(dtype=float)
         price_col = "adj_close" if "adj_close" in raw.columns else "close"
         prices_wide = (
@@ -135,8 +138,8 @@ def _build_equity_curve() -> pd.Series:
     for ts in prices_wide.index:
         d = ts.date()
 
-        # Check for rebalance on this date
-        tw_today = tw[tw["date"] == d]
+        # Check for rebalance on this date (matched against rebalance_date)
+        tw_today = tw[tw[date_col] == d]
         if not tw_today.empty:
             current_weights = dict(zip(tw_today["symbol"], tw_today["weight"]))
             # Use actual recorded NAV if available, else keep running estimate
@@ -169,19 +172,28 @@ def _build_equity_curve() -> pd.Series:
 
 # ── Metric helpers ─────────────────────────────────────────────────────────────
 
+_MIN_DAYS_ANNUALIZED = 63   # ~3 months before CAGR / Sharpe are statistically meaningful
+
 def _compute_metrics(eq: pd.Series) -> dict:
     if eq.empty or len(eq) < 2:
         return {}
+    n_days = len(eq)
     daily_ret = eq.pct_change().dropna()
     total_ret = eq.iloc[-1] / eq.iloc[0] - 1
-    n_years = max(len(eq) / 252, 1e-6)
-    cagr = (eq.iloc[-1] / eq.iloc[0]) ** (1 / n_years) - 1
-    sharpe = float(daily_ret.mean() / daily_ret.std() * np.sqrt(252)) if daily_ret.std() > 0 else 0.0
+    n_years = max(n_days / 252, 1e-6)
+
+    # Annualised metrics are unreliable below ~3 months of data — return None so
+    # the UI can display "n/a" instead of a misleading extrapolated number.
+    reliable = n_days >= _MIN_DAYS_ANNUALIZED
+    cagr   = (eq.iloc[-1] / eq.iloc[0]) ** (1 / n_years) - 1 if reliable else None
+    sharpe = float(daily_ret.mean() / daily_ret.std() * np.sqrt(252)) if (reliable and daily_ret.std() > 0) else None
+
     roll_max = eq.cummax()
     dd = (eq - roll_max) / roll_max
     max_dd = float(dd.min())
     return {
         "nav":       float(eq.iloc[-1]),
+        "n_days":    n_days,
         "total_ret": total_ret,
         "cagr":      cagr,
         "sharpe":    sharpe,
@@ -229,8 +241,13 @@ def _add_deployment_vlines(fig: go.Figure, events: list[dict], eq: pd.Series) ->
 # Dashboard
 # ══════════════════════════════════════════════════════════════════════════════
 
-st.markdown("## Paper Trading")
-st.caption("Live portfolio monitoring — equity curve updates after each rebalance.")
+st.markdown(
+    page_header(
+        "Paper Trading",
+        "Track live paper account NAV, review order history, and monitor position drift after each rebalance.",
+    ),
+    unsafe_allow_html=True,
+)
 
 # ── Refresh controls ──────────────────────────────────────────────────────────
 hdr_left, hdr_mid, hdr_right = st.columns([3, 2, 1])
@@ -263,17 +280,30 @@ if metrics:
     total_ret = metrics["total_ret"]
     sharpe    = metrics["sharpe"]
     max_dd    = metrics["max_dd"]
+    n_days    = metrics["n_days"]
     pnl       = nav_now - _INITIAL_NAV
 
-    ret_color  = COLORS["positive"] if total_ret >= 0 else COLORS["negative"]
-    pnl_color  = COLORS["positive"] if pnl >= 0 else COLORS["negative"]
+    pnl_color = COLORS["positive"] if pnl >= 0 else COLORS["negative"]
+
+    # Warn when annualised metrics are statistically unreliable
+    if n_days < _MIN_DAYS_ANNUALIZED:
+        st.warning(
+            f"**{n_days} trading days of data** — CAGR and Sharpe require at least "
+            f"{_MIN_DAYS_ANNUALIZED} days (~3 months) to be meaningful. "
+            f"They will appear as **n/a** until then.",
+            icon="⚠️",
+        )
+
+    cagr_str   = _pct(metrics["cagr"])   if metrics["cagr"]   is not None else "n/a"
+    sharpe_str = f"{sharpe:.2f}"          if sharpe             is not None else "n/a"
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Portfolio NAV", f"${nav_now:,.0f}",
-               delta=f"${pnl:+,.0f} all-time")
+               delta=f"${pnl:+,.0f} vs $100K sim start")
     k2.metric("Total Return", _pct(total_ret),
-               delta=f"CAGR {_pct(metrics['cagr'])}")
-    k3.metric("Sharpe Ratio", f"{sharpe:.2f}")
+               delta=f"CAGR {cagr_str}")
+    k3.metric("Sharpe Ratio", sharpe_str,
+               help="Annualised. Shown as n/a when fewer than 63 trading days available.")
     k4.metric("Max Drawdown", _pct(max_dd, sign=False),
                delta=f"from {metrics['start'].strftime('%Y-%m-%d')}",
                delta_color="off")
@@ -375,6 +405,52 @@ if not eq.empty:
         fig_dd.update_layout(yaxis=dict(ticksuffix="%"))
         st.plotly_chart(fig_dd, use_container_width=True)
 
+    # ── Daily P&L bars ────────────────────────────────────────────────────────
+    if len(eq) > 5:
+        _dr = eq.pct_change().dropna()
+        fig_pnl = go.Figure(go.Bar(
+            x=_dr.index, y=(_dr * 100).values,
+            marker=dict(
+                color=["rgba(0,212,170,0.75)" if v >= 0 else "rgba(255,75,75,0.75)"
+                       for v in _dr.values],
+                line=dict(width=0),
+            ),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f}%<extra></extra>",
+        ))
+        fig_pnl.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_pnl, title="Daily P&L (%)", height=200)
+        fig_pnl.update_layout(
+            yaxis=dict(ticksuffix="%", showgrid=False),
+            xaxis=dict(showgrid=False),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_pnl, use_container_width=True)
+
+    # ── Rolling 21-day return ─────────────────────────────────────────────────
+    if len(eq) > 25:
+        _roll21 = (
+            eq.pct_change()
+            .rolling(21)
+            .apply(lambda x: (1 + x).prod() - 1, raw=True)
+            .dropna()
+        ) * 100
+        fig_roll = go.Figure()
+        fig_roll.add_trace(go.Scatter(
+            x=_roll21.index, y=_roll21.values,
+            fill="tozeroy",
+            fillcolor="rgba(0,212,170,0.07)",
+            line=dict(color=COLORS["positive"], width=2),
+            hovertemplate="%{x|%Y-%m-%d}: %{y:+.2f}%<extra>21d return</extra>",
+        ))
+        fig_roll.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+        apply_theme(fig_roll, title="Rolling 21-Day Return (%)", height=200)
+        fig_roll.update_layout(
+            yaxis=dict(ticksuffix="%", showgrid=False),
+            xaxis=dict(showgrid=False),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_roll, use_container_width=True)
+
 else:
     st.info("No price history available yet. Run `orchestration/generate_signals.py` then a rebalance.")
 
@@ -393,10 +469,11 @@ with col_pos:
         # Compute dollar values if we have a NAV
         current_nav = metrics.get("nav", _INITIAL_NAV)
         latest_tw = latest_tw.copy()
-        latest_tw["value ($)"] = (latest_tw["weight"] * current_nav).round(0).astype(int)
-        latest_tw["weight (%)"] = (latest_tw["weight"] * 100).round(2)
-
-        display = latest_tw[["symbol", "weight (%)", "value ($)"]].reset_index(drop=True)
+        display = pd.DataFrame({
+            "Symbol":     latest_tw["symbol"].values,
+            "Weight":     [f"{w*100:.1f}%" for w in latest_tw["weight"].values],
+            "Value":      [f"${w*current_nav:,.0f}" for w in latest_tw["weight"].values],
+        })
         st.caption(f"As of rebalance {latest_date}")
         st.dataframe(display, use_container_width=True, hide_index=True)
 
@@ -428,6 +505,29 @@ with col_trades:
         st.dataframe(display_orders.head(30), use_container_width=True, hide_index=True)
     else:
         st.info("No orders recorded yet.")
+
+# ── Win / Loss statistics ─────────────────────────────────────────────────────
+if not eq.empty and len(eq) > 5:
+    _wr = eq.pct_change().dropna()
+    _wins  = _wr[_wr > 0]
+    _losses = _wr[_wr < 0]
+    _win_rate   = float(len(_wins) / len(_wr)) if len(_wr) > 0 else 0.0
+    _avg_win    = float(_wins.mean())   if len(_wins)   > 0 else 0.0
+    _avg_loss   = float(_losses.mean()) if len(_losses) > 0 else 0.0
+    _payoff     = abs(_avg_win / _avg_loss) if abs(_avg_loss) > 1e-10 else 0.0
+    _pf_num     = float(_wins.sum())
+    _pf_den     = float(_losses.abs().sum())
+    _profit_fac = _pf_num / _pf_den if _pf_den > 1e-10 else 0.0
+
+    st.markdown("### Win / Loss Analysis")
+    _wl1, _wl2, _wl3, _wl4, _wl5 = st.columns(5)
+    _wl1.metric("Win Rate",       f"{_win_rate:.1%}")
+    _wl2.metric("Avg Win",        f"{_avg_win:.2%}")
+    _wl3.metric("Avg Loss",       f"{_avg_loss:.2%}")
+    _wl4.metric("Payoff Ratio",   f"{_payoff:.2f}", help="Avg win / Avg loss (>1 = favourable)")
+    _wl5.metric("Profit Factor",  f"{_profit_fac:.2f}", help="Total wins / Total losses (>1 = net positive)")
+
+    st.markdown("---")
 
 # ── Deployment history ────────────────────────────────────────────────────────
 if deploy_evt:

@@ -1,0 +1,30 @@
+[Unit]
+Description=IB Gateway via IBC (headless)
+After=network-online.target quantpipe-xvfb.service
+Requires=quantpipe-xvfb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantpipe
+WorkingDirectory=/opt/ibgateway
+
+# Give Xvfb a moment to be ready
+ExecStartPre=/bin/sleep 5
+
+ExecStart=/bin/bash /opt/quantpipe/deploy/ibkr/start_gateway.sh
+
+StandardOutput=append:/var/log/quantpipe/ibgateway.log
+StandardError=append:/var/log/quantpipe/ibgateway.log
+
+# Only restart on crash — not if credentials are missing (exit 1)
+Restart=on-failure
+RestartSec=60
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+MemoryMax=1G
+CPUQuota=60%
+
+[Install]
+WantedBy=multi-user.target
