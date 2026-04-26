@@ -228,6 +228,45 @@ with tab_status:
         unsafe_allow_html=True,
     )
 
+    # ── Emergency Kill-Switch ─────────────────────────────────────────────────
+    _halt_path   = PROJECT_ROOT / "QP_HALT"
+    _halt_active = _halt_path.exists()
+    st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+    _hc1, _hc2 = st.columns([1, 3])
+    with _hc1:
+        if _halt_active:
+            if st.button("✅ Resume Pipeline", type="secondary", use_container_width=True,
+                         help="Remove QP_HALT file — pipeline resumes on next scheduled run"):
+                _halt_path.unlink(missing_ok=True)
+                st.success("Kill-switch cleared. Pipeline will run normally at next scheduled time.")
+                st.rerun()
+        else:
+            if st.button("⛔ HALT Pipeline", type="primary", use_container_width=True,
+                         help="Create QP_HALT file — pipeline stops at next entry point check"):
+                _halt_path.touch()
+                st.warning("Kill-switch ACTIVE — pipeline will not ingest, generate signals, or rebalance.")
+                st.rerun()
+    with _hc2:
+        if _halt_active:
+            st.markdown(
+                f'<div style="background:rgba(255,77,77,0.12);border:1px solid {COLORS["negative"]};'
+                f'border-radius:6px;padding:9px 14px;font-size:0.82rem;">'
+                f'<span style="color:{COLORS["negative"]};font-weight:700;">⛔ KILL-SWITCH ACTIVE</span>'
+                f'<span style="color:{COLORS["neutral"]};"> — all pipeline entry points will exit immediately.'
+                f' Remove <code>QP_HALT</code> from the project root to resume.</span></div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="background:rgba(0,212,170,0.06);border:1px solid {COLORS["border"]};'
+                f'border-radius:6px;padding:9px 14px;font-size:0.82rem;">'
+                f'<span style="color:{COLORS["text_muted"]};">Pipeline running normally. '
+                f'Press <b>⛔ HALT Pipeline</b> to stop all future ingest, signal, and rebalance runs '
+                f'without touching any data files.</span></div>',
+                unsafe_allow_html=True,
+            )
+    st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
+
     # ── Pipeline component KPI cards ──────────────────────────────────────────
     st.markdown(section_label("Pipeline Components"), unsafe_allow_html=True)
 
@@ -352,6 +391,85 @@ with tab_status:
     c1.markdown(kpi_card("Daily Pipeline",  "06:15 Mon–Fri",  accent=COLORS["blue"]),   unsafe_allow_html=True)
     c2.markdown(kpi_card("Daily Rebalance", "16:30 Mon–Fri",  accent=COLORS["purple"]), unsafe_allow_html=True)
     c3.markdown(kpi_card("Scheduler",       "Task Scheduler", accent=COLORS["neutral"]), unsafe_allow_html=True)
+
+    # ── Alert Channel Status ───────────────────────────────────────────────────
+    st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Alert Channels"), unsafe_allow_html=True)
+
+    try:
+        from config.settings import _get  # noqa: PLC0415
+        _pushover_token = _get("PUSHOVER_TOKEN", "")
+        _pushover_user  = _get("PUSHOVER_USER",  "")
+        _ntfy_topic     = _get("NTFY_TOPIC",     "")
+    except Exception:
+        import os
+        _pushover_token = os.getenv("PUSHOVER_TOKEN", "")
+        _pushover_user  = os.getenv("PUSHOVER_USER",  "")
+        _ntfy_topic     = os.getenv("NTFY_TOPIC",     "")
+
+    _push_ok = bool(_pushover_token and _pushover_user)
+    _ntfy_ok = bool(_ntfy_topic)
+
+    al1, al2, al3 = st.columns(3)
+    al1.markdown(
+        kpi_card("Pushover", "ACTIVE" if _push_ok else "NOT SET",
+                 accent=COLORS["positive"] if _push_ok else COLORS["text_muted"]),
+        unsafe_allow_html=True,
+    )
+    al2.markdown(
+        kpi_card("ntfy.sh", f"/{_ntfy_topic}" if _ntfy_ok else "NOT SET",
+                 accent=COLORS["positive"] if _ntfy_ok else COLORS["text_muted"]),
+        unsafe_allow_html=True,
+    )
+    al3.markdown(
+        kpi_card("Channels active", str(int(_push_ok) + int(_ntfy_ok)),
+                 accent=COLORS["positive"] if (_push_ok or _ntfy_ok) else COLORS["negative"]),
+        unsafe_allow_html=True,
+    )
+
+    if not (_push_ok or _ntfy_ok):
+        st.caption(
+            "No alert channels configured. Add `PUSHOVER_TOKEN`, `PUSHOVER_USER`, "
+            "or `NTFY_TOPIC` to your `.env` file to receive pipeline failure notifications."
+        )
+
+    # Test alert buttons
+    _ta1, _ta2, _ta3 = st.columns([1, 1, 4])
+    with _ta1:
+        if _push_ok and st.button("Test Pushover", key="test_pushover",
+                                   use_container_width=True):
+            try:
+                import requests as _req
+                _resp = _req.post(
+                    "https://api.pushover.net/1/messages.json",
+                    data=dict(token=_pushover_token, user=_pushover_user,
+                              title="QuantPipe Test", message="Alert channel working ✓"),
+                    timeout=8,
+                )
+                if _resp.status_code == 200:
+                    st.success("Pushover test sent successfully.")
+                else:
+                    st.error(f"Pushover returned {_resp.status_code}: {_resp.text[:200]}")
+            except Exception as _pe:
+                st.error(f"Pushover test failed: {_pe}")
+    with _ta2:
+        if _ntfy_ok and st.button("Test ntfy", key="test_ntfy",
+                                   use_container_width=True):
+            try:
+                import requests as _req
+                _resp = _req.post(
+                    f"https://ntfy.sh/{_ntfy_topic}",
+                    data="QuantPipe test alert — alert channel working ✓",
+                    timeout=8,
+                )
+                if _resp.status_code == 200:
+                    st.success(f"ntfy.sh message sent to /{_ntfy_topic}.")
+                else:
+                    st.error(f"ntfy returned {_resp.status_code}: {_resp.text[:200]}")
+            except Exception as _ne:
+                st.error(f"ntfy test failed: {_ne}")
+    if not _push_ok and not _ntfy_ok:
+        st.caption("Configure at least one channel above to enable test buttons.")
 
 
 # ── Data Quality helpers ───────────────────────────────────────────────────────
@@ -767,6 +885,61 @@ with tab_logs:
             f'</div>',
             unsafe_allow_html=True,
         )
+
+    # ── Dead-Letter Log ────────────────────────────────────────────────────────
+    st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Dead-Letter Log (Failed Data Downloads)"), unsafe_allow_html=True)
+    st.caption("Symbols that failed to download after all retries. Tab-separated: timestamp · adapter · symbol · reason.")
+
+    _DEAD_LETTERS = LOGS_DIR / "dead_letters.log"
+    if not _DEAD_LETTERS.exists():
+        st.markdown(badge("NO DEAD LETTERS", "positive"), unsafe_allow_html=True)
+        st.caption("logs/dead_letters.log not found — no download failures recorded.")
+    else:
+        _dl_raw = [l for l in _DEAD_LETTERS.read_text(errors="replace").splitlines() if l.strip()]
+        if not _dl_raw:
+            st.markdown(badge("NO DEAD LETTERS", "positive"), unsafe_allow_html=True)
+        else:
+            # Apply search filter if active
+            _dl_filtered = [l for l in _dl_raw if not log_search or log_search.lower() in l.lower()]
+            _dl_rows = []
+            for _line in _dl_filtered[-200:]:
+                _p = _line.split("\t")
+                _dl_rows.append({
+                    "Timestamp": _p[0] if len(_p) > 0 else "—",
+                    "Adapter":   _p[1] if len(_p) > 1 else "—",
+                    "Symbol":    _p[2] if len(_p) > 2 else "—",
+                    "Reason":    _p[3] if len(_p) > 3 else _line,
+                })
+            _dl_df = pd.DataFrame(_dl_rows)
+            _n_unique = _dl_df["Symbol"].nunique()
+            _dl_size  = _DEAD_LETTERS.stat().st_size / 1024
+
+            dl_k1, dl_k2, dl_k3, dl_k4 = st.columns(4)
+            dl_k1.markdown(kpi_card("Dead Letters", str(len(_dl_raw)),
+                                     accent=COLORS["negative"]),        unsafe_allow_html=True)
+            dl_k2.markdown(kpi_card("Unique Symbols", str(_n_unique),
+                                     accent=COLORS["warning"]),         unsafe_allow_html=True)
+            dl_k3.markdown(kpi_card("Adapters", str(_dl_df["Adapter"].nunique()),
+                                     accent=COLORS["blue"]),            unsafe_allow_html=True)
+            dl_k4.markdown(kpi_card("Log Size", f"{_dl_size:.1f} KB",
+                                     accent=COLORS["neutral"]),         unsafe_allow_html=True)
+
+            with st.expander(
+                f"Dead-Letter Entries — {len(_dl_raw)} total, showing last {min(len(_dl_rows), 200)}",
+                expanded=True,
+            ):
+                st.dataframe(_dl_df, use_container_width=True, hide_index=True,
+                              height=min(400, 38 * len(_dl_rows) + 40))
+
+            _clr_col, _ = st.columns([1, 4])
+            with _clr_col:
+                if st.button("🗑 Clear Dead-Letter Log", key="clear_dl", type="secondary",
+                             use_container_width=True,
+                             help="Truncates the log — symbols will be retried on next pipeline run"):
+                    _DEAD_LETTERS.write_text("")
+                    st.success("Dead-letter log cleared.")
+                    st.rerun()
 
     # ── Raw logs (bounded + rotation-aware) ────────────────────────────────────
     st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
