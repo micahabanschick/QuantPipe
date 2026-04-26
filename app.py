@@ -159,29 +159,43 @@ status_label, status_color, last_run, next_run, n_positions = _probe()
 
 pg = st.navigation(
     {
-        "Dashboards": [
+        "Data": [
             st.Page("reports/health_dashboard.py",
                     title="Pipeline Health",       icon="🔧"),
             st.Page("reports/data_lab.py",
                     title="Data Lab",              icon="🧪"),
-            st.Page("reports/research_dashboard.py",
-                    title="Research",              icon="🔬"),
+        ],
+        "Research": [
+            st.Page("reports/factor_analysis_dashboard.py",
+                    title="Factor Analysis",       icon="📊"),
+            st.Page("reports/signal_analysis_dashboard.py",
+                    title="Signal Analysis",       icon="🔬"),
             st.Page("reports/kalman_dashboard.py",
                     title="Kalman Filter",         icon="📡"),
             st.Page("reports/time_series_dashboard.py",
                     title="Time Series",           icon="〰️"),
+        ],
+        "Strategy": [
             st.Page("reports/strategy_lab.py",
                     title="Strategy Lab",          icon="⚗️"),
+            st.Page("reports/walk_forward_dashboard.py",
+                    title="Walk-Forward",          icon="🔁"),
+            st.Page("reports/monte_carlo_dashboard.py",
+                    title="Monte Carlo",           icon="🎲"),
+        ],
+        "Portfolio": [
+            st.Page("reports/multi_strategy_dashboard.py",
+                    title="Multi-Strategy",        icon="💼"),
+            st.Page("reports/deployment_dashboard.py",
+                    title="Deployment",            icon="🚀"),
             st.Page("reports/performance_dashboard.py",
                     title="Performance",           icon="📈"),
         ],
-        "Management": [
-            st.Page("reports/portfolio_dashboard.py",
-                    title="Portfolio",             icon="💼"),
-        ],
         "Trading": [
             st.Page("reports/paper_trading_dashboard.py",
-                    title="Paper / Live Trading",  icon="📄"),
+                    title="Paper Trading",         icon="📄"),
+            st.Page("reports/live_trading_dashboard.py",
+                    title="Live Trading",          icon="⚡"),
         ],
         "Reference": [
             st.Page("reports/instructions.py",
