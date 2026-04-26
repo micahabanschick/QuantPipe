@@ -15,7 +15,8 @@ warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 
 # ── 1. Pull latest code ───────────────────────────────────────────────────────
 log "Pulling latest code..."
-sudo -u "$APP_USER" git -C "$APP_DIR" pull
+sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin
+sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/laptop-dev
 
 # ── 2. Sync Python dependencies ───────────────────────────────────────────────
 log "Syncing dependencies..."
