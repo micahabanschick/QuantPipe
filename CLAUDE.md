@@ -12,7 +12,16 @@ git checkout desktop-dev
 
 ```bash
 git push origin desktop-dev
-gh pr create --base main --head desktop-dev --title "<title>" --body "<summary>"
+gh pr create --base main --head desktop-dev \
+  --title "feat|fix|docs: <one-line summary of what this deploy contains>" \
+  --body "## Summary
+- <bullet per meaningful change>
+
+## Test plan
+- [ ] Dashboard loads at http://10.0.0.1:8501
+- [ ] Pipeline runs cleanly (check ntfy or pipeline health page)
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 # Sourcery reviews the PR automatically (usually within seconds)
 # Once reviewed, merge via GitHub UI or:
 gh pr merge <number> --merge
@@ -20,9 +29,23 @@ gh pr merge <number> --merge
 
 After the PR merges, GitHub Actions pulls `main` and restarts the server automatically. Stay on `desktop-dev`.
 
+**Prerequisite:** `gh` CLI must be installed and authenticated (`gh auth status`). It is already set up on this desktop — if running on a new machine, run `gh auth login` first.
+
 **Never commit directly to main.** All commits go on `desktop-dev` first.
 
 **Never merge `desktop-dev` → `main` directly.** Always go through a PR so Sourcery can review.
+
+### PR title convention
+
+Use a conventional commit prefix matching the primary change:
+
+| Prefix | When |
+|---|---|
+| `feat:` | New feature or dashboard capability |
+| `fix:` | Bug fix |
+| `docs:` | README, CLAUDE.md, comments only |
+| `refactor:` | Code restructuring, no behaviour change |
+| `chore:` | Deps, config, tooling |
 
 ### Decision rules at a glance
 
