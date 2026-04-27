@@ -264,6 +264,15 @@ g4.markdown(kpi_card("P5 Terminal",  f"${pcts[0, -1]:,.0f}", accent=COLORS["neut
             unsafe_allow_html=True)
 
 fig_gbm = go.Figure()
+_px, _py = [], []
+for _path in paths:
+    _px.extend(t_ax); _px.append(None)
+    _py.extend(_path); _py.append(None)
+fig_gbm.add_trace(go.Scatter(
+    x=_px, y=_py, mode="lines",
+    line=dict(color="rgba(160,160,160,0.15)", width=0.5),
+    showlegend=False, hoverinfo="skip",
+))
 fig_gbm.add_trace(go.Scatter(
     x=t_ax + t_ax[::-1], y=list(pcts[4]) + list(pcts[0][::-1]),
     fill="toself", fillcolor="rgba(65,130,200,0.10)", line=dict(width=0),

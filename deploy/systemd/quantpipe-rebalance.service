@@ -1,5 +1,5 @@
 [Unit]
-Description=QuantPipe Paper Rebalance (post-pipeline execution)
+Description=QuantPipe IBKR Paper Rebalance (post-pipeline execution)
 After=network-online.target quantpipe-pipeline.service
 Wants=network-online.target
 
@@ -10,11 +10,8 @@ WorkingDirectory=/opt/quantpipe
 EnvironmentFile=/opt/quantpipe/.env
 Environment="PATH=/opt/quantpipe/.venv/bin:/home/quantpipe/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
-# Runs rebalance against the paper broker.
-# Exit code 0 = success, 1 = pre-trade check blocked (logged, not a crash),
-# 2 = fatal error (will appear in logs as a failure).
 ExecStart=/opt/quantpipe/.venv/bin/python orchestration/rebalance.py \
-    --broker paper
+    --broker ibkr
 
 # Exit code 1 (pre-trade blocked) is still a clean exit — don't treat as failure
 SuccessExitStatus=0 1

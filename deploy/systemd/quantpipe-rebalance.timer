@@ -1,5 +1,5 @@
 [Unit]
-Description=QuantPipe Paper Rebalance — Mon-Fri 22:30 UTC
+Description=QuantPipe IBKR Paper Rebalance — Mon-Fri 22:30 UTC
 Requires=quantpipe-rebalance.service
 
 [Timer]

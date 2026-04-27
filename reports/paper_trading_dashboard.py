@@ -32,7 +32,7 @@ _TH_PATH    = _GOLD / "trading_history.parquet"
 _OJ_PATH    = _GOLD / "order_journal.parquet"
 _DEPLOY_PATH = _GOLD / "deployment_history.jsonl"
 
-_INITIAL_NAV = 100_000.0   # paper broker starting cash
+_INITIAL_NAV = 1_000_000.0   # approximate IBKR paper account starting value
 
 
 # ── Data loading ───────────────────────────────────────────────────────────────
@@ -281,7 +281,8 @@ if metrics:
     sharpe    = metrics["sharpe"]
     max_dd    = metrics["max_dd"]
     n_days    = metrics["n_days"]
-    pnl       = nav_now - _INITIAL_NAV
+    period_start = float(eq.iloc[0]) if not eq.empty else _INITIAL_NAV
+    pnl          = nav_now - period_start
 
     pnl_color = COLORS["positive"] if pnl >= 0 else COLORS["negative"]
 
@@ -299,7 +300,7 @@ if metrics:
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Portfolio NAV", f"${nav_now:,.0f}",
-               delta=f"${pnl:+,.0f} vs $100K sim start")
+               delta=f"${pnl:+,.0f} vs period start")
     k2.metric("Total Return", _pct(total_ret),
                delta=f"CAGR {cagr_str}")
     k3.metric("Sharpe Ratio", sharpe_str,
@@ -310,7 +311,7 @@ if metrics:
 else:
     st.info(
         "No trading history yet. Run a rebalance first:\n\n"
-        "```\nuv run python orchestration/rebalance.py --broker paper\n```"
+        "```\nuv run python orchestration/rebalance.py --broker ibkr\n```"
     )
 
 st.markdown("---")

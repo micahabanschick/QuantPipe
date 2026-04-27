@@ -1,0 +1,13 @@
+[Unit]
+Description=Vault Auto-Unseal
+After=vault.service
+Requires=vault.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/bash -c 'VAULT_ADDR=http://127.0.0.1:8200 /usr/local/bin/vault operator unseal $(cat /opt/vault/unseal.key)'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
