@@ -412,8 +412,11 @@ def shot_monte_carlo():
         fill="toself", fillcolor="rgba(0,230,118,0.12)",
         line=dict(width=0), name="25–75th pct", hoverinfo="skip",
     ))
-    # Sample paths
-    for path in result.sample_paths[:40]:
+    # Sample paths — filter to 5th–95th percentile of terminal values
+    _terminals = np.array([p[-1] for p in result.sample_paths])
+    _lo, _hi   = np.percentile(_terminals, [5, 95])
+    _shown = [p for p in result.sample_paths if _lo <= p[-1] <= _hi]
+    for path in _shown[:40]:
         fig.add_trace(go.Scatter(
             x=x, y=path,
             line=dict(color="rgba(0,230,118,0.07)", width=1),
@@ -453,18 +456,23 @@ def shot_time_series():
     vol = float(np.std(daily_returns))  * np.sqrt(252)
 
     paths = gbm_paths(S0=float(spy.iloc[-1]), mu_ann=mu, sigma_ann=vol,
-                      T_days=252, n_paths=100, seed=42)
+                      T_days=252, n_paths=200, seed=42)
+    # paths shape: (n_paths, T_days+1)
+    _term   = paths[:, -1]
+    _lo, _hi = np.percentile(_term, [5, 95])
+    t = np.linspace(0, 1, paths.shape[1])
 
     fig = make_subplots(rows=1, cols=2,
-                        subplot_titles=["GBM Price Simulation (100 paths, 1Y)",
+                        subplot_titles=["GBM Price Simulation (paths within P5–P95)",
                                         "Welch Power Spectral Density — SPY Returns"])
 
-    # GBM paths
-    t = np.linspace(0, 1, paths.shape[0])
-    for i in range(paths.shape[1]):
+    # GBM paths — only render those whose terminal value is within P5–P95
+    for path in paths:
+        if not (_lo <= path[-1] <= _hi):
+            continue
         fig.add_trace(go.Scatter(
-            x=t, y=paths[:, i],
-            line=dict(color=f"rgba(0,230,118,{0.12 if i < 99 else 0.9})", width=1),
+            x=t, y=path,
+            line=dict(color="rgba(0,230,118,0.12)", width=1),
             showlegend=False, hoverinfo="skip",
         ), row=1, col=1)
 

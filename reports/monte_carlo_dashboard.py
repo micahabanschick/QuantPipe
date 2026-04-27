@@ -163,7 +163,11 @@ with tab_fan:
 
         fig_fan = go.Figure()
         _px, _py = [], []
+        _terminals = np.array([p[-1] for p in r.sample_paths])
+        _lo, _hi   = np.percentile(_terminals, [5, 95])
         for _path in r.sample_paths:
+            if not (_lo <= _path[-1] <= _hi):
+                continue
             _px.extend(r.fan_x); _px.append(None)
             _py.extend(_path);   _py.append(None)
         fig_fan.add_trace(go.Scatter(x=_px, y=_py, mode="lines",
