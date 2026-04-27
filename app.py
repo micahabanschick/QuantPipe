@@ -11,7 +11,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from config.settings import DATA_DIR, LOGS_DIR
+from config.settings import DATA_DIR, LOGS_DIR, PROJECT_ROOT
 from reports._theme import CSS, COLORS, badge
 
 _LOGO       = Path(__file__).parent / "assets" / "logo.png"
