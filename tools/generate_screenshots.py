@@ -664,9 +664,9 @@ def shot_portfolio_mgmt():
         marker=dict(color=port_sharpe, colorscale=[
             [0.0, C["purple"]], [0.5, C["gold"]], [1.0, C["green"]],
         ], size=3, opacity=0.6,
-        colorbar=dict(title="Sharpe", thickness=12,
-                      tickfont=dict(color=C["neutral"], size=10),
-                      titlefont=dict(color=C["neutral"], size=11))),
+        colorbar=dict(title=dict(text="Sharpe", font=dict(color=C["neutral"], size=11)),
+                      thickness=12,
+                      tickfont=dict(color=C["neutral"], size=10))),
         name="Portfolio", hovertemplate="Vol: %{x:.1%}<br>Ret: %{y:.1%}<extra></extra>",
     ), row=1, col=1)
 
