@@ -101,46 +101,64 @@ st.markdown(CSS + NAV_CSS, unsafe_allow_html=True)
 
 # ── Lightweight status probe ───────────────────────────────────────────────────
 
-def _next_run_utc() -> str:
-    """Return the next Mon–Fri 06:15 UTC run as a short human string."""
+def _et_now():
+    """Return current datetime in US/Eastern."""
+    from zoneinfo import ZoneInfo
+    from datetime import timezone
+    return datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+
+
+def _next_run_et() -> str:
+    """Return the next Mon–Fri 21:30 UTC pipeline run, displayed in Eastern Time."""
+    from zoneinfo import ZoneInfo
     from datetime import timezone, timedelta
-    now = datetime.now(timezone.utc)
-    candidate = now.replace(hour=6, minute=15, second=0, microsecond=0)
-    # Step forward day-by-day until we land on a future weekday slot
+    et = ZoneInfo("America/New_York")
+    now_utc = datetime.now(timezone.utc)
+    # Pipeline fires at 21:30 UTC each weekday
+    candidate = now_utc.replace(hour=21, minute=30, second=0, microsecond=0)
     for offset in range(8):
         t = candidate + timedelta(days=offset)
-        if t > now and t.weekday() < 5:   # Mon=0 … Fri=4
-            days = (t.date() - now.date()).days
+        if t > now_utc and t.weekday() < 5:
+            t_et = t.astimezone(et)
+            days = (t.date() - now_utc.date()).days
+            tz_abbr = t_et.strftime("%Z")
             if days == 0:
-                return f"today {t.strftime('%H:%M')} UTC"
+                return f"today {t_et.strftime('%H:%M')} {tz_abbr}"
             if days == 1:
-                return f"tomorrow {t.strftime('%H:%M')} UTC"
-            return f"{t.strftime('%a %H:%M')} UTC"
+                return f"tomorrow {t_et.strftime('%H:%M')} {tz_abbr}"
+            return f"{t_et.strftime('%a %H:%M')} {tz_abbr}"
     return "—"
 
 
 def _probe() -> tuple[str, str, str, str, int]:
     """Return (status_label, color, last_run, next_run, n_positions)."""
+    from zoneinfo import ZoneInfo
+    from datetime import timezone
+    et = ZoneInfo("America/New_York")
+
     tw  = DATA_DIR / "gold" / "equity" / "target_weights.parquet"
     eq  = DATA_DIR / "bronze" / "equity" / "daily"
-    log = LOGS_DIR / "pipeline.log"
 
-    next_run = _next_run_utc()
+    next_run = _next_run_et()
 
     if not eq.exists() or not tw.exists():
         return "NO DATA", COLORS["negative"], "—", next_run, 0
 
     age_h = (datetime.now() - datetime.fromtimestamp(tw.stat().st_mtime)).total_seconds() / 3600
 
+    # Prefer the heartbeat file — it's always written by the pipeline regardless
+    # of where systemd redirects stdout, and is more reliable than log parsing.
     last_run = "—"
-    if log.exists():
-        with contextlib.suppress(Exception):
-            lines = log.read_text(errors="replace").splitlines()
-            for line in reversed(lines):
-                if "Pipeline complete" in line:
-                    parts = line.split()
-                    last_run = f"{parts[0]} {parts[1]}" if len(parts) >= 2 else "unknown"
-                    break
+    heartbeat = PROJECT_ROOT / ".pipeline_heartbeat.json"
+    with contextlib.suppress(Exception):
+        import json
+        hb = json.loads(heartbeat.read_text(encoding="utf-8"))
+        ts = hb.get("ts_utc", "")
+        if ts:
+            dt_utc = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            dt_et  = dt_utc.astimezone(et)
+            tz_abbr = dt_et.strftime("%Z")
+            last_run = dt_et.strftime(f"%Y-%m-%d %H:%M {tz_abbr}")
 
     # Position count — lightweight: read only the symbol column
     n_pos = 0
