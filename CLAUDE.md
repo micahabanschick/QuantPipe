@@ -8,18 +8,21 @@
 git checkout desktop-dev
 ```
 
-**Deploy = merge to main then switch back.** Whenever the user asks to deploy, push to the server, or says anything like "ship it", "deploy", "push to prod":
+**Deploy = open a PR from `desktop-dev` to `main`.** Whenever the user asks to deploy, push to the server, or says anything like "ship it", "deploy", "push to prod":
 
 ```bash
-git checkout main
-git merge desktop-dev
-git push origin main          # triggers GitHub Actions → server pulls main + restarts
-git checkout desktop-dev      # always return here after deploying
+git push origin desktop-dev
+gh pr create --base main --head desktop-dev --title "<title>" --body "<summary>"
+# Sourcery reviews the PR automatically (usually within seconds)
+# Once reviewed, merge via GitHub UI or:
+gh pr merge <number> --merge
 ```
+
+After the PR merges, GitHub Actions pulls `main` and restarts the server automatically. Stay on `desktop-dev`.
 
 **Never commit directly to main.** All commits go on `desktop-dev` first.
 
-**Never leave the session on `main`.** After any deploy, switch back to `desktop-dev` immediately.
+**Never merge `desktop-dev` → `main` directly.** Always go through a PR so Sourcery can review.
 
 ### Decision rules at a glance
 
@@ -27,8 +30,8 @@ git checkout desktop-dev      # always return here after deploying
 |---|---|
 | Session starts, not on `desktop-dev` | `git checkout desktop-dev` |
 | User says "commit" / makes code changes | Commit on `desktop-dev` |
-| User says "deploy" / "push" / "ship" | Merge → push main → switch back to `desktop-dev` |
-| Finished deploy | Already back on `desktop-dev` — continue working |
+| User says "deploy" / "push" / "ship" | Push `desktop-dev` → open PR → merge PR |
+| After PR merged | Stay on `desktop-dev` — continue working |
 
 ---
 
