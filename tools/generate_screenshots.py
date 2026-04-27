@@ -381,50 +381,52 @@ def shot_walk_forward():
 def shot_monte_carlo():
     print("monte_carlo...")
     import pandas as pd
-    from research.monte_carlo import monte_carlo_paths
+    from research.monte_carlo import run as mc_run, MCConfig
 
     df = load_prices(["SPY"], years=5)
     spy = (df.to_pandas()
              .pivot(index="date", columns="symbol", values="adj_close")["SPY"]
              .dropna())
-    spy.index = pd.to_datetime(spy.index)
     daily_returns = spy.pct_change().dropna().values
 
-    paths = monte_carlo_paths(daily_returns, n_paths=500, n_steps=252)  # 1 year forward
-    final_vals = paths[-1]
+    result = mc_run(daily_returns, MCConfig(n_simulations=2000, seed=42))
 
-    pcts = np.percentile(paths, [10, 25, 50, 75, 90], axis=1)
-    x = np.arange(paths.shape[0])
+    x   = result.fan_x
+    p10 = result.fan_p10
+    p25 = result.fan_p25
+    p50 = result.fan_p50
+    p75 = result.fan_p75
+    p90 = result.fan_p90
 
     fig = go.Figure()
     # Fan bands
     fig.add_trace(go.Scatter(
-        x=np.concatenate([x, x[::-1]]),
-        y=np.concatenate([pcts[4], pcts[0][::-1]]),
+        x=list(x) + list(x)[::-1],
+        y=list(p90) + list(p10)[::-1],
         fill="toself", fillcolor="rgba(0,230,118,0.06)",
         line=dict(width=0), name="10–90th pct", hoverinfo="skip",
     ))
     fig.add_trace(go.Scatter(
-        x=np.concatenate([x, x[::-1]]),
-        y=np.concatenate([pcts[3], pcts[1][::-1]]),
+        x=list(x) + list(x)[::-1],
+        y=list(p75) + list(p25)[::-1],
         fill="toself", fillcolor="rgba(0,230,118,0.12)",
         line=dict(width=0), name="25–75th pct", hoverinfo="skip",
     ))
     # Sample paths
-    rng = np.random.default_rng(42)
-    for idx in rng.choice(500, size=40, replace=False):
+    for path in result.sample_paths[:40]:
         fig.add_trace(go.Scatter(
-            x=x, y=paths[:, idx],
+            x=x, y=path,
             line=dict(color="rgba(0,230,118,0.07)", width=1),
             showlegend=False, hoverinfo="skip",
         ))
     # Median
     fig.add_trace(go.Scatter(
-        x=x, y=pcts[2], name="Median",
+        x=x, y=p50, name="Median",
         line=dict(color=C["green"], width=2.5),
-        hovertemplate="Day %{x}: %{y:.4f}<extra>Median</extra>",
+        hovertemplate="Period %{x}: $%{y:,.0f}<extra>Median</extra>",
     ))
-    fig.add_hline(y=1.0, line=dict(color=C["border"], width=1, dash="dot"))
+    fig.add_hline(y=result.sample_paths[0][0] if result.sample_paths else 100_000,
+                  line=dict(color=C["border"], width=1, dash="dot"))
 
     layout = _base_layout("Monte Carlo — 500-Path Block-Bootstrap Fan Chart (1Y Forward)")
     layout["xaxis"]["title"] = dict(text="Trading Days", font=dict(color=C["text_muted"], size=11))
@@ -450,8 +452,8 @@ def shot_time_series():
     mu  = float(np.mean(daily_returns)) * 252
     vol = float(np.std(daily_returns))  * np.sqrt(252)
 
-    paths = gbm_paths(S0=float(spy.iloc[-1]), mu=mu, sigma=vol,
-                      T=1.0, n_steps=252, n_paths=100, seed=42)
+    paths = gbm_paths(S0=float(spy.iloc[-1]), mu_ann=mu, sigma_ann=vol,
+                      T_days=252, n_paths=100, seed=42)
 
     fig = make_subplots(rows=1, cols=2,
                         subplot_titles=["GBM Price Simulation (100 paths, 1Y)",
@@ -511,23 +513,31 @@ def shot_kalman():
     wide.index = pd.to_datetime(wide.index)
 
     rets = wide.pct_change().dropna()
-    y = rets["QQQ"].values
-    X = rets[["SPY"]].values
+    # kalman_smooth_betas expects pd.Series and pd.DataFrame
+    result = kalman_smooth_betas(rets["QQQ"], rets[["SPY"]])
 
-    result = kalman_smooth_betas(y, X, factor_names=["SPY"])
-    betas  = result.betas[:, 0]
-    ci_lo  = result.ci_lower[:, 0]
-    ci_hi  = result.ci_upper[:, 0]
-    dates  = rets.index[1:]  # kalman drops first obs
+    if result.filtered_betas.size == 0:
+        print("  (kalman returned empty — skipping)")
+        return
+
+    # filtered_betas: (T, K) — col 0=alpha, col 1=SPY beta
+    betas = result.filtered_betas[:, 1]
+    # ±1σ CI from diagonal of posterior covariance
+    std   = np.sqrt(result.filtered_vars[:, 1, 1])
+    ci_lo = betas - std
+    ci_hi = betas + std
+    dates = pd.to_datetime(result.dates)
 
     # Static OLS beta
     from numpy.linalg import lstsq
-    ols_beta = float(lstsq(np.column_stack([np.ones(len(X)), X]), y, rcond=None)[0][1])
+    y_arr = rets["QQQ"].values
+    X_arr = rets[["SPY"]].values
+    ols_beta = float(lstsq(np.column_stack([np.ones(len(X_arr)), X_arr]), y_arr, rcond=None)[0][1])
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=np.concatenate([dates, dates[::-1]]),
-        y=np.concatenate([ci_hi, ci_lo[::-1]]),
+        x=dates.tolist() + dates.tolist()[::-1],
+        y=ci_hi.tolist() + ci_lo.tolist()[::-1],
         fill="toself", fillcolor="rgba(201,162,39,0.10)",
         line=dict(width=0), name="±1σ CI", hoverinfo="skip",
     ))
