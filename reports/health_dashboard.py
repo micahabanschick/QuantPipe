@@ -3,10 +3,14 @@
 Tabs: Status · Data Quality · Logs
 """
 
+import logging
+import os
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -237,15 +241,25 @@ with tab_status:
         if _halt_active:
             if st.button("✅ Resume Pipeline", type="secondary", use_container_width=True,
                          help="Remove QP_HALT file — pipeline resumes on next scheduled run"):
-                _halt_path.unlink(missing_ok=True)
-                st.success("Kill-switch cleared. Pipeline will run normally at next scheduled time.")
-                st.rerun()
+                try:
+                    _halt_path.unlink(missing_ok=True)
+                except Exception as exc:
+                    log.exception("Failed to clear kill-switch file %s", _halt_path)
+                    st.error(f"Failed to clear kill-switch file: {exc}. Check filesystem permissions.")
+                else:
+                    st.success("Kill-switch cleared. Pipeline will run normally at next scheduled time.")
+                    st.rerun()
         else:
             if st.button("⛔ HALT Pipeline", type="primary", use_container_width=True,
                          help="Create QP_HALT file — pipeline stops at next entry point check"):
-                _halt_path.touch()
-                st.warning("Kill-switch ACTIVE — pipeline will not ingest, generate signals, or rebalance.")
-                st.rerun()
+                try:
+                    _halt_path.touch()
+                except Exception as exc:
+                    log.exception("Failed to create kill-switch file %s", _halt_path)
+                    st.error(f"Failed to activate kill-switch: {exc}. Check filesystem permissions.")
+                else:
+                    st.warning("Kill-switch ACTIVE — pipeline will not ingest, generate signals, or rebalance.")
+                    st.rerun()
     with _hc2:
         if _halt_active:
             st.markdown(
@@ -896,7 +910,18 @@ with tab_logs:
         st.markdown(badge("NO DEAD LETTERS", "positive"), unsafe_allow_html=True)
         st.caption("logs/dead_letters.log not found — no download failures recorded.")
     else:
-        _dl_raw = [l for l in _DEAD_LETTERS.read_text(errors="replace").splitlines() if l.strip()]
+        # Read only the tail of the file to avoid loading large logs into memory
+        _max_lines = 1000
+        _block = 8192
+        with _DEAD_LETTERS.open("rb") as _f:
+            _f.seek(0, os.SEEK_END)
+            _fsize, _buf = _f.tell(), b""
+            while _fsize > 0 and _buf.count(b"\n") <= _max_lines:
+                _read = min(_block, _fsize)
+                _fsize -= _read
+                _f.seek(_fsize)
+                _buf = _f.read(_read) + _buf
+        _dl_raw = [l for l in _buf.decode(errors="replace").splitlines() if l.strip()][-_max_lines:]
         if not _dl_raw:
             st.markdown(badge("NO DEAD LETTERS", "positive"), unsafe_allow_html=True)
         else:
