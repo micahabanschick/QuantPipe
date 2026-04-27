@@ -435,6 +435,78 @@ with tab_ic:
                 except Exception as _ce:
                     st.caption(f"Contribution analysis unavailable: {_ce}")
 
+            # ── Full IC Decay Curve (1–126d) ──────────────────────────────────
+            st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+            if st.checkbox("Show full IC decay curve (lags 1–126d)", key="fa_full_decay",
+                           help="Computes IC at 13 horizons from 1d to 126d to map how predictive power decays"):
+                from signals.analysis import ic_decay as _ic_decay
+                from scipy.stats import t as _scipy_t2
+                _decay_horizons = [1, 2, 3, 5, 8, 10, 15, 21, 30, 42, 63, 84, 126]
+                with st.spinner("Computing IC decay across horizons…"):
+                    _decay_pts = _ic_decay(fac_pivot, price_piv, horizons=_decay_horizons)
+
+                if _decay_pts:
+                    _dh  = [p.horizon_days for p in _decay_pts]
+                    _dic = [p.mean_ic       for p in _decay_pts]
+                    _dir = [p.icir          for p in _decay_pts]
+                    _dn  = [p.n_obs         for p in _decay_pts]
+
+                    # t-test significance per horizon
+                    _dpv = []
+                    for p in _decay_pts:
+                        _n2 = max(p.n_obs, 2)
+                        _t2 = p.icir * (_n2 ** 0.5) if p.icir != 0 else 0.0
+                        _dpv.append(float(2 * _scipy_t2.sf(abs(_t2), df=_n2 - 1)))
+
+                    _dcols = [
+                        COLORS["positive"] if pv < 0.05 else
+                        COLORS["warning"]  if pv < 0.10 else
+                        COLORS["neutral"]  for pv in _dpv
+                    ]
+
+                    fig_fd = go.Figure()
+                    fig_fd.add_trace(go.Bar(
+                        x=_dh, y=_dic,
+                        marker=dict(color=_dcols, line=dict(width=0)), opacity=0.78,
+                        text=[f"{v:+.4f}" for v in _dic], textposition="outside",
+                        textfont=dict(size=9, color=COLORS["text"]),
+                        name="Mean IC (green=p<0.05, gold=p<0.10, grey=NS)",
+                        hovertemplate="Lag %{x}d: IC=%{y:+.4f}<extra></extra>",
+                    ))
+                    # Half-life line: IC drops to 50% of IC at lag-1
+                    if _dic and abs(_dic[0]) > 1e-6:
+                        _half = abs(_dic[0]) * 0.5 * (1 if _dic[0] >= 0 else -1)
+                        fig_fd.add_hline(y=_half,
+                                          line=dict(color=COLORS["purple"], width=1, dash="dot"),
+                                          annotation_text="50% IC half-life",
+                                          annotation_font=dict(size=9, color=COLORS["purple"]),
+                                          annotation_position="right")
+                    fig_fd.add_hline(y=0, line=dict(color=COLORS["border"], width=1))
+                    apply_theme(fig_fd, legend_inside=True)
+                    fig_fd.update_layout(
+                        height=280,
+                        xaxis=dict(title="Forward return horizon (days)", showgrid=False),
+                        yaxis=dict(title="Mean IC (Spearman)"),
+                    )
+                    st.plotly_chart(fig_fd, use_container_width=True, config=PLOTLY_CONFIG)
+
+                    st.dataframe(
+                        pd.DataFrame({
+                            "Horizon": [f"{h}d" for h in _dh],
+                            "Mean IC": [f"{v:+.4f}" for v in _dic],
+                            "IC IR":   [f"{v:.3f}"  for v in _dir],
+                            "p-value": [f"{v:.4f}"  for v in _dpv],
+                            "Sig":     ["***" if p < 0.01 else "**" if p < 0.05 else "*" if p < 0.10 else "NS"
+                                        for p in _dpv],
+                            "N Obs":   _dn,
+                        }),
+                        use_container_width=True, hide_index=True,
+                    )
+                    st.caption("Green = p < 0.05 · Gold = p < 0.10 · Grey = not significant. "
+                               "Half-life marker shows where IC drops to 50% of its 1-day value.")
+                else:
+                    st.info("IC decay unavailable — price data required.")
+
             # Hurst exponent
             st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
             st.markdown(section_label("Long Memory (Hurst Exponent)"), unsafe_allow_html=True)

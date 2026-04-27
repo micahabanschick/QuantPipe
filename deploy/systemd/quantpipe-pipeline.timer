@@ -1,16 +1,21 @@
 [Unit]
-Description=QuantPipe Daily Pipeline — Mon-Fri 06:15 UTC
+Description=QuantPipe Daily Pipeline — Mon-Fri 21:30 UTC (post-US-market-close)
 Requires=quantpipe-pipeline.service
 
 [Timer]
-# 06:15 UTC on weekdays (adjust for your market timezone)
-OnCalendar=Mon-Fri 06:15:00 UTC
+# 21:30 UTC = ~30 min after US market close (4:00 PM ET summer / 5:00 PM ET winter).
+# Running post-close ensures yfinance returns same-day closing prices rather than
+# yesterday's close, so the dashboard always shows fresh data by evening.
+OnCalendar=Mon-Fri 21:30:00 UTC
 
-# If the server was off at trigger time, run immediately on next boot
-Persistent=true
+# Do NOT catch up missed runs on daemon-reload / reboot.
+# Persistent=true caused update.sh's daemon-reload to fire a surprise
+# mid-day pipeline run; keeping it false means the next scheduled window
+# is used instead.
+Persistent=false
 
-# Add small random delay (0-3 min) to avoid thundering herd with other jobs
-RandomizedDelaySec=180
+# Tiny jitter (0-60 s) so retries don't pile up on reboot
+RandomizedDelaySec=60
 
 [Install]
 WantedBy=timers.target

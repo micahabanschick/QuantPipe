@@ -33,6 +33,7 @@ class WalkForwardFold:
     test_start: date
     test_end: date
     result: BacktestResult
+    is_sharpe: float = 0.0   # in-sample Sharpe for IS/OOS overfitting analysis
 
 
 @dataclass
@@ -129,6 +130,23 @@ def walk_forward(
 
         try:
             result = run_backtest(oos_prices, oos_weights, cost_bps=cost_bps)
+
+            # Compute IS Sharpe for overfitting analysis (IS vs OOS scatter)
+            is_sharpe_val = 0.0
+            try:
+                is_prices  = prices.filter(
+                    (pl.col("date") >= train_start) & (pl.col("date") <= train_end)
+                )
+                is_weights = weights.filter(
+                    (pl.col("rebalance_date") >= train_start) &
+                    (pl.col("rebalance_date") <= train_end)
+                )
+                if not is_prices.is_empty() and not is_weights.is_empty():
+                    is_result = run_backtest(is_prices, is_weights, cost_bps=cost_bps)
+                    is_sharpe_val = float(is_result.metrics.get("sharpe", 0.0))
+            except Exception:
+                pass
+
             folds.append(WalkForwardFold(
                 fold=fold_idx,
                 train_start=train_start,
@@ -136,6 +154,7 @@ def walk_forward(
                 test_start=test_start,
                 test_end=test_end,
                 result=result,
+                is_sharpe=round(is_sharpe_val, 3),
             ))
             fold_idx += 1
         except Exception as exc:

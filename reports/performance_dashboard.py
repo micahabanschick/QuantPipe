@@ -267,10 +267,11 @@ with _c1:
     )
 with _c2:
     benchmark_sym = st.selectbox(
-        "Benchmark",
-        ["None", "SPY", "QQQ", "IWM", "AGG"],
+        "Primary benchmark",
+        ["None", "SPY", "QQQ", "IWM", "AGG", "TLT", "GLD"],
         index=1,
         key="perf_benchmark",
+        help="Used for IR, TE, and trailing-returns comparison",
     )
 with _c3:
     rolling_window = st.selectbox(
@@ -287,7 +288,13 @@ with _c4:
         key="perf_rebal",
     )
 with _c5:
-    pass   # spacer — download buttons follow below
+    extra_benchmarks = st.multiselect(
+        "Overlay benchmarks",
+        [b for b in ["SPY", "QQQ", "IWM", "AGG", "TLT", "GLD"] if b != benchmark_sym],
+        default=[],
+        key="perf_extra_bench",
+        help="Additional benchmarks overlaid on the equity curve (no IR/TE calculation)",
+    )
 
 st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
@@ -740,6 +747,32 @@ with tab_ov:
                     xref="x", yref="paper",
                     line=dict(color=COLORS["border"], width=1, dash="dot"),
                 )
+
+        # Extra benchmark overlays (no IR/TE — display only)
+        _extra_colors = [COLORS["blue"], COLORS["purple"], COLORS["teal"],
+                         COLORS["orange"], COLORS["warning"], COLORS["negative"]]
+        for _ei, _eb in enumerate(extra_benchmarks):
+            try:
+                _eb_raw = _load_benchmark(
+                    _eb,
+                    eq_pd.index[0].date().isoformat(),
+                    eq_pd.index[-1].date().isoformat(),
+                )
+                if _eb_raw is not None:
+                    _eb_raw.index = pd.to_datetime(_eb_raw.index)
+                    _eb_al = _eb_raw.reindex(eq_pd.index, method="ffill").dropna()
+                    if not _eb_al.empty:
+                        _eb_norm = _eb_al / _eb_al.iloc[0] * eq_vals[0]
+                        fig_eq.add_trace(go.Scatter(
+                            x=_eb_norm.index, y=_eb_norm.values,
+                            name=_eb,
+                            line=dict(color=_extra_colors[_ei % len(_extra_colors)],
+                                      width=1.2, dash="dashdot"),
+                            opacity=0.65,
+                            hovertemplate=f"<b>%{{x|%Y-%m-%d}}</b><br>{_eb}: $%{{y:,.0f}}<extra></extra>",
+                        ))
+            except Exception:
+                pass
 
         apply_theme(fig_eq, legend_inside=True)
         fig_eq.update_layout(

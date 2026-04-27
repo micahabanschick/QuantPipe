@@ -306,6 +306,51 @@ with tab_overview:
                 fig.update_layout(yaxis=dict(tickprefix="$", tickformat=",.0f"))
                 st.plotly_chart(fig, use_container_width=True)
 
+            # ── Cross-strategy P&L Attribution ────────────────────────────────
+            st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+            st.markdown(section_label("Cross-Strategy P&L Attribution"), unsafe_allow_html=True)
+            st.caption("Cumulative return contribution from each strategy, weighted by allocation.")
+            if not blended_eq.empty and active_results:
+                _attr_fig = go.Figure()
+                _strat_contribs = {}
+                for _i, (_slug, _r) in enumerate(active_results.items()):
+                    _eq_s = _equity_series(_r)
+                    _daily_r = _eq_s.pct_change().dropna()
+                    _w = alloc_norm.get(_slug, 0.0)
+                    _contrib_s = (_daily_r * _w).cumsum()
+                    _strat_contribs[_r.name] = _contrib_s
+                    _attr_fig.add_trace(go.Scatter(
+                        x=_contrib_s.index,
+                        y=_contrib_s.values * 100,
+                        mode="lines",
+                        name=_r.name,
+                        stackgroup="one",
+                        line=dict(color=_color(_i), width=0),
+                        fillcolor=_color(_i).replace(")", ", 0.55)").replace("rgb(", "rgba(")
+                                  if _color(_i).startswith("rgb") else _color(_i),
+                        hovertemplate=f"<b>{_r.name}</b><br>%{{x|%Y-%m-%d}}: %{{y:+.2f}}%<extra></extra>",
+                    ))
+                apply_theme(_attr_fig, legend_inside=False)
+                _attr_fig.update_layout(
+                    height=280,
+                    yaxis=dict(title="Cumulative contribution (%)", ticksuffix="%"),
+                    xaxis=dict(showgrid=False),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(_attr_fig, use_container_width=True)
+
+                # Summary table: period contribution per strategy
+                _attr_rows = []
+                for _name, _cs in _strat_contribs.items():
+                    _slug2 = next((s for s, r in active_results.items() if r.name == _name), "")
+                    _attr_rows.append({
+                        "Strategy":      _name,
+                        "Allocation":    f"{alloc_norm.get(_slug2, 0):.1%}",
+                        "Total Contrib": f"{float(_cs.iloc[-1])*100:+.2f}%",
+                        "Avg Daily":     f"{float(_cs.diff().mean())*100:+.4f}%",
+                    })
+                st.dataframe(pd.DataFrame(_attr_rows), use_container_width=True, hide_index=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — Comparison
