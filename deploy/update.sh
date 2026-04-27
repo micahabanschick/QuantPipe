@@ -7,7 +7,8 @@ APP_DIR="/opt/quantpipe"
 APP_USER="quantpipe"
 
 echo "[+] Pulling latest code..."
-sudo -u "$APP_USER" git -C "$APP_DIR" pull
+sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin
+sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/main
 
 echo "[+] Syncing dependencies..."
 sudo -u "$APP_USER" bash -c "
