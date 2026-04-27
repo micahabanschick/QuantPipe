@@ -8,18 +8,44 @@
 git checkout desktop-dev
 ```
 
-**Deploy = merge to main then switch back.** Whenever the user asks to deploy, push to the server, or says anything like "ship it", "deploy", "push to prod":
+**Deploy = open a PR from `desktop-dev` to `main`.** Whenever the user asks to deploy, push to the server, or says anything like "ship it", "deploy", "push to prod":
 
 ```bash
-git checkout main
-git merge desktop-dev
-git push origin main          # triggers GitHub Actions → server pulls main + restarts
-git checkout desktop-dev      # always return here after deploying
+git push origin desktop-dev
+gh pr create --base main --head desktop-dev \
+  --title "feat|fix|docs: <one-line summary of what this deploy contains>" \
+  --body "## Summary
+- <bullet per meaningful change>
+
+## Test plan
+- [ ] Dashboard loads at http://10.0.0.1:8501
+- [ ] Pipeline runs cleanly (check ntfy or pipeline health page)
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+# Sourcery reviews the PR automatically (usually within seconds)
+# Once reviewed, merge via GitHub UI or:
+gh pr merge <number> --merge
 ```
+
+After the PR merges, GitHub Actions pulls `main` and restarts the server automatically. Stay on `desktop-dev`.
+
+**Prerequisite:** `gh` CLI must be installed and authenticated (`gh auth status`). It is already set up on this desktop — if running on a new machine, run `gh auth login` first.
 
 **Never commit directly to main.** All commits go on `desktop-dev` first.
 
-**Never leave the session on `main`.** After any deploy, switch back to `desktop-dev` immediately.
+**Never merge `desktop-dev` → `main` directly.** Always go through a PR so Sourcery can review.
+
+### PR title convention
+
+Use a conventional commit prefix matching the primary change:
+
+| Prefix | When |
+|---|---|
+| `feat:` | New feature or dashboard capability |
+| `fix:` | Bug fix |
+| `docs:` | README, CLAUDE.md, comments only |
+| `refactor:` | Code restructuring, no behaviour change |
+| `chore:` | Deps, config, tooling |
 
 ### Decision rules at a glance
 
@@ -27,8 +53,8 @@ git checkout desktop-dev      # always return here after deploying
 |---|---|
 | Session starts, not on `desktop-dev` | `git checkout desktop-dev` |
 | User says "commit" / makes code changes | Commit on `desktop-dev` |
-| User says "deploy" / "push" / "ship" | Merge → push main → switch back to `desktop-dev` |
-| Finished deploy | Already back on `desktop-dev` — continue working |
+| User says "deploy" / "push" / "ship" | Push `desktop-dev` → open PR → merge PR |
+| After PR merged | Stay on `desktop-dev` — continue working |
 
 ---
 
