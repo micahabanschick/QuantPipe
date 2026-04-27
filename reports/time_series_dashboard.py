@@ -263,9 +263,13 @@ g3.markdown(kpi_card("P95 Terminal", f"${pcts[4, -1]:,.0f}", accent=COLORS["blue
 g4.markdown(kpi_card("P5 Terminal",  f"${pcts[0, -1]:,.0f}", accent=COLORS["neutral"]),
             unsafe_allow_html=True)
 
+_terminal = paths[:, -1]
+_lo, _hi  = np.percentile(_terminal, [5, 95])
 fig_gbm = go.Figure()
 _px, _py = [], []
 for _path in paths:
+    if not (_lo <= _path[-1] <= _hi):
+        continue
     _px.extend(t_ax); _px.append(None)
     _py.extend(_path); _py.append(None)
 fig_gbm.add_trace(go.Scatter(
