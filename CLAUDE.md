@@ -84,7 +84,7 @@ Paste both keys into the chat. Claude will:
 4. Run `setup_autoconnect.ps1` instructions for auto-connect at login
 
 ### Reference (server side)
-- Server WireGuard pubkey: `bQ3IIr4ov8frIWdpKZjA8znrdhPoOb/wuMQQDat65RE=`
+- Server WireGuard pubkey: `CIZfR+iULCMmJXX/A+rd0BLrZCAFJ16DnTr2C/LYBDk=`
 - Server endpoint: `87.99.133.129:51820`
 - Desktop VPN IP: `10.0.0.3`
 - Server VPN IP: `10.0.0.1`
