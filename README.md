@@ -1,4 +1,8 @@
-# QuantPipe
+<div align="center">
+  <img src="assets/logo_full.png" alt="QuantPipe" width="260"/>
+</div>
+
+<br>
 
 An end-to-end quantitative finance pipeline for systematic equity and crypto trading. Built around a **Sector × Size × Style ETF rotation** framework with regime-adaptive overlays, a multi-strategy portfolio management layer, and direct Interactive Brokers execution.
 
@@ -180,29 +184,47 @@ The Streamlit app (`uv run streamlit run app.py`) provides 14 pages:
 ### Pipeline Health
 Real-time pipeline status read from `.pipeline_heartbeat.json`. Shows last run time, data freshness, ingestion coverage, and alert configuration.
 
+![Pipeline Health](docs/screenshots/pipeline_health.png)
+
 ### Data Lab
 Alt-data exploration hub. Connects to the FRED API (20 curated macro/financial series), supports CSV/JSON upload, applies cleaning transforms (fill, outlier, resample, normalise), and runs tradability checks (Spearman IC at multiple lags, rolling IC, multi-signal comparison, promote-to-feature flow).
+
+![Data Lab](docs/screenshots/data_lab.png)
 
 ### Factor Analysis
 IC computation, factor distribution, Hurst exponent, and factor correlation heatmap.
 
+![Factor Analysis](docs/screenshots/factor_analysis.png)
+
 ### Signal Analysis
 IC decay with significance testing, regime-conditioned IC, turnover cost simulation, and composite signal builder.
+
+![Signal Analysis](docs/screenshots/signal_analysis.png)
 
 ### Walk-Forward
 Multi-fold OOS validation with hit rate, Sharpe stability scatter, and per-fold drawdown bars.
 
+![Walk-Forward](docs/screenshots/walk_forward.png)
+
 ### Monte Carlo
 Block-bootstrap fan chart, metric distributions (Sharpe/Calmar/Sortino/MaxDD), VaR/ES, ACF diagnostics, convergence checks.
+
+![Monte Carlo](docs/screenshots/monte_carlo.png)
 
 ### Time Series
 Welch PSD, FFT frequency filter, Haar wavelet decomposition, GBM simulation with all trajectories, autocorrelation.
 
+![Time Series](docs/screenshots/time_series.png)
+
 ### Kalman Filter
 Standalone TVP regression dashboard. Dynamic factor betas updated daily via Kalman predict-update loop. Shows filtered vs OLS betas with ±1σ confidence band, innovations, posterior variance, and factor loading heatmap.
 
+![Kalman Filter](docs/screenshots/kalman.png)
+
 ### Strategy Lab
 Full strategy development environment: ACE code editor with syntax highlighting, backtest runner (subprocess JSON protocol), parameter sweep (Sharpe/CAGR/MaxDD heatmap), walk-forward IS/OOS split with overfitting ratio, persistent run history, AI coding assistant (Claude API, Apply-to-Editor).
+
+![Strategy Lab](docs/screenshots/strategy_lab.png)
 
 ### Performance
 Four-tab tearsheet:
@@ -210,6 +232,8 @@ Four-tab tearsheet:
 - **Portfolio** — holdings, sector donut, weight history, contribution analysis
 - **Risk** — VaR/CVaR, stress scenarios, rolling vol/drawdown, factor exposure, return attribution
 - **Analytics** — monthly heatmap, return distribution, correlation matrix, rolling Sharpe/Sortino, Q-Q plot
+
+![Performance](docs/screenshots/performance.png)
 
 ### Portfolio Management
 Six-tab multi-strategy control centre:
@@ -220,6 +244,8 @@ Six-tab multi-strategy control centre:
 - **Drift Monitor** — target vs actual weight drift with alert thresholds
 - **Trade** — IB connection settings, auto-detect port scan, paper/live mode, pre-flight check, execute rebalance
 
+![Portfolio Management](docs/screenshots/portfolio_mgmt.png)
+
 ### Paper Trading
 Live monitoring of the IBKR paper account (`DUQ368627`):
 - Daily equity curve from `target_weights × bronze prices`, anchored at post-rebalance NAV snapshots
@@ -229,11 +255,15 @@ Live monitoring of the IBKR paper account (`DUQ368627`):
 - Current positions table (formatted weights + dollar values) and pie chart
 - Trade history and slippage analysis
 
+![Paper Trading](docs/screenshots/paper_trading.png)
+
 ### Live Trading
 Minimal IBKR live account monitor: TCP connection probe, read-only live snapshot (NAV + open positions), historical live NAV chart. Full live execution is triggered from the Portfolio → Trade tab.
 
 ### Deployment
 Deployment config viewer and immutable deployment history log.
+
+![Deployment](docs/screenshots/deployment.png)
 
 ---
 
