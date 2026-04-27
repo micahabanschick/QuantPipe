@@ -109,8 +109,8 @@ def shot_performance():
     ), row=2, col=1)
 
     layout = _base_layout("Performance — Normalised Equity Curves (base=100)")
+    layout["yaxis"]["title"] = dict(text="Indexed Value", font=dict(color=C["text_muted"], size=11))
     layout.update(dict(
-        yaxis=dict(**layout["yaxis"], ticksuffix="", title=dict(text="Indexed Value", font=dict(color=C["text_muted"], size=11))),
         yaxis2=dict(showgrid=True, gridcolor=GRID, ticksuffix="%",
                     tickfont=dict(color=C["text_muted"], size=11),
                     linecolor=C["border"],
@@ -160,9 +160,9 @@ def shot_pipeline_health():
         ))
 
     layout = _base_layout("Pipeline Health — Run Timeline (Mon–Fri 21:30 UTC)")
-    layout.update(xaxis=dict(**layout["xaxis"], title=None),
-                  yaxis=dict(**layout["yaxis"], showgrid=False, title=None))
     fig.update_layout(**layout)
+    fig.update_yaxes(showgrid=False, title=None)
+    fig.update_xaxes(title=None)
     save(fig, "pipeline_health")
 
 
@@ -191,7 +191,6 @@ def shot_data_lab():
         ))
 
     layout = _base_layout("Data Lab — Sector ETF Performance (Normalised, 3Y)")
-    layout.update(yaxis=dict(**layout["yaxis"], ticksuffix=""))
     fig.update_layout(**layout)
     save(fig, "data_lab")
 
@@ -252,7 +251,7 @@ def shot_factor_analysis():
                   annotation_font=dict(color=C["gold"], size=11))
 
     layout = _base_layout("Factor Analysis — Momentum Signal IC by Month")
-    layout.update(yaxis=dict(**layout["yaxis"], title=dict(text="Spearman IC", font=dict(color=C["text_muted"], size=11))))
+    layout["yaxis"]["title"] = dict(text="Spearman IC", font=dict(color=C["text_muted"], size=11))
     fig.update_layout(**layout, showlegend=False)
     save(fig, "factor_analysis")
 
@@ -317,7 +316,7 @@ def shot_signal_analysis():
     fig.add_hline(y=0, line=dict(color=C["border"], width=1))
 
     layout = _base_layout("Signal Analysis — Momentum IC Decay by Forecast Horizon")
-    layout.update(yaxis=dict(**layout["yaxis"], title=dict(text="Mean Spearman IC ± 1σ", font=dict(color=C["text_muted"], size=11))))
+    layout["yaxis"]["title"] = dict(text="Mean Spearman IC ± 1σ", font=dict(color=C["text_muted"], size=11))
     fig.update_layout(**layout)
     save(fig, "signal_analysis")
 
@@ -371,7 +370,6 @@ def shot_walk_forward():
 
     fig.add_hline(y=100, line=dict(color=C["border"], width=1, dash="dot"))
     layout = _base_layout("Walk-Forward Validation — OOS Equity by Fold (base=100)")
-    layout.update(yaxis=dict(**layout["yaxis"], ticksuffix=""))
     fig.update_layout(**layout)
     save(fig, "walk_forward")
 
@@ -429,8 +427,8 @@ def shot_monte_carlo():
     fig.add_hline(y=1.0, line=dict(color=C["border"], width=1, dash="dot"))
 
     layout = _base_layout("Monte Carlo — 500-Path Block-Bootstrap Fan Chart (1Y Forward)")
-    layout.update(xaxis=dict(**layout["xaxis"], title=dict(text="Trading Days", font=dict(color=C["text_muted"], size=11))),
-                  yaxis=dict(**layout["yaxis"], title=dict(text="Cumulative Return", font=dict(color=C["text_muted"], size=11))))
+    layout["xaxis"]["title"] = dict(text="Trading Days", font=dict(color=C["text_muted"], size=11))
+    layout["yaxis"]["title"] = dict(text="Cumulative Return", font=dict(color=C["text_muted"], size=11))
     fig.update_layout(**layout)
     save(fig, "monte_carlo")
 
@@ -543,7 +541,7 @@ def shot_kalman():
                   annotation_font=dict(color=C["purple"], size=11))
 
     layout = _base_layout("Kalman Filter — Time-Varying Beta: QQQ ~ SPY")
-    layout.update(yaxis=dict(**layout["yaxis"], title=dict(text="Beta", font=dict(color=C["text_muted"], size=11))))
+    layout["yaxis"]["title"] = dict(text="Beta", font=dict(color=C["text_muted"], size=11))
     fig.update_layout(**layout)
     save(fig, "kalman")
 
@@ -612,7 +610,7 @@ def shot_strategy_lab():
     ))
 
     layout = _base_layout("Strategy Lab — Momentum Top-5 Backtest vs SPY (base=100)")
-    layout.update(yaxis=dict(**layout["yaxis"], tickprefix="$"))
+    layout["yaxis"]["tickprefix"] = "$"
     fig.update_layout(**layout)
     save(fig, "strategy_lab")
 
@@ -832,12 +830,10 @@ def shot_deployment():
     ))
 
     layout = _base_layout("Deployment — Active Strategy Allocation", height=460)
-    layout.update(
-        xaxis=dict(**layout["xaxis"], tickformat=".0%", title=None),
-        yaxis=dict(**layout["yaxis"], showgrid=False, title=None,
-                   tickfont=dict(color=C["text"], size=12)),
-        margin=dict(l=240, r=80, t=55, b=40),
-    )
+    layout["xaxis"]["tickformat"] = ".0%"
+    layout["yaxis"]["showgrid"]   = False
+    layout["yaxis"]["tickfont"]   = dict(color=C["text"], size=12)
+    layout["margin"] = dict(l=240, r=80, t=55, b=40)
     fig.update_layout(**layout)
     save(fig, "deployment", height=460)
 
