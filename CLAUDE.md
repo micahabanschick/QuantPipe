@@ -38,71 +38,224 @@ git checkout desktop-dev      # always return here after deploying
 # SSH
 ssh -i ~/.ssh/quantpipe_server root@87.99.133.129
 
-# Check services
-systemctl is-active quantpipe-streamlit quantpipe-pipeline.timer wg-quick@wg0 fail2ban
+# Check all services
+systemctl is-active \
+  quantpipe-streamlit \
+  quantpipe-pipeline.timer \
+  quantpipe-rebalance.timer \
+  quantpipe-backup.timer \
+  quantpipe-ibgateway \
+  quantpipe-xvfb \
+  vault \
+  vault-unseal \
+  wg-quick@wg0 \
+  fail2ban \
+  actions.runner.micahabanschick-QuantPipe.quantpipe-server
 
 # Restart dashboard
 systemctl restart quantpipe-streamlit
 
-# Trigger pipeline now
+# Trigger pipeline now (outside of timer)
 systemctl start quantpipe-pipeline.service
 
+# Trigger rebalance now (outside of timer)
+systemctl start quantpipe-rebalance.service
+
 # Watch logs
-journalctl -u quantpipe-streamlit -n 30 --no-pager
+journalctl -u quantpipe-streamlit  -n 30 --no-pager
+journalctl -u quantpipe-ibgateway  -n 30 --no-pager
+tail -f /var/log/quantpipe/pipeline.log
+tail -f /var/log/quantpipe/rebalance.log
+tail -f /var/log/quantpipe/backup.log
 ```
 
-Dashboard URL (VPN required): http://10.0.0.1:8501
-
----
-
-## WireGuard VPN Setup (deferred — do when ready)
-
-### Step 1 — Generate your desktop keys
-
-**Option A — WireGuard GUI (no extra tools needed):**
-1. Open the WireGuard app
-2. Click the dropdown arrow next to **Add Tunnel** → **Create from scratch**
-3. The config editor opens with a pre-generated key pair:
-   - `PrivateKey = <your-private-key>` — in the `[Interface]` block
-   - `Public key: <your-public-key>` — shown in the window title/header
-4. Copy both values, then **Cancel** (Claude will write the config file correctly)
-
-**Option B — Command line (Git Bash):**
-```bash
-"/c/Program Files/WireGuard/wg.exe" genkey | tee ~/desktop_wg_private.key | \
-  "/c/Program Files/WireGuard/wg.exe" pubkey > ~/desktop_wg_public.key
-cat ~/desktop_wg_private.key   # private key
-cat ~/desktop_wg_public.key    # public key
-```
-
-### Step 2 — Tell Claude your keys
-
-Paste both keys into the chat. Claude will:
-1. Write `C:\Users\micha\.wireguard\quantpipe.conf` with your private key
-2. SSH to the server and register your public key as peer `10.0.0.3`
-3. Prompt you to import the config in WireGuard and activate it
-4. Run `setup_autoconnect.ps1` instructions for auto-connect at login
-
-### Reference (server side)
-- Server WireGuard pubkey: `CIZfR+iULCMmJXX/A+rd0BLrZCAFJ16DnTr2C/LYBDk=`
-- Server endpoint: `87.99.133.129:51820`
-- Desktop VPN IP: `10.0.0.3`
-- Server VPN IP: `10.0.0.1`
+Dashboard URL (WireGuard VPN required): http://10.0.0.1:8501
 
 ---
 
 ## CI/CD
 
-Push to `main` → GitHub Actions (self-hosted runner on server) → runs `deploy/update.sh` → pulls latest + restarts Streamlit.
+Push to `main` → GitHub Actions (self-hosted runner on server) → runs `deploy/update.sh` → `git fetch && git reset --hard origin/main` + `uv sync` + restart Streamlit.
 
 Workflow file: [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
 
+Runner service: `actions.runner.micahabanschick-QuantPipe.quantpipe-server`
+Runner path: `/opt/quantpipe/actions-runner/`
+
 ---
 
-## Key Commands
+## Server Schedule
+
+| Timer | Schedule | Service it fires |
+|---|---|---|
+| `quantpipe-pipeline.timer` | Mon–Fri 21:30 UTC | `quantpipe-pipeline.service` — ingest + signals |
+| `quantpipe-rebalance.timer` | Mon–Fri 22:30 UTC | `quantpipe-rebalance.service` — IBKR paper orders |
+| `quantpipe-backup.timer` | Daily 02:00 UTC | `quantpipe-backup.service` — B2 sync |
+
+Systemd unit files tracked in `deploy/systemd/`. Changes to unit files must be applied manually on the server (`systemctl daemon-reload`) — the CI/CD deploy does not auto-install them.
+
+---
+
+## WireGuard VPN
+
+Desktop VPN is configured and auto-starts on boot (Windows service: `WireGuardTunnel$quantpipe`).
+
+| | Value |
+|---|---|
+| Desktop IP | `10.0.0.3` |
+| Server IP | `10.0.0.1` |
+| Server endpoint | `87.99.133.129:51820` |
+| Server pubkey | `bQ3IIr4ov8frIWdpKZjA8znrdhPoOb/wuMQQDat65RE=` |
+| Desktop config | `C:\Users\micha\.wireguard\quantpipe.conf` |
+
+> **Note:** Always use `wg show wg0` on the server to get the authoritative pubkey — the `server.pub` file may differ.
+
+### Checking VPN status
 
 ```bash
-uv run streamlit run app.py              # run locally
-uv run python orchestration/run_pipeline.py   # run pipeline locally
-uv run pytest tests/ -m "not network"   # run tests
+# On server
+wg show wg0
+
+# On desktop (PowerShell)
+Get-Service WireGuardTunnel$quantpipe
 ```
+
+### Adding a new peer (new machine)
+
+1. Generate keys on the new machine
+2. Run `bash deploy/add_peer.sh <pubkey> <vpn-ip>` on the server
+3. Import the WireGuard config on the new machine and activate
+
+---
+
+## IB Gateway (IBKR Paper Trading)
+
+IB Gateway runs headlessly on the server via IBC + Xvfb. It logs into IBKR paper account **DUQ368627** automatically on boot.
+
+```bash
+# Check status
+systemctl status quantpipe-ibgateway
+systemctl status quantpipe-xvfb
+
+# View IBC diagnostic log (most detailed)
+ls /var/log/quantpipe/ibc-*.txt
+tail -40 /var/log/quantpipe/ibc-3.23.0_GATEWAY-1037_$(date +%A).txt
+
+# Restart gateway
+systemctl restart quantpipe-xvfb quantpipe-ibgateway
+
+# Verify API port is open
+ss -tlnp | grep 4002
+```
+
+Key config: `/opt/ibc/config.ini`
+- `IbLoginId` / `IbPassword` — IBKR credentials
+- `TradingMode=paper`
+- `OverrideTwsApiPort=4002`
+- `AcceptIncomingConnectionAction=accept`
+- `ExistingSessionDetectedAction=primaryoverride`
+
+IBKR credentials are stored in Dashlane under **"QuantPipe — Server Secrets"**.
+
+---
+
+## HashiCorp Vault
+
+Vault stores all QuantPipe secrets and auto-unseals on server reboot via `vault-unseal.service`.
+
+```bash
+# Check Vault status
+VAULT_ADDR=http://127.0.0.1:8200 vault status
+
+# Read a secret (as app)
+VAULT_ADDR=http://127.0.0.1:8200 \
+VAULT_TOKEN=$(grep VAULT_TOKEN /opt/quantpipe/.env | cut -d= -f2) \
+vault kv get secret/quantpipe/config
+
+# Manually unseal (if vault-unseal.service failed)
+VAULT_ADDR=http://127.0.0.1:8200 vault operator unseal <unseal-key>
+
+# Re-load secrets from .env into Vault (e.g. after adding new keys)
+VAULT_ADDR=http://127.0.0.1:8200 \
+VAULT_TOKEN=<root-token> \
+bash /opt/quantpipe/deploy/vault/init_secrets.sh
+```
+
+Unseal key and root token are stored in Dashlane under **"QuantPipe — Server Secrets"**.
+
+The app token (in `/opt/quantpipe/.env` as `VAULT_TOKEN`) has a 1-year TTL — renew before **2027-04-27** using the root token:
+
+```bash
+VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=<root-token> \
+vault token create -policy=quantpipe -orphan -renewable=true -ttl=8760h
+```
+
+Auto-unseal key file: `/opt/vault/unseal.key` (root-only, `chmod 400`)
+
+---
+
+## Backblaze B2 Backup
+
+Daily incremental backup of `data/` to the `quantpipe-backup` bucket via rclone.
+
+```bash
+# Run backup manually
+systemctl start quantpipe-backup.service
+
+# Check last backup
+tail -20 /var/log/quantpipe/backup.log
+
+# Verify B2 credentials
+source /opt/quantpipe/.env
+curl -s -u "$B2_ACCOUNT_ID:$B2_APPLICATION_KEY" \
+  https://api.backblazeb2.com/b2api/v2/b2_authorize_account | python3 -m json.tool
+```
+
+B2 credentials are stored in Dashlane under **"QuantPipe — Server Secrets"**.
+
+Script: `deploy/backup/backup.sh`
+Restore script: `deploy/backup/restore.sh`
+
+---
+
+## ntfy Alerts
+
+The pipeline and rebalance scripts send notifications to `ntfy.sh/quantpipe-micah`.
+
+- Subscribe: open `https://ntfy.sh/quantpipe-micah` in a browser, or add the topic in the ntfy app
+- No token required (public topic)
+- Fires on: pipeline success, pipeline failure, pre-trade block, position drift
+
+Test alert from server:
+```bash
+curl -d "test message" https://ntfy.sh/quantpipe-micah
+```
+
+---
+
+## Key Commands (local dev)
+
+```bash
+uv run streamlit run app.py                    # run dashboard locally
+uv run python orchestration/run_pipeline.py    # run full pipeline locally
+uv run python orchestration/rebalance.py --broker ibkr --dry-run   # dry-run rebalance
+uv run pytest tests/ -m "not network"          # run tests (no network)
+```
+
+---
+
+## Secrets Reference
+
+All sensitive credentials are stored in **Dashlane** under the note **"QuantPipe — Server Secrets"**. The note contains:
+
+| Secret | Where used |
+|---|---|
+| Vault unseal key | Manual unseal after server reboot; also in `/opt/vault/unseal.key` |
+| Vault root token | Vault admin operations only — not in any file |
+| Vault app token | `/opt/quantpipe/.env` and desktop `.env` as `VAULT_TOKEN` |
+| IBKR username + password | `/opt/ibc/config.ini` on server |
+| IBKR paper account ID (`DUQ368627`) | Reference only |
+| Backblaze B2 key ID + secret | `/opt/quantpipe/.env` and desktop `.env` |
+| FRED API key | `/opt/quantpipe/.env` and desktop `.env` |
+
+Non-sensitive config (VPN IPs, ports, service names) lives in this runbook.
