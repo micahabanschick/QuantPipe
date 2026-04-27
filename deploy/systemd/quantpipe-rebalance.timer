@@ -1,0 +1,18 @@
+[Unit]
+Description=QuantPipe IBKR Paper Rebalance — Mon-Fri 22:30 UTC
+Requires=quantpipe-rebalance.service
+
+[Timer]
+# 22:30 UTC = 60 min after the pipeline starts (21:30 UTC), giving it ample
+# time to finish ingesting prices and regenerating signals before we trade.
+# The rebalance script computes orders against current target weights and
+# executes only when the position needs to change (monthly cadence for the
+# momentum strategy — no-op trades are skipped automatically).
+OnCalendar=Mon-Fri 22:30:00 UTC
+
+# Don't catch up missed runs — if the server was off, skip to the next window.
+Persistent=false
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target
