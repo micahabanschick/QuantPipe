@@ -1,0 +1,14 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    name: Pull & restart Streamlit
+    runs-on: self-hosted
+
+    steps:
+      - name: Pull latest code and restart dashboard
+        run: sudo /opt/quantpipe/deploy/update.sh
