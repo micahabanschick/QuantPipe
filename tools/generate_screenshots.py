@@ -656,7 +656,8 @@ def shot_portfolio_mgmt():
 
     fig = make_subplots(rows=1, cols=2,
                         subplot_titles=["Efficient Frontier (3,000 Random Portfolios)",
-                                        "Current Allocation"])
+                                        "Current Allocation"],
+                        specs=[[{"type": "xy"}, {"type": "domain"}]])
 
     # Frontier scatter
     fig.add_trace(go.Scatter(
@@ -764,7 +765,8 @@ def shot_paper_trading():
     navs  = list(nav_series.values())
 
     fig = make_subplots(rows=1, cols=2,
-                        subplot_titles=["Paper Account NAV ($)", "Current Positions"])
+                        subplot_titles=["Paper Account NAV ($)", "Current Positions"],
+                        specs=[[{"type": "xy"}, {"type": "domain"}]])
 
     fig.add_trace(go.Scatter(
         x=dates, y=navs, name="NAV",
