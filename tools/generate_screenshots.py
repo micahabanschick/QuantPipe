@@ -236,7 +236,7 @@ def shot_factor_analysis():
 
     dates = list(monthly_ic.keys())
     ics   = list(monthly_ic.values())
-    colors = [C["positive"] if v >= 0 else C["negative"] for v in ics]
+    colors = [C["green"] if v >= 0 else C["negative"] for v in ics]
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
