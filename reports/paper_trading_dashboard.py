@@ -544,7 +544,10 @@ if deploy_evt:
     for e in reversed(deploy_evt):
         strategies_str = ", ".join(
             f"{s['name']} ({s['allocation_weight']*100:.0f}%)"
-            for s in e.get("strategies", [])
+            for s in sorted(
+                (s for s in e.get("strategies", []) if s.get("allocation_weight", 0) > 0),
+                key=lambda s: s["allocation_weight"], reverse=True,
+            )
         )
         rows.append({
             "Version": e["version"],
