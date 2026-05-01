@@ -380,7 +380,7 @@ hk2.markdown(kpi_card("Regime", _h_lbl,
              unsafe_allow_html=True)
 hk3.markdown(kpi_card("Rolling Window", f"{hurst_window}d", accent=COLORS["blue"]),
              unsafe_allow_html=True)
-if _h_vals:
+if len(_h_vals) > 0:
     hk4.markdown(kpi_card("Current H (rolling)", f"{float(_h_vals[-1]):.4f}",
                             accent=COLORS["gold"]), unsafe_allow_html=True)
 
