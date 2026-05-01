@@ -67,9 +67,10 @@ def _load_deployment_events() -> list[dict]:
         try:
             e = json.loads(line)
             if strats := e.get("strategies", []):
-                top = max(strats, key=lambda s: s.get("allocation_weight", 0))
+                active = [s for s in strats if s.get("allocation_weight", 0) > 0]
+                top = max(active, key=lambda s: s.get("allocation_weight", 0))
                 top_pct = int(round(top.get("allocation_weight", 0) * 100))
-                others = len(strats) - 1
+                others = len(active) - 1
                 suffix = f" + {others} other{'s' if others != 1 else ''}" if others else ""
                 e["label"] = f"v{e['version']}: {top['slug']} ({top_pct}%){suffix}"
             else:
