@@ -28,14 +28,14 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8")
 
 import argparse
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
 
 from config.settings import DATA_DIR, LOGS_DIR
 from orchestration._halt import check_halt
-from execution.order_journal import append_order
+from execution.order_journal import append_order, update_order_fill
 from execution.reconciler import (
     format_reconcile_report,
     has_material_drift,
@@ -230,6 +230,7 @@ def run_rebalance(
             return 0
 
         # 6. Place orders — journal every attempt before and after the broker call
+        rebalance_start = datetime.now(timezone.utc)
         if dry_run:
             log.info("DRY RUN — skipping order placement")
             for order in orders:
@@ -264,6 +265,16 @@ def run_rebalance(
         if not dry_run:
             log.info(f"Waiting {RECONCILE_DELAY}s for fills...")
             time.sleep(RECONCILE_DELAY)
+
+            # Write actual fill prices back to the order journal
+            try:
+                fills = broker.get_fills(since=rebalance_start)
+                for fill in fills:
+                    update_order_fill(ORDER_JOURNAL_PATH, fill.order_id, fill.avg_price)
+                if fills:
+                    log.info(f"Recorded fill prices for {len(fills)} order(s)")
+            except Exception as exc:
+                log.warning(f"Could not write fill prices to journal: {exc}")
 
         broker_positions_after = broker.get_positions()
 
