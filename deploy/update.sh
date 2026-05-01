@@ -6,6 +6,9 @@ set -euo pipefail
 APP_DIR="/opt/quantpipe"
 APP_USER="quantpipe"
 
+echo "[+] Fixing ownership (guards against files written by root)..."
+chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
+
 echo "[+] Pulling latest code..."
 sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin
 sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/main
