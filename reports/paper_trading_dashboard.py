@@ -546,7 +546,7 @@ if deploy_evt:
             f"{s['name']} ({s['allocation_weight']*100:.0f}%)"
             for s in sorted(
                 (s for s in e.get("strategies", []) if s.get("allocation_weight", 0) > 0),
-                key=lambda s: s["allocation_weight"], reverse=True,
+                key=lambda s: s.get("allocation_weight", 0), reverse=True,
             )
         )
         rows.append({
