@@ -117,7 +117,7 @@ def _metric_table(results: dict) -> pd.DataFrame:
         row = {"Strategy": r.name}
         for key, label, is_pct in _METRIC_KEYS:
             v = m.get(key)
-            row[label] = _fmt(v, pct=is_pct, decimals=2 if not is_pct else 1)
+            row[label] = _fmt(v, pct=is_pct, decimals=1 if is_pct else 2)
         rows.append(row)
     return pd.DataFrame(rows).set_index("Strategy") if rows else pd.DataFrame()
 
@@ -493,7 +493,7 @@ with tab_optimizer:
      border-left:3px solid {_color(i)};border-radius:8px;padding:12px 14px;">
   <div style="font-size:0.7rem;color:{COLORS['text_muted']};text-transform:uppercase;">{name}</div>
   <div style="font-size:0.84rem;font-weight:700;color:{COLORS['text']};margin-top:6px;">
-    Ret {ann_ret[col]*100:+.1f}% · Vol {ann_vol[col]*100:.1f}% · Sharpe {ann_sharpe[col]:.2f if not np.isnan(ann_sharpe[col]) else "—"}
+    Ret {ann_ret[col]*100:+.1f}% · Vol {ann_vol[col]*100:.1f}% · Sharpe {"—" if np.isnan(ann_sharpe[col]) else f"{ann_sharpe[col]:.2f}"}
   </div>
 </div>""", unsafe_allow_html=True)
 
