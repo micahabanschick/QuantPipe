@@ -299,28 +299,45 @@ with tab_stability:
                 )
 
             st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
-            st.markdown(section_label("IS vs OOS Sharpe Scatter"), unsafe_allow_html=True)
-            st.caption("Each dot is a fold. High IS / low OOS Sharpe = overfitting.")
-            _is_sharpes = [getattr(f, "in_sample_sharpe", None) for f in wfv_result.folds]
+            st.markdown(section_label("IS vs OOS Sharpe — Overfitting Radar"), unsafe_allow_html=True)
+            st.caption(
+                "Each dot is one fold. Points below the diagonal (IS > OOS) signal overfitting. "
+                "Points on or above it indicate the strategy generalises out-of-sample."
+            )
+            _is_sharpes  = [getattr(f, "is_sharpe", 0.0) for f in wfv_result.folds]
             _oos_sharpes = sharpe_vals
-            if all(v is not None for v in _is_sharpes):
-                fig_scatter = go.Figure(go.Scatter(
-                    x=_is_sharpes, y=_oos_sharpes, mode="markers+text",
-                    marker=dict(color=COLORS["gold"], size=12, line=dict(color=COLORS["text"], width=1)),
-                    text=[f"F{i+1}" for i in range(len(rows))], textposition="top center",
-                    hovertemplate="Fold %{text}: IS=%{x:.3f}, OOS=%{y:.3f}<extra></extra>",
-                ))
-                _all_sh = _is_sharpes + _oos_sharpes
-                _mn, _mx = min(_all_sh) - 0.1, max(_all_sh) + 0.1
-                fig_scatter.add_trace(go.Scatter(x=[_mn, _mx], y=[_mn, _mx],
-                                                  mode="lines", line=dict(color=COLORS["border"], dash="dot"),
-                                                  showlegend=False, hoverinfo="skip"))
-                apply_theme(fig_scatter)
-                fig_scatter.update_layout(height=320,
-                                           xaxis=dict(title="In-Sample Sharpe"),
-                                           yaxis=dict(title="OOS Sharpe"))
-                st.plotly_chart(fig_scatter, use_container_width=True, config=PLOTLY_CONFIG)
-            else:
-                st.caption("IS Sharpe not available from walk-forward result (fold attribute missing).")
+
+            _all_sh = _is_sharpes + _oos_sharpes
+            _mn = min(_all_sh) - 0.2
+            _mx = max(_all_sh) + 0.2
+            _overfit_pct = sum(1 for i, o in zip(_is_sharpes, _oos_sharpes) if i > o) / max(len(rows), 1)
+
+            fig_scatter = go.Figure()
+            # Diagonal reference (IS == OOS)
+            fig_scatter.add_trace(go.Scatter(
+                x=[_mn, _mx], y=[_mn, _mx], mode="lines",
+                line=dict(color=COLORS["border"], dash="dot", width=1.5),
+                showlegend=False, hoverinfo="skip",
+            ))
+            # Colour dots: green = OOS >= IS (good), red = OOS < IS (overfit)
+            dot_colors = [COLORS["positive"] if o >= i else COLORS["negative"]
+                          for i, o in zip(_is_sharpes, _oos_sharpes)]
+            fig_scatter.add_trace(go.Scatter(
+                x=_is_sharpes, y=_oos_sharpes, mode="markers+text",
+                marker=dict(color=dot_colors, size=13, line=dict(color=COLORS["text"], width=1)),
+                text=[f"F{i+1}" for i in range(len(rows))], textposition="top center",
+                textfont=dict(size=9, color=COLORS["text"]),
+                hovertemplate="Fold %{text}<br>IS Sharpe: %{x:.3f}<br>OOS Sharpe: %{y:.3f}<extra></extra>",
+                showlegend=False,
+            ))
+            apply_theme(fig_scatter, legend_inside=False)
+            fig_scatter.update_layout(
+                height=340,
+                xaxis=dict(title="In-Sample Sharpe", showgrid=False),
+                yaxis=dict(title="OOS Sharpe", showgrid=False),
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True, config=PLOTLY_CONFIG)
+            overfit_label = "⚠ Possible overfitting" if _overfit_pct > 0.5 else "✓ Generalises well"
+            st.caption(f"{int(_overfit_pct*100)}% of folds show IS > OOS Sharpe — {overfit_label}")
         else:
             st.info("Need at least 2 folds for stability analysis.")

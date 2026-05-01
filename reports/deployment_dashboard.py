@@ -230,6 +230,73 @@ with tab_drift:
         else:
             st.success(f"Portfolio is on target (max drift {max_drift:.1%}).")
 
+    # ── Reconciliation Log ────────────────────────────────────────────────────
+    st.markdown("<div style='height:12px'/>", unsafe_allow_html=True)
+    st.markdown(section_label("Reconciliation Log"), unsafe_allow_html=True)
+    st.caption("History of position reconciliation checks run after each rebalance.")
+
+    _rec_path = DATA_DIR / "gold" / "equity" / "reconcile_log.parquet"
+    if not _rec_path.exists():
+        st.info(
+            "No reconciliation log yet. "
+            "Run a rebalance (Deployment → Trade tab) to generate it."
+        )
+    else:
+        _rec_df = pl.read_parquet(_rec_path).sort("as_of", descending=True)
+        _rec_pd = _rec_df.to_pandas()
+
+        # Summary KPIs
+        _n_dates   = _rec_pd["as_of"].nunique()
+        _n_drifts  = len(_rec_pd[_rec_pd["symbol"] != "__CLEAN__"])
+        _clean_days = len(_rec_pd[_rec_pd["symbol"] == "__CLEAN__"])
+        _max_drift = float(_rec_pd["drift_pct"].replace([float("inf"), float("nan")], 0).max())
+
+        rk1, rk2, rk3, rk4 = st.columns(4)
+        rk1.markdown(kpi_card("Reconcile Dates", str(_n_dates), accent=COLORS["blue"]),   unsafe_allow_html=True)
+        rk2.markdown(kpi_card("Clean Days",       str(_clean_days),
+                               accent=COLORS["positive"] if _clean_days == _n_dates else COLORS["warning"]),
+                     unsafe_allow_html=True)
+        rk3.markdown(kpi_card("Drift Events",     str(_n_drifts),
+                               accent=COLORS["negative"] if _n_drifts > 0 else COLORS["positive"]),
+                     unsafe_allow_html=True)
+        rk4.markdown(kpi_card("Max Drift %",      f"{_max_drift:.1f}%",
+                               accent=COLORS["negative"] if _max_drift > 5 else COLORS["neutral"]),
+                     unsafe_allow_html=True)
+
+        # Only show non-clean rows in detail
+        _drift_rows = _rec_pd[_rec_pd["symbol"] != "__CLEAN__"].copy()
+        if _drift_rows.empty:
+            st.success("All rebalances reconciled cleanly — no broker position discrepancies.")
+        else:
+            st.warning(f"{len(_drift_rows)} position drift record(s) found.")
+            _drift_rows["drift_pct"] = _drift_rows["drift_pct"].replace(float("inf"), 999.0)
+            st.dataframe(
+                _drift_rows[["as_of", "symbol", "internal_qty", "broker_qty",
+                              "qty_diff", "notional_diff", "drift_pct"]]
+                    .rename(columns={
+                        "as_of": "Date", "symbol": "Symbol",
+                        "internal_qty": "Internal", "broker_qty": "Broker",
+                        "qty_diff": "Qty Diff", "notional_diff": "Notional ($)",
+                        "drift_pct": "Drift %",
+                    }),
+                use_container_width=True, hide_index=True,
+            )
+
+        # Drift history chart
+        if not _drift_rows.empty:
+            _dh = (_drift_rows.groupby("as_of")["notional_diff"].sum().reset_index()
+                              .sort_values("as_of"))
+            _dh["as_of"] = pd.to_datetime(_dh["as_of"])
+            fig_rec = go.Figure(go.Bar(
+                x=_dh["as_of"], y=_dh["notional_diff"],
+                marker=dict(color=COLORS["negative"], line=dict(width=0)), opacity=0.75,
+                hovertemplate="%{x|%Y-%m-%d}: $%{y:,.2f} notional drift<extra></extra>",
+            ))
+            apply_theme(fig_rec, title="Notional Drift per Rebalance ($)", height=200)
+            fig_rec.update_layout(yaxis=dict(tickprefix="$", tickformat=",.0f"),
+                                   xaxis=dict(showgrid=False), showlegend=False)
+            st.plotly_chart(fig_rec, use_container_width=True)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — Trade
