@@ -225,9 +225,11 @@ with tab_overview:
                     w /= w.sum()
                 blended_eq = 10_000.0 * (1 + (ret_matrix * w).sum(axis=1)).cumprod()
 
-            n_cards = len(active_results)
+            active_allocated = [(slug, r) for slug, r in active_results.items()
+                                if alloc_norm.get(slug, 0.0) > 0]
+            n_cards = len(active_allocated)
             card_cols = st.columns(n_cards + 1)
-            for i, (slug, r) in enumerate(active_results.items()):
+            for i, (slug, r) in enumerate(active_allocated):
                 alloc_pct = alloc_norm.get(slug, 0.0)
                 m = r.metrics
                 color = _color(i)
