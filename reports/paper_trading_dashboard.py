@@ -64,7 +64,7 @@ def _load_deployment_events() -> list[dict]:
         line = line.strip()
         if not line:
             continue
-        with contextlib.suppress(Exception):
+        try:
             e = json.loads(line)
             if strats := e.get("strategies", []):
                 top = max(strats, key=lambda s: s.get("allocation_weight", 0))
@@ -76,6 +76,8 @@ def _load_deployment_events() -> list[dict]:
                 e["label"] = f"v{e['version']}"
             e["ts"] = pd.Timestamp(e["timestamp"]).tz_convert(None)  # make tz-naive
             events.append(e)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            log.warning("Skipping malformed deployment event line: %s (%s)", line, exc)
     return events
 
 
