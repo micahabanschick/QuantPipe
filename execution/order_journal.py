@@ -55,10 +55,10 @@ def append_order(
         "rebalance_date": rebalance_date,
         "broker":         broker,
         "symbol":         symbol,
-        "qty":            qty,
-        "est_price":      est_price,
+        "qty":            float(qty),       # explicit cast: guards against numpy/Decimal
+        "est_price":      float(est_price),
         "fill_price":     None,
-        "order_id":       order_id,
+        "order_id":       str(order_id),    # explicit cast: guards against UUID objects
         "status":         status,
     }]).with_columns(
         pl.col("rebalance_date").cast(pl.Date),
@@ -67,7 +67,7 @@ def append_order(
 
     if journal_path.exists():
         existing = load_journal(journal_path)
-        existing = existing.filter(pl.col("order_id") != order_id)
+        existing = existing.filter(pl.col("order_id") != str(order_id))
         combined = pl.concat([existing, new_row]).sort(["rebalance_date", "ts_utc"])
     else:
         combined = new_row
@@ -77,30 +77,34 @@ def append_order(
     os.replace(tmp, journal_path)
 
 
-def update_order_fill(
+def batch_update_fill_prices(
     journal_path: Path,
-    order_id: str,
-    fill_price: float,
+    fills: dict[str, float],
 ) -> None:
-    """Write the actual broker fill price back to an existing journal record.
+    """Write actual broker fill prices back to the journal in a single atomic write.
 
-    Called after the reconcile delay once fills have settled. Safe to call
-    multiple times — idempotent on the same order_id.
+    Args:
+        fills: mapping of {order_id: avg_fill_price} from broker.get_fills().
+
+    Reads the journal once, patches all matching order_ids in-memory, then
+    writes back once — O(1) I/O regardless of how many fills there are.
     """
-    if not journal_path.exists():
+    if not fills or not journal_path.exists():
         return
 
     df = load_journal(journal_path)
-    if order_id not in df["order_id"].to_list():
-        log.warning("update_order_fill: order_id %s not found in journal", order_id)
-        return
 
-    df = df.with_columns(
-        pl.when(pl.col("order_id") == order_id)
-        .then(pl.lit(fill_price))
-        .otherwise(pl.col("fill_price"))
-        .alias("fill_price")
-    )
+    for order_id, fill_price in fills.items():
+        mask = pl.col("order_id") == order_id
+        if df.filter(mask).is_empty():
+            log.warning("batch_update_fill_prices: order_id %s not in journal", order_id)
+            continue
+        df = df.with_columns(
+            pl.when(mask)
+            .then(pl.lit(fill_price))
+            .otherwise(pl.col("fill_price"))
+            .alias("fill_price")
+        )
 
     tmp = journal_path.with_suffix(".tmp")
     df.write_parquet(tmp)
@@ -110,7 +114,7 @@ def update_order_fill(
 def load_journal(journal_path: Path) -> pl.DataFrame:
     """Load the full order journal, returning an empty frame if none exists.
 
-    Adds fill_price column (all null) if the file pre-dates that schema addition.
+    Adds fill_price column (all null) for records that pre-date that column.
     """
     if not journal_path.exists():
         return pl.DataFrame(schema=_SCHEMA)
