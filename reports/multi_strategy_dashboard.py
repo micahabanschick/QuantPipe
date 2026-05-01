@@ -226,9 +226,11 @@ with tab_overview:
                 blended_eq = 10_000.0 * (1 + (ret_matrix * w).sum(axis=1)).cumprod()
 
             active_allocated = [(slug, r) for slug, r in active_results.items()
-                                if alloc_norm.get(slug, 0.0) > 0]
+                                if alloc_norm.get(slug, 0.0) > 1e-6]
             n_cards = len(active_allocated)
-            card_cols = st.columns(n_cards + 1)
+            if n_cards == 0:
+                st.info("No strategies have a non-zero allocation. Set weights in the Deployment tab.")
+            card_cols = st.columns(max(n_cards, 1) + 1)
             for i, (slug, r) in enumerate(active_allocated):
                 alloc_pct = alloc_norm.get(slug, 0.0)
                 m = r.metrics
