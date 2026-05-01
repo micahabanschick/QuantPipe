@@ -11,6 +11,7 @@ anchored at the NAV snapshot from each rebalance. Deployment changes are
 shown as vertical dotted lines on the curve.
 """
 
+import contextlib
 import json
 import logging
 from datetime import date, datetime, timedelta
@@ -65,12 +66,18 @@ def _load_deployment_events() -> list[dict]:
             continue
         try:
             e = json.loads(line)
-            slugs = [s["slug"] for s in e.get("strategies", [])]
-            e["label"] = f"v{e['version']}: {', '.join(slugs)}"
+            if strats := e.get("strategies", []):
+                top = max(strats, key=lambda s: s.get("allocation_weight", 0))
+                top_pct = int(round(top.get("allocation_weight", 0) * 100))
+                others = len(strats) - 1
+                suffix = f" + {others} other{'s' if others != 1 else ''}" if others else ""
+                e["label"] = f"v{e['version']}: {top['slug']} ({top_pct}%){suffix}"
+            else:
+                e["label"] = f"v{e['version']}"
             e["ts"] = pd.Timestamp(e["timestamp"]).tz_convert(None)  # make tz-naive
             events.append(e)
-        except Exception:
-            pass
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            log.warning("Skipping malformed deployment event line: %s (%s)", line, exc)
     return events
 
 
@@ -281,7 +288,7 @@ if metrics:
     sharpe    = metrics["sharpe"]
     max_dd    = metrics["max_dd"]
     n_days    = metrics["n_days"]
-    period_start = float(eq.iloc[0]) if not eq.empty else _INITIAL_NAV
+    period_start = _INITIAL_NAV if eq.empty else float(eq.iloc[0])
     pnl          = nav_now - period_start
 
     pnl_color = COLORS["positive"] if pnl >= 0 else COLORS["negative"]
@@ -323,7 +330,7 @@ if not eq.empty:
     # Optional backtest overlay from portfolio_log.parquet
     _pl_path = _GOLD / "portfolio_log.parquet"
     if _pl_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             import polars as _pl
             _pl_df = _pl.read_parquet(_pl_path).sort("date")
             if "portfolio_value" in _pl_df.columns:
@@ -340,8 +347,6 @@ if not eq.empty:
                         opacity=0.6,
                         hovertemplate="Backtest: $%{y:,.0f}<extra></extra>",
                     ))
-        except Exception:
-            pass
 
     # Main equity curve
     fig.add_trace(go.Scatter(
@@ -378,7 +383,7 @@ if not eq.empty:
         x=eq.index.tolist() + eq.index[::-1].tolist(),
         y=peak.tolist() + eq[::-1].tolist(),
         fill="toself",
-        fillcolor=f"rgba(255,75,75,0.07)",
+        fillcolor="rgba(255,75,75,0.07)",
         line=dict(width=0),
         name="Drawdown",
         showlegend=True,
@@ -552,8 +557,7 @@ st.markdown("---")
 st.markdown("### Slippage Analysis")
 if not orders.empty and "est_price" in orders.columns:
     _slippage_df = orders.copy()
-    fill_col = next((c for c in ["fill_price", "actual_price", "avg_fill_px"] if c in _slippage_df.columns), None)
-    if fill_col:
+    if fill_col := next((c for c in ["fill_price", "actual_price", "avg_fill_px"] if c in _slippage_df.columns), None):
         _slippage_df["slippage_bps"] = ((_slippage_df[fill_col] - _slippage_df["est_price"]) / _slippage_df["est_price"].replace(0, np.nan) * 10_000).round(2)
         _slippage_df["abs_slip_bps"] = _slippage_df["slippage_bps"].abs()
         _sdisp = _slippage_df[["rebalance_date", "symbol", "qty", "est_price", fill_col, "slippage_bps", "status"]].copy()
