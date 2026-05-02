@@ -122,30 +122,6 @@ def _metric_table(results: dict) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("Strategy") if rows else pd.DataFrame()
 
 
-def _save_allocations(allocs: dict, results: dict, config, metas: list):
-    from portfolio.multi_strategy import (
-        write_deployment_config, read_deployment_config,
-        DeploymentConfig, DeployedStrategy,
-    )
-    existing = config or read_deployment_config()
-    old_params = {s.slug: s.backtest_params for s in existing.strategies} if existing else {}
-    meta_map = {m.slug: m for m in metas}
-    strategies = []
-    for slug, weight in allocs.items():
-        m = meta_map.get(slug)
-        strategies.append(DeployedStrategy(
-            slug=slug,
-            name=results[slug].name if slug in results else slug,
-            active=True,
-            allocation_weight=round(weight, 6),
-            backtest_params=old_params.get(slug, m.default_params if m else {}),
-        ))
-    write_deployment_config(DeploymentConfig(
-        version=(existing.version if existing else 0),
-        updated_at="",
-        strategies=strategies,
-    ))
-
 
 # ── Page ───────────────────────────────────────────────────────────────────────
 
