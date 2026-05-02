@@ -8,7 +8,7 @@ Mechanism:
   overweighted; those with the weakest surprises are underweighted or excluded.
 
 Signal construction:
-  1. For each sector ETF, load cached earnings data for its 3 proxy stocks.
+  1. For each sector ETF, use pre-loaded earnings data for its 3 proxy stocks.
   2. Compute the Standardised Unexpected Earnings (SUE) score for each proxy:
        SUE = surprise_pct (Alpha Vantage's ((actual - estimate) / |estimate|) × 100)
   3. Average the SUE scores across the sector's proxies → sector-level SUE.
@@ -19,6 +19,7 @@ Signal construction:
 Data dependency:
   Requires data/alt/earnings/{symbol}.parquet files populated by
   orchestration/pull_earnings.py (added as a pipeline step).
+  Call load_earnings_features() before get_signal() to pre-load the data.
 
 Rebalance frequency: monthly (inherits from the pipeline rebalance schedule).
 Holding period: 42 trading days (~2 months) — typical PEAD holding window.
@@ -28,12 +29,11 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from pathlib import Path
 
 import polars as pl
 
 from config.settings import DATA_DIR
-from orchestration.pull_earnings import SECTOR_PROXY_MAP
+from config.universes import SECTOR_PROXY_MAP
 
 log = logging.getLogger(__name__)
 
@@ -44,29 +44,28 @@ DESCRIPTION = (
     "positive earnings surprises."
 )
 DEFAULT_PARAMS = {
-    "lookback_years": 6,
-    "top_n":          4,      # number of sector ETFs to hold
-    "min_sue":        0.0,    # minimum sector SUE score to be eligible
-    "cost_bps":       5.0,
-    "weight_scheme":  "equal",
+    "lookback_years":  6,
+    "top_n":           4,     # number of sector ETFs to hold
+    "min_sue":         0.0,   # minimum sector SUE score to be eligible
+    "cost_bps":        5.0,
+    "weight_scheme":   "equal",
     "sue_window_days": 90,    # max days since earnings announcement to use
 }
 
 EARNINGS_DIR = DATA_DIR / "alt" / "earnings"
 
 
-def _load_sector_sue(sector_etf: str, as_of: date, window_days: int) -> float | None:
-    """Return the average SUE score for a sector ETF's proxy stocks.
+def load_earnings_features(window_days: int = DEFAULT_PARAMS["sue_window_days"]) -> pl.DataFrame:
+    """Pre-load all earnings data from the cache directory.
 
-    Only uses earnings announced on or before as_of and within window_days.
-    Returns None if no qualifying data exists.
+    Returns a combined DataFrame with columns
+    [date, symbol, surprise_pct] covering all proxy stocks.
+    Call this once before invoking get_signal() to keep get_signal pure.
     """
-    proxies = SECTOR_PROXY_MAP.get(sector_etf, [])
-    scores: list[float] = []
+    frames: list[pl.DataFrame] = []
+    all_symbols = {sym for proxies in SECTOR_PROXY_MAP.values() for sym in proxies}
 
-    cutoff_early = as_of - timedelta(days=window_days)
-
-    for symbol in proxies:
+    for symbol in all_symbols:
         path = EARNINGS_DIR / f"{symbol.lower()}.parquet"
         if not path.exists():
             continue
@@ -74,73 +73,103 @@ def _load_sector_sue(sector_etf: str, as_of: date, window_days: int) -> float | 
             df = pl.read_parquet(path)
             if "date" not in df.columns or "surprise_pct" not in df.columns:
                 continue
-
-            # Point-in-time safe: only use announcements before the rebalance date
-            eligible = df.filter(
-                (pl.col("date") <= as_of) &
-                (pl.col("date") >= cutoff_early) &
-                pl.col("surprise_pct").is_not_null()
-            ).sort("date", descending=True)
-
-            if eligible.is_empty():
-                continue
-
-            # Most recent eligible quarter
-            latest_sue = float(eligible["surprise_pct"].head(1)[0])
-            scores.append(latest_sue)
-
+            frames.append(
+                df.select(["date", "surprise_pct"])
+                  .with_columns(pl.lit(symbol).alias("symbol"))
+            )
         except Exception as exc:
-            log.debug("earnings_surprise_drift: could not load %s: %s", symbol, exc)
+            log.debug("load_earnings_features: could not load %s: %s", symbol, exc)
+
+    if not frames:
+        return pl.DataFrame(schema={"date": pl.Date, "symbol": pl.Utf8, "surprise_pct": pl.Float64})
+
+    return (
+        pl.concat(frames)
+        .with_columns(pl.col("date").cast(pl.Date))
+        .sort(["symbol", "date"])
+    )
+
+
+def _sector_sue(
+    sector_etf: str,
+    as_of: date,
+    window_days: int,
+    earnings: pl.DataFrame,
+) -> float | None:
+    """Return the average SUE score for a sector ETF's proxy stocks.
+
+    Pure — uses only the passed-in earnings DataFrame.
+    """
+    proxies   = SECTOR_PROXY_MAP.get(sector_etf, [])
+    cutoff_lo = as_of - timedelta(days=window_days)
+    scores: list[float] = []
+
+    for symbol in proxies:
+        eligible = (
+            earnings.filter(
+                (pl.col("symbol") == symbol) &
+                (pl.col("date") <= as_of) &
+                (pl.col("date") >= cutoff_lo) &
+                pl.col("surprise_pct").is_not_null()
+            )
+            .sort("date", descending=True)
+        )
+        if eligible.is_empty():
+            continue
+        scores.append(float(eligible["surprise_pct"].head(1)[0]))
 
     return float(sum(scores) / len(scores)) if scores else None
 
 
 def get_signal(
-    features: pl.DataFrame,
+    _features: pl.DataFrame,
     rebal_dates: list,
     top_n: int = DEFAULT_PARAMS["top_n"],
     min_sue: float = DEFAULT_PARAMS["min_sue"],
     sue_window_days: int = DEFAULT_PARAMS["sue_window_days"],
+    earnings_data: pl.DataFrame | None = None,
     **kwargs,
 ) -> pl.DataFrame:
     """Rank sector ETFs by their most recent aggregate earnings surprise.
 
-    Returns a signal DataFrame with columns [date, symbol, signal_rank, sue_score].
-    Falls back to an empty frame if no earnings data is available.
-    """
-    available_sectors = list(SECTOR_PROXY_MAP.keys())
+    Args:
+        _features:     Standard features DataFrame (unused — earnings signal
+                       uses its own data injected via earnings_data).
+        rebal_dates:   List of rebalance dates to generate signals for.
+        earnings_data: Pre-loaded earnings DataFrame from load_earnings_features().
+                       If None, loads from disk (convenience for standalone use).
 
-    # Check that at least some earnings data exists
-    any_data = any(
-        (EARNINGS_DIR / f"{sym.lower()}.parquet").exists()
-        for proxies in SECTOR_PROXY_MAP.values()
-        for sym in proxies
-    )
-    if not any_data:
+    Returns:
+        DataFrame with columns [date, symbol, signal_rank, sue_score].
+    """
+    _EMPTY = pl.DataFrame(schema={
+        "date": pl.Date, "symbol": pl.Utf8,
+        "signal_rank": pl.Int32, "sue_score": pl.Float64,
+    })
+
+    # Allow callers to inject pre-loaded data; fall back for standalone use
+    earnings = earnings_data if earnings_data is not None else load_earnings_features(sue_window_days)
+
+    if earnings.is_empty():
         log.warning(
-            "earnings_surprise_drift: no earnings cache found. "
+            "earnings_surprise_drift: no earnings data available. "
             "Run: uv run python orchestration/pull_earnings.py"
         )
-        return pl.DataFrame(schema={
-            "date": pl.Date, "symbol": pl.Utf8,
-            "signal_rank": pl.Int32, "sue_score": pl.Float64,
-        })
+        return _EMPTY
 
     rows = []
     for rebal_date in rebal_dates:
         as_of = rebal_date if isinstance(rebal_date, date) else rebal_date.date()
         sector_scores: list[tuple[str, float]] = []
 
-        for etf in available_sectors:
-            sue = _load_sector_sue(etf, as_of, sue_window_days)
+        for etf in SECTOR_PROXY_MAP:
+            sue = _sector_sue(etf, as_of, sue_window_days, earnings)
             if sue is not None and sue >= min_sue:
                 sector_scores.append((etf, sue))
 
         if not sector_scores:
-            log.debug("earnings_surprise_drift: no qualifying sectors on %s", as_of)
             continue
 
-        # Rank descending by SUE — top_n sectors become the portfolio
         sector_scores.sort(key=lambda x: x[1], reverse=True)
         for rank, (etf, sue) in enumerate(sector_scores[:top_n], start=1):
             rows.append({
@@ -151,10 +180,7 @@ def get_signal(
             })
 
     if not rows:
-        return pl.DataFrame(schema={
-            "date": pl.Date, "symbol": pl.Utf8,
-            "signal_rank": pl.Int32, "sue_score": pl.Float64,
-        })
+        return _EMPTY
 
     return pl.DataFrame(rows).with_columns(pl.col("date").cast(pl.Date))
 
@@ -164,29 +190,23 @@ def get_weights(
     weight_scheme: str = DEFAULT_PARAMS["weight_scheme"],
     **kwargs,
 ) -> pl.DataFrame:
-    """Convert earnings surprise rankings to portfolio weights.
+    """Convert earnings surprise rankings to equal portfolio weights."""
+    _EMPTY = pl.DataFrame(schema={"date": pl.Date, "symbol": pl.Utf8, "weight": pl.Float64})
 
-    Currently supports equal-weight only. All selected sectors receive
-    an equal allocation; unselected sectors receive zero.
-    """
     if signal.is_empty():
-        return pl.DataFrame(schema={"date": pl.Date, "symbol": pl.Utf8, "weight": pl.Float64})
+        return _EMPTY
 
     rows = []
-    for (rebal_date,), group in signal.group_by("date"):
+    for rebal_date, group in signal.group_by("date"):
         n = len(group)
         if n == 0:
             continue
         w = 1.0 / n
         for row in group.iter_rows(named=True):
-            rows.append({
-                "date":   row["date"],
-                "symbol": row["symbol"],
-                "weight": w,
-            })
+            rows.append({"date": row["date"], "symbol": row["symbol"], "weight": w})
 
     if not rows:
-        return pl.DataFrame(schema={"date": pl.Date, "symbol": pl.Utf8, "weight": pl.Float64})
+        return _EMPTY
 
     return (
         pl.DataFrame(rows)

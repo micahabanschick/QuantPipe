@@ -53,6 +53,22 @@ CRYPTO_UNIVERSE: list[str] = [
     "XRP/USDT",
 ]
 
+# Sector ETF → representative proxy stocks for earnings surprise signal.
+# 3 liquid, high-analyst-coverage stocks per sector.
+# Used by: orchestration/pull_earnings.py and strategies/earnings_surprise_drift/
+SECTOR_PROXY_MAP: dict[str, list[str]] = {
+    "XLK":  ["AAPL", "MSFT", "NVDA"],   # Technology
+    "XLE":  ["XOM",  "CVX",  "COP"],    # Energy
+    "XLF":  ["JPM",  "BAC",  "WFC"],    # Financials
+    "XLU":  ["NEE",  "DUK",  "SO"],     # Utilities
+    "XLI":  ["CAT",  "DE",   "HON"],    # Industrials
+    "XLV":  ["JNJ",  "UNH",  "PFE"],    # Health Care
+    "XLP":  ["PG",   "KO",   "PEP"],    # Consumer Staples
+    "XLC":  ["META", "GOOGL","VZ"],      # Communication Services
+    "XLY":  ["AMZN", "TSLA", "HD"],     # Consumer Discretionary
+    "XLRE": ["AMT",  "PLD",  "EQIX"],   # Real Estate
+}
+
 # Asset class tag → universe mapping (used by orchestration)
 UNIVERSES: dict[str, list[str]] = {
     "equity": EQUITY_UNIVERSE,

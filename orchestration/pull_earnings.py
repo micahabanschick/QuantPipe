@@ -24,25 +24,9 @@ from pathlib import Path
 import polars as pl
 
 from config.settings import DATA_DIR, ALPHA_VANTAGE_API_KEY
+from config.universes import SECTOR_PROXY_MAP
 
 log = logging.getLogger(__name__)
-
-# ── Sector proxy map ───────────────────────────────────────────────────────────
-# 3 liquid, high-coverage stocks per sector ETF.
-# These are used as earnings proxies for the entire sector.
-# Update annually as index compositions change.
-SECTOR_PROXY_MAP: dict[str, list[str]] = {
-    "XLK":  ["AAPL", "MSFT", "NVDA"],   # Technology
-    "XLE":  ["XOM",  "CVX",  "COP"],    # Energy
-    "XLF":  ["JPM",  "BAC",  "WFC"],    # Financials
-    "XLU":  ["NEE",  "DUK",  "SO"],     # Utilities
-    "XLI":  ["CAT",  "DE",   "HON"],    # Industrials
-    "XLV":  ["JNJ",  "UNH",  "PFE"],    # Health Care
-    "XLP":  ["PG",   "KO",   "PEP"],    # Consumer Staples
-    "XLC":  ["META", "GOOGL","VZ"],      # Communication Services
-    "XLY":  ["AMZN", "TSLA", "HD"],     # Consumer Discretionary
-    "XLRE": ["AMT",  "PLD",  "EQIX"],   # Real Estate
-}
 
 EARNINGS_DIR = DATA_DIR / "alt" / "earnings"
 CACHE_DAYS   = 90    # re-fetch only when data is older than this
