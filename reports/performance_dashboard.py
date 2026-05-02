@@ -5,6 +5,7 @@ Tabs: Overview · Portfolio · Risk · Analytics
 Run with: streamlit run reports/performance_dashboard.py
 """
 
+import logging
 from datetime import date, timedelta
 
 import numpy as np
@@ -231,14 +232,21 @@ def _load_deploy_history() -> list[dict]:
                 label = f"v{e['version']}"
             events.append({"version": e["version"], "label": label,
                            "ts": ts, "strategies": strats})
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            pass
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            logging.getLogger(__name__).debug(
+                "Skipping malformed deployment history line: %s (%s)", line, exc
+            )
 
-    events.sort(key=lambda x: x["version"])
-    today = pd.Timestamp(date.today())
+    # Sort by timestamp (not version) so date ranges reflect actual chronology
+    events.sort(key=lambda x: x["ts"])
     for i, e in enumerate(events):
         e["start_date"] = e["ts"].date()
-        e["end_date"] = events[i + 1]["ts"].date() if i + 1 < len(events) else date.today()
+        if i + 1 < len(events):
+            # Half-open interval: end the day before the next version starts
+            # prevents transition-day double-counting across successive versions
+            e["end_date"] = events[i + 1]["ts"].date() - timedelta(days=1)
+        else:
+            e["end_date"] = date.today()
     return list(reversed(events))   # newest first for the selectbox
 
 
