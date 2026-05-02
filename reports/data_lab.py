@@ -491,6 +491,15 @@ with tab_ingest:
             horizontal=True, key="av_type",
         )
 
+        def _av_sym_inputs(prefix: str, save_prefix: str) -> tuple[str, str]:
+            """Shared ticker + save-name inputs for AV fundamental branches."""
+            sym   = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…",
+                                   key=f"av_sym_{prefix}").strip().upper()
+            sname = st.text_input("Save as",
+                                   value=f"{save_prefix}_{sym.lower()}" if sym else save_prefix,
+                                   key=f"av_sname_{prefix}")
+            return sym, sname
+
         # ── Macro series ──────────────────────────────────────────────────────
         if _av_type == "US Macro Series":
             avm1, avm2 = st.columns(2)
@@ -541,15 +550,6 @@ with tab_ingest:
                     st.info("Go to Tradability Check to analyse this signal.")
                 elif _av_df is not None:
                     st.warning("No data returned.")
-
-        def _av_sym_inputs(prefix: str, save_prefix: str) -> tuple[str, str]:
-            """Shared ticker + save-name inputs for AV fundamental branches."""
-            sym   = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…",
-                                   key=f"av_sym_{prefix}").strip().upper()
-            sname = st.text_input("Save as",
-                                   value=f"{save_prefix}_{sym.lower()}" if sym else save_prefix,
-                                   key=f"av_sname_{prefix}")
-            return sym, sname
 
         # ── Company Fundamentals ──────────────────────────────────────────────
         elif _av_type == "Company Fundamentals":
