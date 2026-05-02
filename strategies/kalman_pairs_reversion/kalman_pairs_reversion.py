@@ -154,7 +154,13 @@ def get_signal(
     min_tilt = 1.0 - max_tilt
 
     # Build price pivot: date × symbol → close
-    price_col = "adj_close" if "adj_close" in prices.columns else "close"
+    if "adj_close" in prices.columns:
+        price_col = "adj_close"
+    elif "close" in prices.columns:
+        price_col = "close"
+    else:
+        log.warning("kalman_pairs_reversion: prices has neither 'adj_close' nor 'close'")
+        return _EMPTY
     price_wide = (
         prices.select(["date", "symbol", price_col])
               .to_pandas()
@@ -194,11 +200,15 @@ def get_signal(
             else:
                 z = float(available.iloc[-1])
 
-            # Clamp z to [-2, 2] and convert to weight tilt
-            z_clamped = max(-2.0, min(2.0, z))
-            raw_w_y   = 0.5 - 0.25 * z_clamped          # 0.0 → 1.0
-            w_y       = max(min_tilt, min(max_tilt, raw_w_y))
-            w_x       = 1.0 - w_y
+            # Dead zone: if |z| < entry_threshold, hold equal weight (no conviction)
+            if abs(z) < entry_threshold:
+                w_y = 0.5
+            else:
+                # Clamp z to [-2, 2] and convert to weight tilt
+                z_clamped = max(-2.0, min(2.0, z))
+                raw_w_y   = 0.5 - 0.25 * z_clamped      # ranges 0.0 → 1.0
+                w_y       = max(min_tilt, min(max_tilt, raw_w_y))
+            w_x = 1.0 - w_y
 
             rows.extend([
                 {"date": rebal_date if isinstance(rebal_date, date) else rebal_date.date(),
