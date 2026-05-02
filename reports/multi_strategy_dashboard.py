@@ -496,35 +496,50 @@ with tab_optimizer:
         else:
             corr = strategy_correlation(ret_matrix)
             slug_to_name = {slug: r.name for slug, r in results.items()}
+
+            # Drop strategies whose entire row is NaN (no backtest data yet)
+            valid_cols = [c for c in corr.columns if not corr[c].isna().all()]
+            corr = corr.loc[valid_cols, valid_cols]
+
             names = [slug_to_name.get(c, c) for c in corr.columns]
 
-            st.markdown("### Strategy Correlation Matrix")
-            z_text = [[f"{v:.2f}" for v in row] for row in corr.values]
-            fig_corr = go.Figure(go.Heatmap(
-                z=corr.values, x=names, y=names,
-                colorscale=[[0, COLORS["negative"]], [0.5, COLORS["card_bg"]], [1, COLORS["positive"]]],
-                zmin=-1, zmax=1, text=z_text, texttemplate="%{text}",
-                textfont=dict(size=13, color=COLORS["text"]), showscale=True,
-                colorbar=dict(tickfont=dict(color=COLORS["neutral"])),
-            ))
-            apply_theme(fig_corr, height=300)
-            fig_corr.update_layout(xaxis=dict(showgrid=False), yaxis=dict(showgrid=False, autorange="reversed"))
-            st.plotly_chart(fig_corr, use_container_width=True)
+            if len(names) < 2:
+                st.info("Run backtests for at least 2 strategies to see the correlation matrix.")
+            else:
+                st.markdown("### Strategy Correlation Matrix")
+                z_text = [["" if _is_missing(v) else f"{v:.2f}" for v in row]
+                          for row in corr.values]
+                fig_corr = go.Figure(go.Heatmap(
+                    z=corr.values, x=names, y=names,
+                    colorscale=[[0, COLORS["negative"]], [0.5, COLORS["card_bg"]], [1, COLORS["positive"]]],
+                    zmin=-1, zmax=1, text=z_text, texttemplate="%{text}",
+                    textfont=dict(size=13, color=COLORS["text"]), showscale=True,
+                    colorbar=dict(tickfont=dict(color=COLORS["neutral"])),
+                ))
+                apply_theme(fig_corr, height=300)
+                fig_corr.update_layout(xaxis=dict(showgrid=False), yaxis=dict(showgrid=False, autorange="reversed"))
+                st.plotly_chart(fig_corr, use_container_width=True)
 
-            ann_ret = ret_matrix.mean() * 252
-            ann_vol = ret_matrix.std() * np.sqrt(252)
+            # Only show stats for strategies with valid return data
+            valid_ret = ret_matrix.dropna(axis=1, how="all")
+            ann_ret = valid_ret.mean() * 252
+            ann_vol = valid_ret.std() * np.sqrt(252)
             ann_sharpe = ann_ret / ann_vol.replace(0.0, np.nan)
-            st.markdown("### Individual Strategy Stats (annualised)")
-            stat_cols = st.columns(max(len(ret_matrix.columns), 1))
-            for i, col in enumerate(ret_matrix.columns):
-                name = slug_to_name.get(col, col)
-                with stat_cols[i]:
-                    st.markdown(f"""
+            if not valid_ret.empty:
+                st.markdown("### Individual Strategy Stats (annualised)")
+                stat_cols = st.columns(max(len(valid_ret.columns), 1))
+                for i, col in enumerate(valid_ret.columns):
+                    name = slug_to_name.get(col, col)
+                    _r = "—" if _is_missing(ann_ret.get(col)) else f"{ann_ret[col]*100:+.1f}%"
+                    _v = "—" if _is_missing(ann_vol.get(col)) else f"{ann_vol[col]*100:.1f}%"
+                    _s = "—" if _is_missing(ann_sharpe.get(col)) else f"{ann_sharpe[col]:.2f}"
+                    with stat_cols[i]:
+                        st.markdown(f"""
 <div style="background:{COLORS['card_bg']};border:1px solid {COLORS['border']};
      border-left:3px solid {_color(i)};border-radius:8px;padding:12px 14px;">
   <div style="font-size:0.7rem;color:{COLORS['text_muted']};text-transform:uppercase;">{name}</div>
   <div style="font-size:0.84rem;font-weight:700;color:{COLORS['text']};margin-top:6px;">
-    Ret {ann_ret[col]*100:+.1f}% · Vol {ann_vol[col]*100:.1f}% · Sharpe {"—" if np.isnan(ann_sharpe[col]) else f"{ann_sharpe[col]:.2f}"}
+    Ret {_r} · Vol {_v} · Sharpe {_s}
   </div>
 </div>""", unsafe_allow_html=True)
 
