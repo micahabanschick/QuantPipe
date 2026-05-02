@@ -134,6 +134,16 @@ def run_pipeline(skip_ingest: bool = False, as_of: date | None = None) -> int:
     else:
         log.info("--- Step: pull_fred SKIPPED (no FRED_API_KEY) ---")
 
+    # Step 4 — pull earnings surprise data (best-effort, never aborts pipeline)
+    from config.settings import ALPHA_VANTAGE_API_KEY
+    if ALPHA_VANTAGE_API_KEY:
+        from orchestration.pull_earnings import main as pull_earnings_main
+        code, _ = _run_step("pull_earnings", pull_earnings_main)
+        if code != 0:
+            log.warning("Earnings pull had errors — check logs (pipeline continues)")
+    else:
+        log.info("--- Step: pull_earnings SKIPPED (no ALPHA_VANTAGE_API_KEY) ---")
+
     # Summary
     total_elapsed = time.monotonic() - t_start
     log.info(f"======== Pipeline complete in {total_elapsed:.1f}s | "
