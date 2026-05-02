@@ -38,7 +38,7 @@ Data flows in one direction through clearly separated layers. No module reaches 
     │  CCXT (crypto)
     │  FRED API (800k+ macro series)
     │  World Bank Open Data (16k+ macro indicators, no key)
-    │  BLS (labour market + inflation, no key)
+    │  BLS (labour market + inflation, optional free key)
     │  Alpha Vantage (fundamentals: EPS, P/E, revenue, earnings)
     │  IBKR (live/paper via IB Gateway)
     ▼
@@ -201,7 +201,7 @@ Alt-data exploration hub with 5 live connectors and a tradability pipeline:
 |---|---|---|
 | FRED | Free key | 800k+ macro series (unemployment, CPI, yields, VIX…) |
 | World Bank | None | GDP, inflation, labour, trade for 200+ countries |
-| BLS | Optional free key | Payrolls, unemployment, CPI, PPI, JOLTS, productivity |
+| BLS | Optional free key (works without) | Payrolls, unemployment, CPI, PPI, JOLTS, productivity |
 | Commodities | None | 40+ futures (crude, gold, corn…) + ETFs (GLD, USO…) |
 | Alpha Vantage | Free key | EPS, P/E, revenue, earnings history per ticker |
 
@@ -291,7 +291,7 @@ The only tab where trades can be configured and executed:
 Central settings loaded from environment variables via `.env`. All paths, API keys, IBKR connection parameters, and alert tokens live here. Import with `from config.settings import ...`.
 
 ### `data_adapters`
-Six live connectors, each returning a validated Polars DataFrame:
+Seven live connectors (six standalone adapters + one commodity wrapper around yfinance), each returning a validated Polars DataFrame:
 
 | Adapter | Key | Data |
 |---|---|---|
@@ -422,7 +422,7 @@ uv sync --all-extras
 | `B2_APPLICATION_KEY` | Backblaze B2 application key secret | — |
 | `B2_BUCKET` | Backblaze B2 bucket name | — |
 | `ALPHA_VANTAGE_API_KEY` | Alpha Vantage fundamentals key (free at alphavantage.co) | — |
-| `BLS_API_KEY` | BLS registration key (optional; free at bls.gov — raises limit 25→500 req/day) | — |
+| `BLS_API_KEY` | BLS registration key — optional free key at bls.gov; works without one (25 req/day), key raises limit to 500 | — |
 | `VAULT_ADDR` | HashiCorp Vault address (server only) | — |
 | `VAULT_TOKEN` | HashiCorp Vault app token (server only) | — |
 
