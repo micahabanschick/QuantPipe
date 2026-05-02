@@ -215,7 +215,11 @@ def _load_saved_blends() -> list[dict]:
         if not line:
             continue
         try:
-            blends.append(json.loads(line))
+            entry = json.loads(line)
+            if not isinstance(entry.get("name"), str) or not isinstance(entry.get("weights"), dict):
+                logging.getLogger(__name__).debug("Skipping blend entry missing required fields: %s", line)
+                continue
+            blends.append(entry)
         except (json.JSONDecodeError, KeyError, ValueError) as exc:
             logging.getLogger(__name__).debug("Skipping malformed blend line: %s (%s)", line, exc)
     return list(reversed(blends))  # newest first
@@ -257,13 +261,14 @@ def _compute_blend_equity(blend_weights: tuple, lookback_years: int) -> pd.DataF
         w = w / w.sum() if w.sum() > 1e-10 else w
         blended = 10_000.0 * (1 + ret_matrix.mul(w, axis=1).sum(axis=1)).cumprod()
 
-        cutoff = pd.Timestamp(date.today().replace(year=date.today().year - lookback_years))
+        cutoff = pd.Timestamp.today() - pd.DateOffset(years=lookback_years)
         blended = blended[blended.index >= cutoff]
         if blended.empty:
             return None
 
         return pd.DataFrame({"date": blended.index, "portfolio_value": blended.values})
     except Exception:
+        logging.getLogger(__name__).exception("_compute_blend_equity failed for weights=%s", blend_weights)
         return None
 
 

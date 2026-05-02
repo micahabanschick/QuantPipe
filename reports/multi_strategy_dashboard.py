@@ -92,15 +92,22 @@ def _load_saved_blends() -> list[dict]:
 
 
 def _save_blend(name: str, weights: dict[str, float]) -> None:
-    """Append a named blend to saved_blends.jsonl."""
+    """Append a named blend to saved_blends.jsonl.
+
+    Raises:
+        ValueError: if all weights are zero/near-zero after filtering.
+    """
     import json
     from datetime import datetime, timezone
+    filtered = {k: round(v, 6) for k, v in weights.items() if v > 1e-6}
+    if not filtered:
+        raise ValueError("Cannot save a blend with all-zero weights.")
     SAVED_BLENDS.parent.mkdir(parents=True, exist_ok=True)
     entry = {
         "id":         datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
         "name":       name.strip(),
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "weights":    {k: round(v, 6) for k, v in weights.items() if v > 1e-6},
+        "weights":    filtered,
     }
     with SAVED_BLENDS.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
@@ -520,8 +527,11 @@ with tab_optimizer:
                     if not _blend_name.strip():
                         st.warning("Enter a name before saving.")
                     else:
-                        _save_blend(_blend_name, allocs)
-                        st.success(f"Saved **{_blend_name}** — select it in the Performance tab.")
+                        try:
+                            _save_blend(_blend_name, allocs)
+                            st.success(f"Saved **{_blend_name}** — select it in the Performance tab.")
+                        except ValueError as _ve:
+                            st.warning(str(_ve))
 
             st.markdown("### Efficient Frontier")
             _n_sims = 2000
