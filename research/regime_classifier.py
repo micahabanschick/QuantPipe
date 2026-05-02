@@ -59,16 +59,22 @@ class MacroRegime(str, Enum):
 REGIME_LABELS: dict[MacroRegime, str] = {
     MacroRegime.EXPANSION:          "Expansion — Growth ↑, Inflation stable",
     MacroRegime.INFLATIONARY_BOOM:  "Inflationary Boom — Growth ↑, Inflation ↑",
-    MacroRegime.STAGFLATION:        "Stagflation — Growth ↓, Inflation ↑",
-    MacroRegime.CONTRACTION:        "Contraction — Yield curve inverted, Growth ↓",
+    MacroRegime.STAGFLATION:        "Stagflation — Growth ↓, Inflation ↑ (SH overlay)",
+    MacroRegime.CONTRACTION:        "Contraction — Yield curve inverted, Growth ↓ (SH hedge)",
     MacroRegime.RECOVERY:           "Recovery — Growth recovering, Inflation cooling",
 }
 
+# Sector rotation per regime.
+# CONTRACTION: SH (inverse SPY) replaces XLU — direct market hedge alongside
+#   defensives (XLP, XLV) and long bonds (TLT).  25% allocation each.
+# STAGFLATION: SH replaces XLU — utilities underperform when rates are high;
+#   SH covers the declining-growth component alongside energy and staples.
+# All other regimes: long-only sector ETFs, no inverse exposure.
 REGIME_SECTORS: dict[MacroRegime, list[str]] = {
     MacroRegime.EXPANSION:          ["XLK",  "XLY",  "XLF",  "XLI"],
     MacroRegime.INFLATIONARY_BOOM:  ["XLE",  "XLB",  "XLI",  "XLF"],
-    MacroRegime.STAGFLATION:        ["XLE",  "XLP",  "XLU",  "XLV"],
-    MacroRegime.CONTRACTION:        ["XLP",  "XLU",  "XLV",  "TLT"],
+    MacroRegime.STAGFLATION:        ["XLE",  "XLP",  "SH",   "XLV"],
+    MacroRegime.CONTRACTION:        ["SH",   "XLP",  "XLV",  "TLT"],
     MacroRegime.RECOVERY:           ["XLY",  "XLK",  "XLF",  "XLV"],
 }
 
