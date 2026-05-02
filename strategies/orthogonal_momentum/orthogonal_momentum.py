@@ -28,7 +28,6 @@ No new data required — uses the same features as the existing momentum strateg
 
 import polars as pl
 
-from signals.momentum import momentum_weights
 from signals.orthogonal import orthogonal_cross_sectional_momentum
 
 NAME        = "Orthogonal Momentum"
@@ -79,15 +78,24 @@ def get_weights(
     weight_scheme: str = DEFAULT_PARAMS["weight_scheme"],
     **kwargs,
 ) -> pl.DataFrame:
-    """Convert orthogonal momentum signal to weights.
+    """Equal-weight the selected symbols from the orthogonal momentum signal.
 
-    Reuses the standard momentum_weights function — compatible because the
-    signal DataFrame follows the same schema (has 'selected' and 'rebalance_date').
+    Only 'equal' weighting is implemented; other schemes raise ValueError.
     """
-    # momentum_weights expects a 'momentum_12m_1m' column for vol_scaled;
-    # alias ortho column so it works with weight_scheme='equal'
-    ortho_col = "momentum_12m_1m_ortho"
-    if ortho_col in signal.columns and "momentum_12m_1m" not in signal.columns:
-        signal = signal.rename({ortho_col: "momentum_12m_1m"})
+    if weight_scheme != "equal":
+        raise ValueError(
+            f"Unsupported weight_scheme={weight_scheme!r}; "
+            "only 'equal' is implemented for Orthogonal Momentum."
+        )
 
-    return momentum_weights(signal, weight_scheme=weight_scheme)
+    selected = signal.filter(pl.col("selected"))
+    if selected.is_empty():
+        return pl.DataFrame(schema={"rebalance_date": pl.Date, "symbol": pl.Utf8, "weight": pl.Float64})
+
+    counts = selected.group_by("rebalance_date").agg(pl.len().alias("n"))
+    return (
+        selected.join(counts, on="rebalance_date")
+        .with_columns((1.0 / pl.col("n")).alias("weight"))
+        .select(["rebalance_date", "symbol", "weight"])
+        .sort(["rebalance_date", "symbol"])
+    )

@@ -75,11 +75,11 @@ def orthogonalize_signal(
     result_frames: list[pl.DataFrame] = []
 
     for (symbol,), grp in features.group_by("symbol"):
-        # Join symbol series against market series on date
+        # Left join so we retain all symbol dates; rows without SPY data get null _mkt
         aligned = (
             grp.select(["date", "symbol"] + [c for c in features.columns
                                               if c not in ("date", "symbol")])
-               .join(mkt_df, on="date", how="inner")
+               .join(mkt_df, on="date", how="left")
         )
 
         y = aligned[signal_col].to_numpy().astype(float)
@@ -88,12 +88,13 @@ def orthogonalize_signal(
         valid = np.isfinite(y) & np.isfinite(x)
 
         if symbol == market_symbol or valid.sum() < min_obs:
-            # Market explains itself perfectly; or insufficient history
+            # Market explains itself perfectly; or insufficient history → raw signal
             residuals = np.where(symbol == market_symbol, 0.0, y)
         else:
             slope, intercept = np.polyfit(x[valid], y[valid], 1)
-            predicted = slope * x + intercept
-            residuals  = y - predicted
+            # Initialize to NaN; compute residuals only where both inputs are finite
+            residuals = np.full_like(y, np.nan, dtype=float)
+            residuals[valid] = y[valid] - (slope * x[valid] + intercept)
 
         result_frames.append(
             aligned.drop("_mkt").with_columns(
@@ -147,9 +148,11 @@ def orthogonal_cross_sectional_momentum(
         latest = snap["date"].max()
         day_df = snap.filter(pl.col("date") == latest)
 
-        valid = day_df.filter(pl.col(ortho_col).is_not_null())
-        # Exclude the market benchmark itself from selection
-        valid = valid.filter(pl.col("symbol") != market_symbol)
+        # Filter both Polars nulls and NumPy NaN floats, then exclude market benchmark
+        valid = day_df.filter(
+            pl.col(ortho_col).is_not_null() & pl.col(ortho_col).is_finite() &
+            (pl.col("symbol") != market_symbol)
+        )
 
         if len(valid) < min_universe_size:
             continue
