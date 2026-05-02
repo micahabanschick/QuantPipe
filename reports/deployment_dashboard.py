@@ -107,6 +107,41 @@ with tab_deploy:
         "`orchestration/generate_signals.py` run."
     )
 
+    # ── Health warnings for active flagged strategies ─────────────────────
+    import contextlib
+    import polars as pl
+    _health_path = DATA_DIR / "gold" / "equity" / "strategy_health.parquet"
+    _health: dict[str, dict] = {}
+    with contextlib.suppress(Exception):
+        if _health_path.exists():
+            _health = {r["slug"]: r for r in pl.read_parquet(_health_path).iter_rows(named=True)}
+
+    if _health and config:
+        _active_flags = [
+            s for s in config.strategies
+            if s.active and s.allocation_weight > 1e-6
+            and _health.get(s.slug, {}).get("status") == "FLAG"
+        ]
+        _active_watch = [
+            s for s in config.strategies
+            if s.active and s.allocation_weight > 1e-6
+            and _health.get(s.slug, {}).get("status") == "WATCH"
+        ]
+        if _active_flags:
+            _flag_names = ", ".join(f"**{s.name}**" for s in _active_flags)
+            st.error(
+                f"⚠️ Flagged strategies are currently active: {_flag_names}. "
+                "Review health scores in the Blends tab before the next rebalance.",
+                icon="🔴",
+            )
+        if _active_watch:
+            _watch_names = ", ".join(f"**{s.name}**" for s in _active_watch)
+            st.warning(
+                f"Strategy health WATCH: {_watch_names}. "
+                "Monitor performance — may have limited live data or minor concerns.",
+                icon="🟡",
+            )
+
     if not metas:
         st.warning("No strategies found in the `strategies/` directory.")
     else:
