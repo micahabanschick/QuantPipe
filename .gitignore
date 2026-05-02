@@ -70,3 +70,6 @@ credentials*.json
 
 # Pipeline runtime files (generated, not source)
 .pipeline_heartbeat.json
+
+# Local planning and backlog documents
+FEATURE_BACKLOG.md
