@@ -19,7 +19,7 @@ Usage (standalone):
     uv run python orchestration/pull_macro.py
 
 Pipeline integration:
-    Called by run_pipeline.py as Step 5 when FRED_API_KEY is set.
+    Called by run_pipeline.py as Step 4 when FRED_API_KEY is set.
     Best-effort — failures do not abort the pipeline.
 """
 

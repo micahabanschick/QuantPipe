@@ -177,8 +177,8 @@ def classify_regime(
     if unrate_df is not None:
         arr = _series_as_of(unrate_df, as_of)
         if len(arr) >= 4:
-            chg    = np.diff(arr[-zscore_window:])
-            labor_z = -_rolling_zscore(arr, zscore_window)   # invert: falling = positive
+            # Z-score of the unemployment level, inverted: below-average unemployment = positive
+            labor_z = -_rolling_zscore(arr, zscore_window)
 
     # ── Classification rules ───────────────────────────────────────────────────
     # Priority 1: inverted yield curve or severe labor deterioration → CONTRACTION

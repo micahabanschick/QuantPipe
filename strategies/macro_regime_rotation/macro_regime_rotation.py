@@ -16,7 +16,7 @@ Regime → Sector mapping (standard macro factor rotation framework):
 
 Data dependency:
   Requires data/alt/macro/{series}.parquet files populated by
-  orchestration/pull_macro.py (runs as Step 5 in run_pipeline.py).
+  orchestration/pull_macro.py (runs as Step 4 in run_pipeline.py).
   Pass pre-loaded data via macro_data kwarg to keep get_signal pure.
 
 Signal: constant within each regime period — all selected sectors receive
@@ -84,14 +84,13 @@ def get_signal(
         "regime": pl.Utf8, "regime_label": pl.Utf8,
     })
 
-    macro = macro_data if macro_data is not None else load_macro_data()
-
-    if not macro:
+    if macro_data is None:
         log.warning(
-            "macro_regime_rotation: no macro data found. "
-            "Run: uv run python orchestration/pull_macro.py"
+            "macro_regime_rotation: macro_data not provided — pass the result of "
+            "load_macro_data() from research.regime_classifier. Returning empty signal."
         )
         return _EMPTY
+    macro = macro_data
 
     classify_kwargs = dict(
         zscore_window=zscore_window,
@@ -106,13 +105,10 @@ def get_signal(
         regime = classify_regime(macro, as_of, **classify_kwargs)
         sectors = REGIME_SECTORS[regime][:top_n]
 
-        for symbol in sectors:
-            rows.append({
-                "date":         as_of,
-                "symbol":       symbol,
-                "regime":       regime.value,
-                "regime_label": REGIME_LABELS[regime],
-            })
+        rows.extend(
+            {"date": as_of, "symbol": s, "regime": regime.value, "regime_label": REGIME_LABELS[regime]}
+            for s in sectors
+        )
 
     if not rows:
         return _EMPTY
@@ -125,7 +121,12 @@ def get_weights(
     weight_scheme: str = DEFAULT_PARAMS["weight_scheme"],
     **kwargs,
 ) -> pl.DataFrame:
-    """Equal-weight the sectors selected for each rebalance date."""
+    """Equal-weight the sectors selected for each rebalance date.
+
+    Only 'equal' weighting is currently implemented; other schemes raise ValueError.
+    """
+    if weight_scheme != "equal":
+        raise ValueError(f"Unsupported weight_scheme={weight_scheme!r}; only 'equal' is implemented.")
     _EMPTY = pl.DataFrame(schema={"date": pl.Date, "symbol": pl.Utf8, "weight": pl.Float64})
 
     if signal.is_empty():
@@ -137,8 +138,8 @@ def get_weights(
         if n == 0:
             continue
         w = 1.0 / n
-        for row in group.iter_rows(named=True):
-            rows.append({"date": row["date"], "symbol": row["symbol"], "weight": w})
+        rows.extend({"date": r["date"], "symbol": r["symbol"], "weight": w}
+                     for r in group.iter_rows(named=True))
 
     if not rows:
         return _EMPTY
