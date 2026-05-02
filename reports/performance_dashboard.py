@@ -33,7 +33,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 PORTFOLIO_LOG  = DATA_DIR / "gold" / "equity" / "portfolio_log.parquet"
 TARGET_WEIGHTS = DATA_DIR / "gold" / "equity" / "target_weights.parquet"
-DEPLOY_HISTORY = DATA_DIR / "gold" / "equity" / "deployment_history.jsonl"
+SAVED_BLENDS   = DATA_DIR / "gold" / "equity" / "saved_blends.jsonl"
 
 
 # ── Analytics helpers ─────────────────────────────────────────────────────────
@@ -203,51 +203,68 @@ def _load_benchmark(sym: str, start_str: str, end_str: str) -> pd.Series | None:
         return None
 
 
-@st.cache_data(ttl=300)
-def _load_deploy_history() -> list[dict]:
-    """Parse deployment_history.jsonl → list of versions with active date ranges.
-
-    Each entry has: version, label, start_date (date), end_date (date), strategies.
-    Sorted newest → oldest for display.
-    """
+@st.cache_data(ttl=60)
+def _load_saved_blends() -> list[dict]:
+    """Return saved blends newest-first. Each entry: {id, name, created_at, weights}."""
     import json
-    if not DEPLOY_HISTORY.exists():
+    if not SAVED_BLENDS.exists():
         return []
-    events = []
-    for line in DEPLOY_HISTORY.read_text(encoding="utf-8").splitlines():
+    blends = []
+    for line in SAVED_BLENDS.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            e = json.loads(line)
-            ts = pd.Timestamp(e["timestamp"]).tz_convert(None)
-            strats = [s for s in e.get("strategies", []) if s.get("allocation_weight", 0) > 1e-6]
-            if strats:
-                top = max(strats, key=lambda s: s.get("allocation_weight", 0))
-                top_pct = int(round(top["allocation_weight"] * 100))
-                others = len(strats) - 1
-                suffix = f" + {others} other{'s' if others != 1 else ''}" if others else ""
-                label = f"v{e['version']}: {top['slug']} ({top_pct}%){suffix}"
-            else:
-                label = f"v{e['version']}"
-            events.append({"version": e["version"], "label": label,
-                           "ts": ts, "strategies": strats})
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-            logging.getLogger(__name__).debug(
-                "Skipping malformed deployment history line: %s (%s)", line, exc
-            )
+            blends.append(json.loads(line))
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            logging.getLogger(__name__).debug("Skipping malformed blend line: %s (%s)", line, exc)
+    return list(reversed(blends))  # newest first
 
-    # Sort by timestamp (not version) so date ranges reflect actual chronology
-    events.sort(key=lambda x: x["ts"])
-    for i, e in enumerate(events):
-        e["start_date"] = e["ts"].date()
-        if i + 1 < len(events):
-            # Half-open interval: end the day before the next version starts
-            # prevents transition-day double-counting across successive versions
-            e["end_date"] = events[i + 1]["ts"].date() - timedelta(days=1)
-        else:
-            e["end_date"] = date.today()
-    return list(reversed(events))   # newest first for the selectbox
+
+@st.cache_data(ttl=1800)
+def _compute_blend_equity(blend_weights: tuple, lookback_years: int) -> pd.DataFrame | None:
+    """Run backtests for each strategy in a blend and return the weighted equity curve.
+
+    Args:
+        blend_weights: tuple of (slug, weight) pairs — hashable for caching.
+        lookback_years: used only to clip the equity curve start date.
+
+    Returns:
+        DataFrame with columns [date, portfolio_value] or None on failure.
+    """
+    try:
+        from portfolio.multi_strategy import discover_strategies, get_or_run_backtest
+
+        weights = dict(blend_weights)
+        metas   = {m.slug: m for m in discover_strategies()}
+        results = {}
+        for slug in weights:
+            m = metas.get(slug)
+            if m is None:
+                continue
+            r = get_or_run_backtest(m)
+            results[slug] = r
+
+        if not results:
+            return None
+
+        from portfolio.multi_strategy import build_return_matrix
+        ret_matrix = build_return_matrix(list(results.values()))
+        if ret_matrix.empty:
+            return None
+
+        w = pd.Series({slug: weights.get(slug, 0.0) for slug in ret_matrix.columns})
+        w = w / w.sum() if w.sum() > 1e-10 else w
+        blended = 10_000.0 * (1 + ret_matrix.mul(w, axis=1).sum(axis=1)).cumprod()
+
+        cutoff = pd.Timestamp(date.today().replace(year=date.today().year - lookback_years))
+        blended = blended[blended.index >= cutoff]
+        if blended.empty:
+            return None
+
+        return pd.DataFrame({"date": blended.index, "portfolio_value": blended.values})
+    except Exception:
+        return None
 
 
 _FACTOR_PROXY_SYMBOLS = ("SPY", "IWM", "IWB", "IWD", "IWF", "IWS", "IWP")
@@ -303,45 +320,49 @@ def _load_contribution_data(
         return None
 
 
-# ── Deployment version selector ───────────────────────────────────────────────
+# ── Saved blend selector ──────────────────────────────────────────────────────
 
-_deploy_events = _load_deploy_history()
+_saved_blends  = _load_saved_blends()
+_canonical_lbl = "Canonical momentum (default backtest)"
 
-if _deploy_events:
-    _deploy_options = {e["label"]: e for e in _deploy_events}
-    _all_label = "All history (no version filter)"
-    _deploy_options = {_all_label: None} | _deploy_options
-    _selected_label = st.selectbox(
-        "Deployment version",
-        options=list(_deploy_options.keys()),
-        index=1,          # default to the most recent deploy version
-        key="perf_deploy_version",
-        help="Filter portfolio weights and risk metrics to the period when this deployment was active.",
+if _saved_blends:
+    _blend_options = {b["name"]: b for b in _saved_blends}
+    _blend_options = {_canonical_lbl: None} | _blend_options
+    _selected_blend_name = st.selectbox(
+        "Blend to analyze",
+        options=list(_blend_options.keys()),
+        index=0,
+        key="perf_blend_sel",
+        help="Select a blend saved from the Blends tab, or use the default single-strategy backtest.",
     )
-    _selected_deploy = _deploy_options[_selected_label]
+    _selected_blend = _blend_options[_selected_blend_name]
 else:
-    _selected_label = "No deployment history found"
-    _selected_deploy = None
+    _selected_blend_name = _canonical_lbl
+    _selected_blend = None
 
-# ── Deployment label banner ────────────────────────────────────────────────────
+# ── Blend label banner ─────────────────────────────────────────────────────────
 
-if _selected_deploy:
-    _start_str = _selected_deploy["start_date"].strftime("%b %d, %Y")
-    _end_str   = ("present" if _selected_deploy["end_date"] >= date.today()
-                  else _selected_deploy["end_date"].strftime("%b %d, %Y"))
+if _selected_blend:
+    _created = _selected_blend.get("created_at", "")[:10]
+    _w_summary = ", ".join(
+        f"{s} ({w*100:.0f}%)"
+        for s, w in sorted(_selected_blend["weights"].items(),
+                            key=lambda x: x[1], reverse=True)
+    )
     st.markdown(
         f'<div style="background:rgba(201,162,39,0.10);border:1px solid rgba(201,162,39,0.30);'
         f'border-radius:6px;padding:8px 14px;font-size:0.82rem;margin-bottom:8px;">'
-        f'<span style="color:#C9A227;font-weight:700;">📊 Analyzing: {_selected_deploy["label"]}</span>'
-        f'<span style="color:#A8B3CC;"> · Active {_start_str} → {_end_str}</span>'
+        f'<span style="color:#C9A227;font-weight:700;">📊 Blend: {_selected_blend["name"]}</span>'
+        f'<span style="color:#A8B3CC;"> · Saved {_created} · {_w_summary}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
-elif _deploy_events:
+else:
     st.markdown(
         '<div style="background:rgba(74,144,217,0.10);border:1px solid rgba(74,144,217,0.30);'
         'border-radius:6px;padding:8px 14px;font-size:0.82rem;margin-bottom:8px;">'
-        '<span style="color:#4A90D9;font-weight:700;">📊 Analyzing: full history across all deployment versions</span>'
+        '<span style="color:#4A90D9;font-weight:700;">📊 Analyzing: canonical momentum strategy (no saved blend selected)</span>'
+        '<span style="color:#A8B3CC;"> · Save a blend from the Blends tab to analyze custom allocations here.</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -392,30 +413,25 @@ st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
 # ── Load & pre-process data ───────────────────────────────────────────────────
 
-portfolio_log    = _load_portfolio_log()
+portfolio_log     = _load_portfolio_log()
 target_weights_df = _load_target_weights()
 
-# Apply deployment version date filter
-if _selected_deploy is not None:
-    _d_start = pl.lit(_selected_deploy["start_date"])
-    _d_end   = pl.lit(_selected_deploy["end_date"])
-    if target_weights_df is not None and not target_weights_df.is_empty():
-        target_weights_df = target_weights_df.filter(
-            (pl.col("date") >= _d_start) & (pl.col("date") <= _d_end)
-        )
-    if portfolio_log is not None and not portfolio_log.is_empty():
-        portfolio_log = portfolio_log.filter(
-            (pl.col("date") >= _d_start) & (pl.col("date") <= _d_end)
-        )
+equity_df       = None
+backtest_trades = pd.DataFrame()
 
-with st.spinner("Running backtest…"):
-    _bt_result = _load_equity_curve(lookback_years)
-
-equity_df        = None
-backtest_trades  = pd.DataFrame()
-
-if _bt_result is not None:
-    equity_df, backtest_trades = _bt_result
+if _selected_blend is not None:
+    with st.spinner(f"Computing blend equity for **{_selected_blend['name']}**…"):
+        _blend_wts = tuple(sorted(_selected_blend["weights"].items()))
+        _blend_df  = _compute_blend_equity(_blend_wts, lookback_years)
+    if _blend_df is not None:
+        equity_df = pl.from_pandas(_blend_df).with_columns(pl.col("date").cast(pl.Date))
+    else:
+        st.warning("Could not compute blend equity — run backtests in the Blends tab first.")
+else:
+    with st.spinner("Running backtest…"):
+        _bt_result = _load_equity_curve(lookback_years)
+    if _bt_result is not None:
+        equity_df, backtest_trades = _bt_result
 
 eq_pd        = None
 stats        = None

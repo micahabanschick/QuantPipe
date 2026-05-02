@@ -1,11 +1,12 @@
-"""Blends — compare and optimise strategy blends. Read-only; use Deployment to save configs.
+"""Blends — compare all strategies, optimise blends, and save configs for Performance analysis.
 
 Tabs:
-  1. Overview    — active strategies, blended equity curve, allocation pie
+  1. Overview    — all strategies, equal-weight blended equity curve
   2. Comparison  — metrics table, overlaid curves, drawdown, rolling Sharpe, monthly returns
-  3. Optimizer   — correlation heatmap, allocation optimizer, efficient frontier
+  3. Optimizer   — correlation heatmap, allocation optimizer, save blend for Performance tab
 """
 
+import contextlib
 import logging
 import sys
 import time
@@ -68,18 +69,41 @@ def _get_discover_fn():
     return discover_strategies
 
 
-@st.cache_resource(show_spinner=False)
-def _get_config_fn():
-    from portfolio.multi_strategy import read_deployment_config
-    return read_deployment_config
+SAVED_BLENDS = _ROOT / "data" / "gold" / "equity" / "saved_blends.jsonl"
 
 
 def _discover():
     return _get_discover_fn()()
 
 
-def _load_config():
-    return _get_config_fn()()
+def _load_saved_blends() -> list[dict]:
+    """Return saved blends newest-first. Each entry: {id, name, created_at, weights}."""
+    import json
+    if not SAVED_BLENDS.exists():
+        return []
+    blends = []
+    for line in SAVED_BLENDS.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        with contextlib.suppress(json.JSONDecodeError):
+            blends.append(json.loads(line))
+    return list(reversed(blends))  # newest first
+
+
+def _save_blend(name: str, weights: dict[str, float]) -> None:
+    """Append a named blend to saved_blends.jsonl."""
+    import json
+    from datetime import datetime, timezone
+    SAVED_BLENDS.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "id":         datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
+        "name":       name.strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "weights":    {k: round(v, 6) for k, v in weights.items() if v > 1e-6},
+    }
+    with SAVED_BLENDS.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 def _run_backtests(metas, force=False):
@@ -127,12 +151,11 @@ def _metric_table(results: dict) -> pd.DataFrame:
 
 st.markdown(CSS, unsafe_allow_html=True)
 st.markdown(
-    page_header("Blends", "Compare strategy blends and optimise allocations. Deploy changes in the Deployment tab."),
+    page_header("Blends", "Compare all strategies, optimise a blend, and save it for analysis in Performance."),
     unsafe_allow_html=True,
 )
 
-metas  = _discover()
-config = _load_config()
+metas = _discover()
 
 if "backtest_results" not in st.session_state:
     st.session_state["backtest_results"] = {}
@@ -173,41 +196,21 @@ with tab_overview:
     if not results:
         st.info("No backtest results yet — click **Run Backtests** above.")
     else:
-        active_slugs = (
-            {s.slug for s in config.strategies if s.active}
-            if config else set(results.keys())
-        )
-        active_results = {k: v for k, v in results.items() if k in active_slugs}
+        # Equal-weight blend across all strategies
+        n = len(results)
+        alloc_norm = {slug: 1.0 / n for slug in results}
 
-        if not active_results:
-            st.warning("No active strategies — configure deployment in **Deployment**.")
-        else:
-            alloc: dict[str, float] = {}
-            if config:
-                for s in config.strategies:
-                    if s.active and s.slug in active_results:
-                        alloc[s.slug] = s.allocation_weight
-            if not alloc:
-                n = len(active_results)
-                alloc = {slug: 1.0 / n for slug in active_results}
-            total_alloc = sum(alloc.values()) or 1.0
-            alloc_norm  = {k: v / total_alloc for k, v in alloc.items()}
+        ret_matrix = build_return_matrix(list(results.values()))
+        blended_eq = pd.Series(dtype=float)
+        if not ret_matrix.empty:
+            w = np.array([alloc_norm.get(c, 0.0) for c in ret_matrix.columns])
+            if w.sum() > 1e-10:
+                w /= w.sum()
+            blended_eq = 10_000.0 * (1 + (ret_matrix * w).sum(axis=1)).cumprod()
 
-            ret_matrix = build_return_matrix(list(active_results.values()))
-            blended_eq = pd.Series(dtype=float)
-            if not ret_matrix.empty:
-                w = np.array([alloc_norm.get(c, 0.0) for c in ret_matrix.columns])
-                if w.sum() > 1e-10:
-                    w /= w.sum()
-                blended_eq = 10_000.0 * (1 + (ret_matrix * w).sum(axis=1)).cumprod()
-
-            active_allocated = [(slug, r) for slug, r in active_results.items()
-                                if alloc_norm.get(slug, 0.0) > 1e-6]
-            n_cards = len(active_allocated)
-            if n_cards == 0:
-                st.info("No strategies have a non-zero allocation. Set weights in the Deployment tab.")
-            card_cols = st.columns(max(n_cards, 1) + 1)
-            for i, (slug, r) in enumerate(active_allocated):
+        if n > 0:
+            card_cols = st.columns(n)
+            for i, (slug, r) in enumerate(results.items()):
                 alloc_pct = alloc_norm.get(slug, 0.0)
                 m = r.metrics
                 color = _color(i)
@@ -237,18 +240,7 @@ with tab_overview:
   </div>
 </div>""", unsafe_allow_html=True)
 
-            with card_cols[-1]:
-                labels = [active_results[s].name for s in alloc_norm if s in active_results]
-                values = [alloc_norm[s] for s in alloc_norm if s in active_results]
-                fig_pie = go.Figure(go.Pie(
-                    labels=labels, values=values,
-                    marker=dict(colors=[_color(i) for i in range(len(labels))],
-                                line=dict(color=COLORS["bg"], width=2)),
-                    textinfo="label+percent", textfont=dict(size=11, color=COLORS["text"]), hole=0.55,
-                ))
-                apply_theme(fig_pie, title="Allocation", height=220)
-                fig_pie.update_layout(showlegend=False, paper_bgcolor=COLORS["card_bg"])
-                st.plotly_chart(fig_pie, use_container_width=True)
+        st.caption("Equal-weight blend across all strategies. Use the Optimizer tab to find optimal weights, then save as a blend.")
 
             if not blended_eq.empty:
                 _bret_s = blended_eq.pct_change().dropna()
@@ -269,20 +261,20 @@ with tab_overview:
                 st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
                 fig = go.Figure()
-                for i, (slug, r) in enumerate(active_results.items()):
+                for i, (slug, r) in enumerate(results.items()):
                     eq = _normalise(_equity_series(r))
                     fig.add_trace(go.Scatter(x=eq.index, y=eq.values, name=r.name,
                                               line=dict(color=_color(i), width=1.5, dash="dot"), opacity=0.65))
                 fig.add_trace(go.Scatter(x=blended_eq.index, y=blended_eq.values,
-                                          name="Blended Portfolio",
+                                          name="Equal-Weight Blend",
                                           line=dict(color=COLORS["positive"], width=2.8)))
-                first = next(iter(active_results.values()))
+                first = next(iter(results.values()))
                 if first.benchmark_dates:
                     spy_idx = pd.to_datetime(first.benchmark_dates)
                     spy_vals = pd.Series(first.benchmark_values, index=spy_idx)
                     fig.add_trace(go.Scatter(x=spy_idx, y=spy_vals.values, name="SPY",
                                               line=dict(color=COLORS["neutral"], width=1.2, dash="dash"), opacity=0.7))
-                apply_theme(fig, title="Blended Portfolio vs Components ($10k start)", height=380)
+                apply_theme(fig, title="Equal-Weight Blend vs Individual Strategies ($10k start)", height=380)
                 fig.update_layout(yaxis=dict(tickprefix="$", tickformat=",.0f"))
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -290,10 +282,10 @@ with tab_overview:
             st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
             st.markdown(section_label("Cross-Strategy P&L Attribution"), unsafe_allow_html=True)
             st.caption("Cumulative return contribution from each strategy, weighted by allocation.")
-            if not blended_eq.empty and active_results:
+            if not blended_eq.empty and results:
                 _attr_fig = go.Figure()
                 _strat_contribs = {}
-                for _i, (_slug, _r) in enumerate(active_results.items()):
+                for _i, (_slug, _r) in enumerate(results.items()):
                     _eq_s = _equity_series(_r)
                     _daily_r = _eq_s.pct_change().dropna()
                     _w = alloc_norm.get(_slug, 0.0)
@@ -319,13 +311,12 @@ with tab_overview:
                 )
                 st.plotly_chart(_attr_fig, use_container_width=True)
 
-                # Summary table: period contribution per strategy
                 _attr_rows = []
                 for _name, _cs in _strat_contribs.items():
-                    _slug2 = next((s for s, r in active_results.items() if r.name == _name), "")
+                    _slug2 = next((s for s, r in results.items() if r.name == _name), "")
                     _attr_rows.append({
                         "Strategy":      _name,
-                        "Allocation":    f"{alloc_norm.get(_slug2, 0):.1%}",
+                        "Weight (equal)": f"{alloc_norm.get(_slug2, 0):.1%}",
                         "Total Contrib": f"{float(_cs.iloc[-1])*100:+.2f}%",
                         "Avg Daily":     f"{float(_cs.diff().mean())*100:+.4f}%",
                     })
@@ -344,24 +335,6 @@ with tab_compare:
         df = _metric_table(results)
         if not df.empty:
             st.dataframe(df, use_container_width=True)
-
-        _dp_col, _ = st.columns([2, 8])
-        with _dp_col:
-            if st.button("🚀 Deploy to Paper", type="primary", use_container_width=True,
-                         help="Run generate_signals then rebalance in paper trading mode"):
-                with st.spinner("Deploying to paper account…"):
-                    try:
-                        import subprocess
-                        _gs = subprocess.run(
-                            [sys.executable, str(_ROOT / "orchestration" / "generate_signals.py")],
-                            capture_output=True, text=True, cwd=str(_ROOT), timeout=120,
-                        )
-                        if _gs.returncode != 0:
-                            st.error(f"generate_signals failed:\n{_gs.stderr[-500:]}")
-                        else:
-                            st.success("Signals generated. Go to **Deployment → Trade** to execute.")
-                    except Exception as _de:
-                        st.error(f"Deploy failed: {_de}")
 
         st.markdown("### Equity Curves (normalised to $10,000)")
         fig_eq = go.Figure()
@@ -534,7 +507,21 @@ with tab_optimizer:
                 st.plotly_chart(fig_bar, use_container_width=True)
                 st.caption("Error bars show 5th–95th percentile from 200 bootstrap resamples.")
 
-                st.info("To deploy these allocations, copy the weights to **Deployment → Strategy Config**.", icon="ℹ️")
+                st.markdown("---")
+                st.markdown("#### Save as Blend")
+                st.caption("Save this allocation to analyze in the **Performance** tab.")
+                _blend_name = st.text_input(
+                    "Blend name",
+                    value=f"{lbl.replace('_', ' ').title()} Blend",
+                    key="blend_save_name",
+                    placeholder="e.g. High Sharpe Blend",
+                )
+                if st.button("💾 Save Blend", type="primary", key="save_blend_btn"):
+                    if not _blend_name.strip():
+                        st.warning("Enter a name before saving.")
+                    else:
+                        _save_blend(_blend_name, allocs)
+                        st.success(f"Saved **{_blend_name}** — select it in the Performance tab.")
 
             st.markdown("### Efficient Frontier")
             _n_sims = 2000
