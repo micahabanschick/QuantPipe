@@ -23,10 +23,14 @@ import plotly.graph_objects as go
 from scipy.stats import spearmanr
 import streamlit as st
 
-from config.settings import DATA_DIR, FRED_API_KEY, ALPHA_VANTAGE_API_KEY
+from config.settings import DATA_DIR, FRED_API_KEY, ALPHA_VANTAGE_API_KEY, BLS_API_KEY
 from data_adapters.fred_adapter import FREDAdapter, POPULAR_SERIES
 from data_adapters.worldbank_adapter import WorldBankAdapter, POPULAR_INDICATORS, MAJOR_ECONOMIES
 from data_adapters.alphavantage_adapter import AlphaVantageAdapter, MACRO_SERIES
+from data_adapters.bls_adapter import BLSAdapter, POPULAR_SERIES as BLS_POPULAR_SERIES
+from data_adapters.commodities_adapter import (
+    CommoditiesAdapter, FUTURES_SYMBOLS, COMMODITY_ETFS, COMMODITY_GROUPS,
+)
 from storage.parquet_store import load_bars
 from reports._theme import (
     CSS, COLORS, PLOTLY_CONFIG,
@@ -165,12 +169,44 @@ with tab_reg:
         "25 req/day free tier active" if _av_live else "Free tier: 25 req/day · Get a key at alphavantage.co",
     ), unsafe_allow_html=True)
 
+    # Commodities
+    _comm_sample = _sample_items([
+        ("GC=F",  FUTURES_SYMBOLS["GC=F"]),
+        ("CL=F",  FUTURES_SYMBOLS["CL=F"]),
+        ("NG=F",  FUTURES_SYMBOLS["NG=F"]),
+        ("ZC=F",  FUTURES_SYMBOLS["ZC=F"]),
+        ("GLD",   COMMODITY_ETFS["GLD"]),
+        ("USO",   COMMODITY_ETFS["USO"]),
+    ])
+    st.markdown(_connector_card(
+        "🛢️", "Commodities — Futures & ETFs",
+        "LIVE (no key needed)", COLORS["positive"],
+        f"{len(FUTURES_SYMBOLS)} futures contracts + {len(COMMODITY_ETFS)} commodity ETFs "
+        "via Yahoo Finance. Energy, metals, agriculture, livestock, FX. "
+        "Pull any via <b>Ingest &amp; Clean → Commodities</b>.",
+        _comm_sample,
+        f"Energy · Metals · Agriculture · Livestock · Financial · FX",
+    ), unsafe_allow_html=True)
+
+    # BLS
+    _bls_live = True   # no key needed for basic access
+    _bls_sample = _sample_items(list(BLS_POPULAR_SERIES.items())[:6])
+    st.markdown(_connector_card(
+        "📋", "BLS — Bureau of Labor Statistics",
+        "LIVE (no key needed)", COLORS["positive"],
+        f"{len(BLS_POPULAR_SERIES)} curated US labour market and inflation series. "
+        "Pull via <b>Ingest &amp; Clean → BLS</b>. "
+        "Free registration key raises daily limit from 25 → 500 requests.",
+        _bls_sample,
+        f"+ {len(BLS_POPULAR_SERIES)-6} more curated · Key: data.bls.gov/registrationEngine",
+    ), unsafe_allow_html=True)
+
     st.markdown(section_label("Planned Connectors"), unsafe_allow_html=True)
     st.caption("Validate each source in Tradability Check before building a full connector.")
     _planned = [
         ("Web Scrapers", "Job postings, Glassdoor reviews, regulatory filings.",
          ["Job openings per ticker", "Employee sentiment score"]),
-        ("Other API Connectors", "Quandl, BLS, and others.",
+        ("Other API Connectors", "Quandl and others.",
          ["Harvest cycle indices", "Credit card spend by sector"]),
         ("File Watchers", "Scheduled CSV/JSON drops from vendors.",
          ["Vendor data dumps", "Earnings call NLP scores"]),
@@ -262,6 +298,8 @@ with tab_ingest:
     _MODE_FRED   = "fred"
     _MODE_WB     = "worldbank"
     _MODE_AV     = "alphavantage"
+    _MODE_COMM   = "commodities"
+    _MODE_BLS    = "bls"
     _MODE_UPLOAD = "upload"
 
     _fred_ok = bool(FRED_API_KEY)
@@ -270,7 +308,9 @@ with tab_ingest:
     _mode_options: list[tuple[str, str]] = []   # (key, display label)
     if _fred_ok:
         _mode_options.append((_MODE_FRED, "FRED — Federal Reserve"))
-    _mode_options.append((_MODE_WB, "World Bank — Macro (no key needed)"))
+    _mode_options.append((_MODE_WB,   "World Bank — Macro"))
+    _mode_options.append((_MODE_BLS,  "BLS — Labour & Inflation"))
+    _mode_options.append((_MODE_COMM, "Commodities — Futures & ETFs"))
     if _av_ok:
         _mode_options.append((_MODE_AV, "Alpha Vantage — Fundamentals"))
     else:
@@ -287,6 +327,8 @@ with tab_ingest:
     )
     _is_fred  = _mode_key == _MODE_FRED  and _fred_ok
     _is_wb    = _mode_key == _MODE_WB
+    _is_bls   = _mode_key == _MODE_BLS
+    _is_comm  = _mode_key == _MODE_COMM
     _is_av    = _mode_key == _MODE_AV    and _av_ok
     st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
@@ -477,6 +519,172 @@ with tab_ingest:
                 st.info("Go to Tradability Check to analyse this signal.")
             elif _wb_df is not None:
                 st.warning("No data returned — check the indicator code and year range.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # BLS BRANCH
+    # ══════════════════════════════════════════════════════════════════════════
+    elif _is_bls:
+        _bls = BLSAdapter(BLS_API_KEY)
+        st.markdown(section_label("BLS — Labour Market & Inflation"), unsafe_allow_html=True)
+        if not BLS_API_KEY:
+            st.info(
+                "Running without a BLS registration key (25 req/day, 1 series per call). "
+                "Register free at **data.bls.gov/registrationEngine** for 500 req/day.",
+                icon="ℹ️",
+            )
+
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            _bls_pop = st.selectbox(
+                "Popular series",
+                ["— pick or enter custom below —"] + list(BLS_POPULAR_SERIES.keys()),
+                format_func=lambda k: k if k.startswith("—")
+                            else f"{k} — {BLS_POPULAR_SERIES.get(k, '')}",
+                key="bls_pop",
+            )
+        with bc2:
+            _bls_cust = st.text_input(
+                "Or enter any BLS series ID",
+                placeholder="e.g. CES3000000001",
+                key="bls_cust",
+            )
+
+        _bls_sid = _bls_cust.strip() or (None if _bls_pop.startswith("—") else _bls_pop)
+
+        byr1, byr2 = st.columns(2)
+        with byr1:
+            _bls_start = st.number_input("Start year", min_value=1948,
+                                          max_value=date.today().year, value=2000, key="bls_start")
+        with byr2:
+            _bls_end = st.number_input("End year", min_value=1948,
+                                        max_value=date.today().year,
+                                        value=date.today().year, key="bls_end")
+
+        _bls_sname = st.text_input(
+            "Save as",
+            value=f"bls_{(_bls_sid or 'series').lower()}",
+            key="bls_sname",
+        )
+
+        if _bls_sid is None:
+            st.info("Pick a series or enter a custom BLS series ID above.")
+        elif int(_bls_start) > int(_bls_end):
+            st.error("Start year must be ≤ End year.")
+        elif st.button("Pull from BLS", key="bls_pull", type="primary"):
+            with st.spinner(f"Fetching {_bls_sid}…"):
+                try:
+                    _bls_df = _bls.get_series(_bls_sid, int(_bls_start), int(_bls_end))
+                except Exception as _exc:
+                    st.error(f"BLS error: {_exc}")
+                    _bls_df = None
+            if _bls_df is not None and not _bls_df.is_empty():
+                _bls_pd = _bls_df.to_pandas()
+                _bls_title = BLS_POPULAR_SERIES.get(_bls_sid, _bls_sid)
+                st.success(f"Pulled {len(_bls_pd):,} rows for {_bls_sid}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Rows", f"{len(_bls_pd):,}")
+                m2.metric("From", str(_bls_pd["date"].min().year))
+                m3.metric("To",   str(_bls_pd["date"].max().year))
+                _fig_bls = go.Figure(go.Scatter(
+                    x=_bls_pd["date"], y=_bls_pd[_bls_sid], mode="lines",
+                    line=dict(color=COLORS["teal"], width=2), name=_bls_sid,
+                ))
+                apply_theme(_fig_bls, title=_bls_title, height=260)
+                st.plotly_chart(_fig_bls, use_container_width=True, config=PLOTLY_CONFIG)
+                st.dataframe(_bls_pd.head(10), use_container_width=True, hide_index=True)
+                _bls_df.write_parquet(ALT_DIR / f"{_bls_sname}.parquet")
+                _save_meta(_bls_sname, {
+                    "source": "BLS", "series_id": _bls_sid,
+                    "title": _bls_title,
+                    "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                    "rows": len(_bls_pd),
+                    "date_from": str(int(_bls_start)), "date_to": str(int(_bls_end)),
+                })
+                st.success(f"Saved to data/alt/{_bls_sname}.parquet")
+                st.info("Go to Tradability Check to analyse this signal.")
+            elif _bls_df is not None:
+                st.warning("No data returned — check the series ID and year range.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # COMMODITIES BRANCH
+    # ══════════════════════════════════════════════════════════════════════════
+    elif _is_comm:
+        _comm = CommoditiesAdapter()
+        st.markdown(section_label("Commodities — Futures & ETFs"), unsafe_allow_html=True)
+
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            _comm_group = st.selectbox(
+                "Category",
+                ["All"] + list(COMMODITY_GROUPS.keys()) + ["ETFs"],
+                key="comm_group",
+            )
+        with cc2:
+            if _comm_group == "All":
+                _comm_choices = list(FUTURES_SYMBOLS.keys())
+            elif _comm_group == "ETFs":
+                _comm_choices = list(COMMODITY_ETFS.keys())
+            else:
+                _comm_choices = COMMODITY_GROUPS.get(_comm_group, [])
+
+            _all_comm = {**FUTURES_SYMBOLS, **COMMODITY_ETFS}
+            _comm_sym = st.selectbox(
+                "Symbol",
+                _comm_choices,
+                format_func=lambda k: f"{k} — {_all_comm.get(k, '')}",
+                key="comm_sym",
+            )
+
+        cd1, cd2 = st.columns(2)
+        with cd1:
+            _comm_start = st.date_input("Start date", value=date(2015, 1, 1), key="comm_start")
+        with cd2:
+            _comm_end = st.date_input("End date", value=date.today(), key="comm_end")
+
+        _comm_sname = st.text_input(
+            "Save as",
+            value=f"comm_{_comm_sym.replace('=F','').replace('=','').lower()}",
+            key="comm_sname",
+        )
+
+        if _comm_start > _comm_end:
+            st.error("Start date must be on or before end date.")
+        elif st.button("Pull", key="comm_pull", type="primary"):
+            with st.spinner(f"Fetching {_comm_sym}…"):
+                try:
+                    _comm_df = _comm.get_price_series(_comm_sym, _comm_start, _comm_end)
+                except Exception as _exc:
+                    st.error(f"Commodity fetch error: {_exc}")
+                    _comm_df = None
+            if _comm_df is not None and not _comm_df.is_empty():
+                _comm_pd = _comm_df.to_pandas()
+                _comm_title = _all_comm.get(_comm_sym, _comm_sym)
+                st.success(f"Pulled {len(_comm_pd):,} rows for {_comm_sym}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Rows", f"{len(_comm_pd):,}")
+                m2.metric("From", str(_comm_pd["date"].min()))
+                m3.metric("To",   str(_comm_pd["date"].max()))
+                _fig_comm = go.Figure(go.Scatter(
+                    x=_comm_pd["date"], y=_comm_pd["close"], mode="lines",
+                    line=dict(color=COLORS["gold"], width=2),
+                    fill="tozeroy", fillcolor="rgba(201,162,39,0.06)",
+                ))
+                apply_theme(_fig_comm, title=f"{_comm_title} — Daily Close", height=280)
+                st.plotly_chart(_fig_comm, use_container_width=True, config=PLOTLY_CONFIG)
+                # Save with symbol as column name for tradability check
+                _comm_save = _comm_df.rename({"close": _comm_sym})
+                _comm_save.write_parquet(ALT_DIR / f"{_comm_sname}.parquet")
+                _save_meta(_comm_sname, {
+                    "source": "Commodities", "symbol": _comm_sym,
+                    "title": _comm_title,
+                    "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                    "rows": len(_comm_pd),
+                    "date_from": str(_comm_start), "date_to": str(_comm_end),
+                })
+                st.success(f"Saved to data/alt/{_comm_sname}.parquet")
+                st.info("Go to Tradability Check to test commodity price as a signal.")
+            elif _comm_df is not None:
+                st.warning("No data returned — check the symbol and date range.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # ALPHA VANTAGE BRANCH

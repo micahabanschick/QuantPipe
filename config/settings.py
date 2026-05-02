@@ -61,6 +61,7 @@ FRED_API_KEY: str = _get("FRED_API_KEY")   # Federal Reserve Economic Data
 EODHD_API_KEY: str          = _get("EODHD_API_KEY")
 ALPACA_API_KEY: str         = _get("ALPACA_API_KEY")
 ALPHA_VANTAGE_API_KEY: str  = _get("ALPHA_VANTAGE_API_KEY")
+BLS_API_KEY: str            = _get("BLS_API_KEY")            # optional — free at data.bls.gov/registrationEngine
 ALPACA_SECRET_KEY: str = _get("ALPACA_SECRET_KEY")
 ALPACA_BASE_URL: str = _get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
