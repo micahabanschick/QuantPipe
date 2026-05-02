@@ -6,6 +6,8 @@ Tabs:
   3. Trade            — IB paper / live execution
 """
 
+import contextlib
+import json
 import logging
 import subprocess
 import sys
@@ -52,6 +54,24 @@ def _load_config():
     return _get_config_fn()()
 
 
+def _load_saved_blends() -> list[dict]:
+    """Return saved blends newest-first from saved_blends.jsonl."""
+    from config.settings import DATA_DIR
+    path = DATA_DIR / "gold" / "equity" / "saved_blends.jsonl"
+    if not path.exists():
+        return []
+    blends = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        with contextlib.suppress(json.JSONDecodeError):
+            entry = json.loads(line)
+            if isinstance(entry.get("name"), str) and isinstance(entry.get("weights"), dict):
+                blends.append(entry)
+    return list(reversed(blends))
+
+
 # ── Page ───────────────────────────────────────────────────────────────────────
 
 st.markdown(CSS, unsafe_allow_html=True)
@@ -90,13 +110,47 @@ with tab_deploy:
     if not metas:
         st.warning("No strategies found in the `strategies/` directory.")
     else:
+        # ── Load from saved blend ──────────────────────────────────────────────
+        saved_blends = _load_saved_blends()
+        if saved_blends:
+            _blend_opts = {"— none —": None} | {b["name"]: b for b in saved_blends}
+            _sel_blend_name = st.selectbox(
+                "Load from saved blend",
+                options=list(_blend_opts.keys()),
+                index=0,
+                key="deploy_load_blend",
+                help="Pre-populate weights from a blend saved in the Blends tab.",
+            )
+            _sel_blend = _blend_opts[_sel_blend_name]
+            if _sel_blend and st.button("Apply Blend Weights", key="deploy_apply_blend"):
+                for m in metas:
+                    w = _sel_blend["weights"].get(m.slug, 0.0)
+                    st.session_state[f"active_{m.slug}"]  = w > 1e-6
+                    st.session_state[f"weight_{m.slug}"] = float(w)
+                st.rerun()
+
+        # ── Check / Uncheck All ────────────────────────────────────────────────
+        _ca_col, _ua_col, _ = st.columns([1, 1, 6])
+        with _ca_col:
+            if st.button("✅ Check All", key="deploy_check_all", use_container_width=True):
+                for m in metas:
+                    st.session_state[f"active_{m.slug}"] = True
+                st.rerun()
+        with _ua_col:
+            if st.button("☐ Uncheck All", key="deploy_uncheck_all", use_container_width=True):
+                for m in metas:
+                    st.session_state[f"active_{m.slug}"] = False
+                st.rerun()
+
+        st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
+
         existing_map = {s.slug: s for s in config.strategies} if config else {}
         updated: list[DeployedStrategy] = []
 
         for i, m in enumerate(metas):
             ex = existing_map.get(m.slug)
-            default_active = ex.active if ex else True
-            default_weight = ex.allocation_weight if ex else round(1.0 / len(metas), 3)
+            default_active = ex.active if ex else False   # default to unchecked
+            default_weight = ex.allocation_weight if ex else 0.0
             default_params = ex.backtest_params if ex else m.default_params
             has_result = m.slug in results
 
@@ -128,7 +182,7 @@ with tab_deploy:
             ))
 
         total = sum(s.allocation_weight for s in updated if s.active) or 1.0
-        active_count = sum(1 for s in updated if s.active)
+        active_count = sum(s.active for s in updated)
         st.markdown(f"**{active_count}** active strategies · raw weight sum = **{total:.3f}**")
 
         rows = [
@@ -222,7 +276,7 @@ with tab_drift:
             st.dataframe(df_cmp, hide_index=True, use_container_width=True,
                           height=max(200, 38 * len(all_syms)))
 
-        max_drift = float(drift.abs().max()) if not drift.empty else 0
+        max_drift = 0 if drift.empty else float(drift.abs().max())
         if max_drift > 0.05:
             st.warning(f"Maximum drift is {max_drift:.1%} — consider rebalancing.")
         elif max_drift > 0.02:
@@ -418,7 +472,7 @@ with tab_trade:
 
         col_btn, col_status = st.columns([1, 3])
         with col_btn:
-            btn_label    = "Execute Rebalance" if not dry_run else "Compute Orders (Dry Run)"
+            btn_label    = "Compute Orders (Dry Run)" if dry_run else "Execute Rebalance"
             btn_disabled = not is_paper and not confirm_live
             execute = st.button(btn_label, type="primary", disabled=btn_disabled, key="ib_execute_btn")
 
