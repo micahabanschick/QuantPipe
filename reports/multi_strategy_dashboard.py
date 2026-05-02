@@ -249,85 +249,85 @@ with tab_overview:
 
         st.caption("Equal-weight blend across all strategies. Use the Optimizer tab to find optimal weights, then save as a blend.")
 
-            if not blended_eq.empty:
-                _bret_s = blended_eq.pct_change().dropna()
-                _n_yrs  = max(len(blended_eq) / 252, 1e-6)
-                _b_cagr = (blended_eq.iloc[-1] / blended_eq.iloc[0]) ** (1 / _n_yrs) - 1
-                _b_vol  = float(_bret_s.std() * np.sqrt(252))
-                _b_sh   = _b_cagr / _b_vol if _b_vol > 1e-10 else 0
-                _b_peak = blended_eq.cummax()
-                _b_dd   = float(((blended_eq - _b_peak) / _b_peak).min())
-                _b_cal  = _b_cagr / abs(_b_dd) if abs(_b_dd) > 1e-10 else 0
-                st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
-                st.markdown(section_label("Blended Portfolio"), unsafe_allow_html=True)
-                _k1, _k2, _k3, _k4 = st.columns(4)
-                _k1.markdown(kpi_card("Blended CAGR",  f"{_b_cagr:.1%}", accent=COLORS["positive"]), unsafe_allow_html=True)
-                _k2.markdown(kpi_card("Blended Sharpe", f"{_b_sh:.2f}",  accent=COLORS["teal"]),     unsafe_allow_html=True)
-                _k3.markdown(kpi_card("Blended Max DD", f"{_b_dd:.1%}",  accent=COLORS["negative"]), unsafe_allow_html=True)
-                _k4.markdown(kpi_card("Blended Calmar", f"{_b_cal:.2f}", accent=COLORS["blue"]),     unsafe_allow_html=True)
-                st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
+        if not blended_eq.empty:
+            _bret_s = blended_eq.pct_change().dropna()
+            _n_yrs  = max(len(blended_eq) / 252, 1e-6)
+            _b_cagr = (blended_eq.iloc[-1] / blended_eq.iloc[0]) ** (1 / _n_yrs) - 1
+            _b_vol  = float(_bret_s.std() * np.sqrt(252))
+            _b_sh   = _b_cagr / _b_vol if _b_vol > 1e-10 else 0
+            _b_peak = blended_eq.cummax()
+            _b_dd   = float(((blended_eq - _b_peak) / _b_peak).min())
+            _b_cal  = _b_cagr / abs(_b_dd) if abs(_b_dd) > 1e-10 else 0
+            st.markdown("<div style='height:10px'/>", unsafe_allow_html=True)
+            st.markdown(section_label("Equal-Weight Blend"), unsafe_allow_html=True)
+            _k1, _k2, _k3, _k4 = st.columns(4)
+            _k1.markdown(kpi_card("Blended CAGR",  f"{_b_cagr:.1%}", accent=COLORS["positive"]), unsafe_allow_html=True)
+            _k2.markdown(kpi_card("Blended Sharpe", f"{_b_sh:.2f}",  accent=COLORS["teal"]),     unsafe_allow_html=True)
+            _k3.markdown(kpi_card("Blended Max DD", f"{_b_dd:.1%}",  accent=COLORS["negative"]), unsafe_allow_html=True)
+            _k4.markdown(kpi_card("Blended Calmar", f"{_b_cal:.2f}", accent=COLORS["blue"]),     unsafe_allow_html=True)
+            st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
-                fig = go.Figure()
-                for i, (slug, r) in enumerate(results.items()):
-                    eq = _normalise(_equity_series(r))
-                    fig.add_trace(go.Scatter(x=eq.index, y=eq.values, name=r.name,
-                                              line=dict(color=_color(i), width=1.5, dash="dot"), opacity=0.65))
-                fig.add_trace(go.Scatter(x=blended_eq.index, y=blended_eq.values,
-                                          name="Equal-Weight Blend",
-                                          line=dict(color=COLORS["positive"], width=2.8)))
-                first = next(iter(results.values()))
-                if first.benchmark_dates:
-                    spy_idx = pd.to_datetime(first.benchmark_dates)
-                    spy_vals = pd.Series(first.benchmark_values, index=spy_idx)
-                    fig.add_trace(go.Scatter(x=spy_idx, y=spy_vals.values, name="SPY",
-                                              line=dict(color=COLORS["neutral"], width=1.2, dash="dash"), opacity=0.7))
-                apply_theme(fig, title="Equal-Weight Blend vs Individual Strategies ($10k start)", height=380)
-                fig.update_layout(yaxis=dict(tickprefix="$", tickformat=",.0f"))
-                st.plotly_chart(fig, use_container_width=True)
+            fig = go.Figure()
+            for i, (slug, r) in enumerate(results.items()):
+                eq = _normalise(_equity_series(r))
+                fig.add_trace(go.Scatter(x=eq.index, y=eq.values, name=r.name,
+                                          line=dict(color=_color(i), width=1.5, dash="dot"), opacity=0.65))
+            fig.add_trace(go.Scatter(x=blended_eq.index, y=blended_eq.values,
+                                      name="Equal-Weight Blend",
+                                      line=dict(color=COLORS["positive"], width=2.8)))
+            first = next(iter(results.values()))
+            if first.benchmark_dates:
+                spy_idx = pd.to_datetime(first.benchmark_dates)
+                spy_vals = pd.Series(first.benchmark_values, index=spy_idx)
+                fig.add_trace(go.Scatter(x=spy_idx, y=spy_vals.values, name="SPY",
+                                          line=dict(color=COLORS["neutral"], width=1.2, dash="dash"), opacity=0.7))
+            apply_theme(fig, title="Equal-Weight Blend vs Individual Strategies ($10k start)", height=380)
+            fig.update_layout(yaxis=dict(tickprefix="$", tickformat=",.0f"))
+            st.plotly_chart(fig, use_container_width=True)
 
-            # ── Cross-strategy P&L Attribution ────────────────────────────────
-            st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
-            st.markdown(section_label("Cross-Strategy P&L Attribution"), unsafe_allow_html=True)
-            st.caption("Cumulative return contribution from each strategy, weighted by allocation.")
-            if not blended_eq.empty and results:
-                _attr_fig = go.Figure()
-                _strat_contribs = {}
-                for _i, (_slug, _r) in enumerate(results.items()):
-                    _eq_s = _equity_series(_r)
-                    _daily_r = _eq_s.pct_change().dropna()
-                    _w = alloc_norm.get(_slug, 0.0)
-                    _contrib_s = (_daily_r * _w).cumsum()
-                    _strat_contribs[_r.name] = _contrib_s
-                    _attr_fig.add_trace(go.Scatter(
-                        x=_contrib_s.index,
-                        y=_contrib_s.values * 100,
-                        mode="lines",
-                        name=_r.name,
-                        stackgroup="one",
-                        line=dict(color=_color(_i), width=0),
-                        fillcolor=_color(_i).replace(")", ", 0.55)").replace("rgb(", "rgba(")
-                                  if _color(_i).startswith("rgb") else _color(_i),
-                        hovertemplate=f"<b>{_r.name}</b><br>%{{x|%Y-%m-%d}}: %{{y:+.2f}}%<extra></extra>",
-                    ))
-                apply_theme(_attr_fig, legend_inside=False)
-                _attr_fig.update_layout(
-                    height=280,
-                    yaxis=dict(title="Cumulative contribution (%)", ticksuffix="%"),
-                    xaxis=dict(showgrid=False),
-                    hovermode="x unified",
-                )
-                st.plotly_chart(_attr_fig, use_container_width=True)
+        # ── Cross-strategy P&L Attribution ────────────────────────────────
+        st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+        st.markdown(section_label("Cross-Strategy P&L Attribution"), unsafe_allow_html=True)
+        st.caption("Cumulative return contribution from each strategy, weighted by allocation.")
+        if not blended_eq.empty and results:
+            _attr_fig = go.Figure()
+            _strat_contribs = {}
+            for _i, (_slug, _r) in enumerate(results.items()):
+                _eq_s = _equity_series(_r)
+                _daily_r = _eq_s.pct_change().dropna()
+                _w = alloc_norm.get(_slug, 0.0)
+                _contrib_s = (_daily_r * _w).cumsum()
+                _strat_contribs[_r.name] = _contrib_s
+                _attr_fig.add_trace(go.Scatter(
+                    x=_contrib_s.index,
+                    y=_contrib_s.values * 100,
+                    mode="lines",
+                    name=_r.name,
+                    stackgroup="one",
+                    line=dict(color=_color(_i), width=0),
+                    fillcolor=_color(_i).replace(")", ", 0.55)").replace("rgb(", "rgba(")
+                              if _color(_i).startswith("rgb") else _color(_i),
+                    hovertemplate=f"<b>{_r.name}</b><br>%{{x|%Y-%m-%d}}: %{{y:+.2f}}%<extra></extra>",
+                ))
+            apply_theme(_attr_fig, legend_inside=False)
+            _attr_fig.update_layout(
+                height=280,
+                yaxis=dict(title="Cumulative contribution (%)", ticksuffix="%"),
+                xaxis=dict(showgrid=False),
+                hovermode="x unified",
+            )
+            st.plotly_chart(_attr_fig, use_container_width=True)
 
-                _attr_rows = []
-                for _name, _cs in _strat_contribs.items():
-                    _slug2 = next((s for s, r in results.items() if r.name == _name), "")
-                    _attr_rows.append({
-                        "Strategy":      _name,
-                        "Weight (equal)": f"{alloc_norm.get(_slug2, 0):.1%}",
-                        "Total Contrib": f"{float(_cs.iloc[-1])*100:+.2f}%",
-                        "Avg Daily":     f"{float(_cs.diff().mean())*100:+.4f}%",
-                    })
-                st.dataframe(pd.DataFrame(_attr_rows), use_container_width=True, hide_index=True)
+            _attr_rows = []
+            for _name, _cs in _strat_contribs.items():
+                _slug2 = next((s for s, r in results.items() if r.name == _name), "")
+                _attr_rows.append({
+                    "Strategy":       _name,
+                    "Weight (equal)": f"{alloc_norm.get(_slug2, 0):.1%}",
+                    "Total Contrib":  f"{float(_cs.iloc[-1])*100:+.2f}%",
+                    "Avg Daily":      f"{float(_cs.diff().mean())*100:+.4f}%",
+                })
+            st.dataframe(pd.DataFrame(_attr_rows), use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
