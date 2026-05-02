@@ -33,7 +33,7 @@ def _color(i: int) -> str:
 
 def _hex_rgba(hex_color: str, alpha: float) -> str:
     h = hex_color.lstrip("#")
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    r, g, b = int(h[:2], 16), int(h[2:4], 16), int(h[4:], 16)
     return f"rgba({r},{g},{b},{alpha})"
 
 
@@ -41,8 +41,13 @@ import math as _math
 
 
 def _is_missing(v) -> bool:
-    """True for None and float NaN — both mean "no data"."""
-    return v is None or (isinstance(v, float) and _math.isnan(v))
+    """True for None and any numeric NaN (Python float or numpy scalar)."""
+    if v is None:
+        return True
+    try:
+        return _math.isnan(v)
+    except TypeError:
+        return False
 
 
 def _pct(v, decimals=1):
@@ -152,7 +157,7 @@ _METRIC_KEYS = [
 
 def _metric_table(results: dict) -> pd.DataFrame:
     rows = []
-    for slug, r in results.items():
+    for r in results.values():
         m = r.metrics
         row = {"Strategy": r.name}
         for key, label, is_pct in _METRIC_KEYS:
