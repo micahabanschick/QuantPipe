@@ -203,11 +203,11 @@ pg = st.navigation(
         ],
         "Portfolio": [
             st.Page("reports/multi_strategy_dashboard.py",
-                    title="Multi-Strategy",        icon="💼"),
-            st.Page("reports/deployment_dashboard.py",
-                    title="Deployment",            icon="🚀"),
+                    title="Blends",                icon="💼"),
             st.Page("reports/performance_dashboard.py",
                     title="Performance",           icon="📈"),
+            st.Page("reports/deployment_dashboard.py",
+                    title="Deployment",            icon="🚀"),
         ],
         "Trading": [
             st.Page("reports/paper_trading_dashboard.py",

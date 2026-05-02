@@ -1,7 +1,7 @@
-"""Multi-Strategy Dashboard — Portfolio group, page 1.
+"""Blends — compare and optimise strategy blends. Read-only; use Deployment to save configs.
 
 Tabs:
-  1. Overview    — deployed strategies, blended equity curve, allocation pie
+  1. Overview    — active strategies, blended equity curve, allocation pie
   2. Comparison  — metrics table, overlaid curves, drawdown, rolling Sharpe, monthly returns
   3. Optimizer   — correlation heatmap, allocation optimizer, efficient frontier
 """
@@ -151,7 +151,7 @@ def _save_allocations(allocs: dict, results: dict, config, metas: list):
 
 st.markdown(CSS, unsafe_allow_html=True)
 st.markdown(
-    page_header("Multi-Strategy", "Blend strategies, compare performance, and optimise allocations."),
+    page_header("Blends", "Compare strategy blends and optimise allocations. Deploy changes in the Deployment tab."),
     unsafe_allow_html=True,
 )
 
@@ -558,11 +558,7 @@ with tab_optimizer:
                 st.plotly_chart(fig_bar, use_container_width=True)
                 st.caption("Error bars show 5th–95th percentile from 200 bootstrap resamples.")
 
-                if st.button("Deploy These Allocations", type="primary", key="deploy_opt"):
-                    _save_allocations(allocs, results, config, metas)
-                    st.success("Deployment config saved.")
-                    st.cache_resource.clear()
-                    st.rerun()
+                st.info("To deploy these allocations, copy the weights to **Deployment → Strategy Config**.", icon="ℹ️")
 
             st.markdown("### Efficient Frontier")
             _n_sims = 2000
