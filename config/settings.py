@@ -58,8 +58,9 @@ def _get(key: str, default: str = "") -> str:
 FRED_API_KEY: str = _get("FRED_API_KEY")   # Federal Reserve Economic Data
 
 # ── Data providers ─────────────────────────────────────────────────────────────
-EODHD_API_KEY: str = _get("EODHD_API_KEY")
-ALPACA_API_KEY: str = _get("ALPACA_API_KEY")
+EODHD_API_KEY: str          = _get("EODHD_API_KEY")
+ALPACA_API_KEY: str         = _get("ALPACA_API_KEY")
+ALPHA_VANTAGE_API_KEY: str  = _get("ALPHA_VANTAGE_API_KEY")
 ALPACA_SECRET_KEY: str = _get("ALPACA_SECRET_KEY")
 ALPACA_BASE_URL: str = _get("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
