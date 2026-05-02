@@ -73,6 +73,8 @@ class AlphaVantageAdapter:
         data = resp.json()
         if "Information" in data:
             raise RuntimeError(f"Alpha Vantage rate limit / key error: {data['Information']}")
+        if "Error Message" in data:
+            raise RuntimeError(f"Alpha Vantage error: {data['Error Message']}")
         if "Note" in data:
             log.warning("Alpha Vantage note: %s", data["Note"])
         return data
@@ -97,7 +99,7 @@ class AlphaVantageAdapter:
             Polars DataFrame with columns [date, value].
         """
         params: dict = {"function": function}
-        if function in ("REAL_GDP", "REAL_GDP_PER_CAPITA"):
+        if function in {"REAL_GDP", "REAL_GDP_PER_CAPITA"}:
             params["interval"] = interval
         elif function == "TREASURY_YIELD":
             params["interval"] = interval
@@ -198,10 +200,11 @@ class AlphaVantageAdapter:
                 "date": pl.Date, "total_revenue": pl.Float64,
                 "gross_profit": pl.Float64, "operating_income": pl.Float64,
                 "net_income": pl.Float64, "ebitda": pl.Float64,
+                "eps": pl.Float64, "eps_diluted": pl.Float64,
             })
 
         def _f(v: str) -> float | None:
-            return float(v) if v not in ("None", "-", "", None) else None
+            return float(v) if v not in {"None", "-", "", None} else None
 
         field_map = {
             "total_revenue":    "totalRevenue",
@@ -209,6 +212,8 @@ class AlphaVantageAdapter:
             "operating_income": "operatingIncome",
             "net_income":       "netIncome",
             "ebitda":           "ebitda",
+            "eps":              "reportedEPS",
+            "eps_diluted":      "dilutedEPS",
         }
         records = [
             {"date": r.get("fiscalDateEnding"),

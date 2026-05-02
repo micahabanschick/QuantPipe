@@ -155,7 +155,9 @@ class WorldBankAdapter:
     ) -> pl.DataFrame:
         """Pull the same indicator for multiple countries in one call.
 
-        Returns a wide DataFrame with columns [date, <ISO2_code>, ...].
+        Returns a wide DataFrame with columns [date, <ISO3_code>, ...].
+        Column names are ISO3 codes as returned by the World Bank API
+        (e.g. "USA", "CHN", "DEU") rather than the ISO2 codes passed in.
         """
         country_str = ";".join(countries)
         df_long = self.get_indicator(country_str, indicator, start_year, end_year)
@@ -189,7 +191,7 @@ class WorldBankAdapter:
     def search_indicators(self, query: str, limit: int = 20) -> list[dict[str, str]]:
         """Search the World Bank indicator catalogue by keyword."""
         try:
-            rows = self._get(f"indicator?source=2", {"mrv": 1})
+            rows = self._get("indicator?source=2", {"mrv": 1})
             results = []
             q = query.lower()
             for r in rows:
