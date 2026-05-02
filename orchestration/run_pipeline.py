@@ -134,7 +134,16 @@ def run_pipeline(skip_ingest: bool = False, as_of: date | None = None) -> int:
     else:
         log.info("--- Step: pull_fred SKIPPED (no FRED_API_KEY) ---")
 
-    # Step 4 — pull earnings surprise data (best-effort, never aborts pipeline)
+    # Step 4 — pull macro regime indicators (best-effort, never aborts pipeline)
+    if FRED_API_KEY:
+        from orchestration.pull_macro import main as pull_macro_main
+        code, _ = _run_step("pull_macro", pull_macro_main)
+        if code != 0:
+            log.warning("Macro pull had errors — check logs (pipeline continues)")
+    else:
+        log.info("--- Step: pull_macro SKIPPED (no FRED_API_KEY) ---")
+
+    # Step 5 — pull earnings surprise data (best-effort, never aborts pipeline)
     from config.settings import ALPHA_VANTAGE_API_KEY
     if ALPHA_VANTAGE_API_KEY:
         from orchestration.pull_earnings import main as pull_earnings_main
