@@ -95,8 +95,9 @@ with tab_reg:
     _av_live   = bool(ALPHA_VANTAGE_API_KEY)
 
     def _connector_card(icon, title, label, label_color, body, samples_html, footer=""):
-        bg  = f"rgba({','.join(str(int(label_color.lstrip('#')[i:i+2], 16)) for i in (0,2,4))},0.08)" \
-              if label_color.startswith("#") else "rgba(0,230,118,0.08)"
+        # All theme colors are #rrggbb — convert to rgba for the background tint
+        _h = label_color.lstrip("#")
+        bg = f"rgba({int(_h[:2],16)},{int(_h[2:4],16)},{int(_h[4:],16)},0.08)"
         return f"""
 <div style="background:{bg};border:1px solid {label_color}44;border-left:3px solid {label_color};
             border-radius:8px;padding:14px 16px;margin-bottom:16px;">
@@ -257,23 +258,36 @@ with tab_reg:
 
 with tab_ingest:
 
+    # Stable mode keys — branch on these, not on human-readable label strings
+    _MODE_FRED   = "fred"
+    _MODE_WB     = "worldbank"
+    _MODE_AV     = "alphavantage"
+    _MODE_UPLOAD = "upload"
+
     _fred_ok = bool(FRED_API_KEY)
     _av_ok   = bool(ALPHA_VANTAGE_API_KEY)
-    _modes   = ["World Bank — Macro (no key needed)"]
-    if _fred_ok:
-        _modes.insert(0, "FRED — Federal Reserve")
-    else:
-        _modes.append("FRED (add FRED_API_KEY to .env)")
-    if _av_ok:
-        _modes.insert(1 if _fred_ok else 1, "Alpha Vantage — Fundamentals")
-    else:
-        _modes.append("Alpha Vantage (add ALPHA_VANTAGE_API_KEY to .env)")
-    _modes.append("Upload File (CSV / JSON)")
 
-    _mode     = st.radio("Data source", _modes, horizontal=True, key="ic_mode")
-    _is_fred  = _mode.startswith("FRED") and _fred_ok
-    _is_wb    = _mode.startswith("World Bank")
-    _is_av    = _mode.startswith("Alpha Vantage") and _av_ok
+    _mode_options: list[tuple[str, str]] = []   # (key, display label)
+    if _fred_ok:
+        _mode_options.append((_MODE_FRED, "FRED — Federal Reserve"))
+    _mode_options.append((_MODE_WB, "World Bank — Macro (no key needed)"))
+    if _av_ok:
+        _mode_options.append((_MODE_AV, "Alpha Vantage — Fundamentals"))
+    else:
+        _mode_options.append((_MODE_AV, "Alpha Vantage (add ALPHA_VANTAGE_API_KEY to .env)"))
+    if not _fred_ok:
+        _mode_options.append((_MODE_FRED, "FRED (add FRED_API_KEY to .env)"))
+    _mode_options.append((_MODE_UPLOAD, "Upload File (CSV / JSON)"))
+
+    _mode_key = st.radio(
+        "Data source",
+        [k for k, _ in _mode_options],
+        format_func={k: lbl for k, lbl in _mode_options}.__getitem__,
+        horizontal=True, key="ic_mode",
+    )
+    _is_fred  = _mode_key == _MODE_FRED  and _fred_ok
+    _is_wb    = _mode_key == _MODE_WB
+    _is_av    = _mode_key == _MODE_AV    and _av_ok
     st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -417,6 +431,8 @@ with tab_ingest:
 
         if _wb_ind is None:
             st.info("Pick an indicator from the dropdown or enter a custom code above.")
+        elif int(_wb_start) > int(_wb_end):
+            st.error("Start year must be ≤ End year.")
         elif st.button("Pull from World Bank", key="wb_pull", type="primary"):
             with st.spinner(f"Fetching {_wb_ind} for {_wb_country}…"):
                 try:
@@ -526,12 +542,18 @@ with tab_ingest:
                 elif _av_df is not None:
                     st.warning("No data returned.")
 
+        def _av_sym_inputs(prefix: str, save_prefix: str) -> tuple[str, str]:
+            """Shared ticker + save-name inputs for AV fundamental branches."""
+            sym   = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…",
+                                   key=f"av_sym_{prefix}").strip().upper()
+            sname = st.text_input("Save as",
+                                   value=f"{save_prefix}_{sym.lower()}" if sym else save_prefix,
+                                   key=f"av_sname_{prefix}")
+            return sym, sname
+
         # ── Company Fundamentals ──────────────────────────────────────────────
         elif _av_type == "Company Fundamentals":
-            _av_sym = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…", key="av_sym_ov")
-            _av_sname = st.text_input("Save as",
-                                       value=f"av_overview_{_av_sym.lower()}" if _av_sym else "av_overview",
-                                       key="av_sname_ov")
+            _av_sym, _av_sname = _av_sym_inputs("ov", "av_overview")
             if _av_sym and st.button("Pull Overview", key="av_pull_ov", type="primary"):
                 with st.spinner(f"Fetching overview for {_av_sym.upper()}…"):
                     try:
@@ -557,10 +579,7 @@ with tab_ingest:
 
         # ── Earnings History ──────────────────────────────────────────────────
         elif _av_type == "Earnings History":
-            _av_sym = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…", key="av_sym_earn")
-            _av_sname = st.text_input("Save as",
-                                       value=f"av_earnings_{_av_sym.lower()}" if _av_sym else "av_earnings",
-                                       key="av_sname_earn")
+            _av_sym, _av_sname = _av_sym_inputs("earn", "av_earnings")
             if _av_sym and st.button("Pull Earnings", key="av_pull_earn", type="primary"):
                 with st.spinner(f"Fetching earnings for {_av_sym.upper()}…"):
                     try:
@@ -569,7 +588,7 @@ with tab_ingest:
                         st.error(f"Alpha Vantage error: {_exc}")
                         _earn_df = None
                 if _earn_df is not None and not _earn_df.is_empty():
-                    _earn_pd = _earn_df.to_pandas()
+                    _earn_pd = _earn_df.to_pandas().sort_values("date")
                     st.success(f"Pulled {len(_earn_pd)} quarters of earnings for {_av_sym.upper()}")
                     st.dataframe(_earn_pd, use_container_width=True, hide_index=True)
                     _fig_earn = go.Figure()
@@ -600,11 +619,8 @@ with tab_ingest:
 
         # ── Income Statement ──────────────────────────────────────────────────
         else:
-            _av_sym    = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…", key="av_sym_inc")
+            _av_sym, _av_sname = _av_sym_inputs("inc", "av_income")
             _av_annual = st.toggle("Annual reports", value=False, key="av_annual")
-            _av_sname  = st.text_input("Save as",
-                                        value=f"av_income_{_av_sym.lower()}" if _av_sym else "av_income",
-                                        key="av_sname_inc")
             if _av_sym and st.button("Pull Income Statement", key="av_pull_inc", type="primary"):
                 with st.spinner(f"Fetching income statement for {_av_sym.upper()}…"):
                     try:
@@ -613,7 +629,7 @@ with tab_ingest:
                         st.error(f"Alpha Vantage error: {_exc}")
                         _inc_df = None
                 if _inc_df is not None and not _inc_df.is_empty():
-                    _inc_pd = _inc_df.to_pandas()
+                    _inc_pd = _inc_df.to_pandas().sort_values("date")
                     st.success(f"Pulled {len(_inc_pd)} periods for {_av_sym.upper()}")
                     st.dataframe(_inc_pd, use_container_width=True, hide_index=True)
                     _fig_inc = go.Figure()
@@ -975,7 +991,7 @@ with tab_trade:
                     _cmp_px   = _cmp_bars.to_pandas().set_index("date")[_cmp_pc]
                 _cmp_px.index = pd.to_datetime(_cmp_px.index)
                 for _cf in _tfiles:
-                    try:
+                    with contextlib.suppress(Exception):
                         _cpd = pl.read_parquet(_cf).to_pandas()
                         if "date" in _cpd.columns:
                             _cpd["date"] = pd.to_datetime(_cpd["date"])
@@ -993,8 +1009,6 @@ with tab_trade:
                                         _best_ic, _best_lag = float(_ci), f"{_cl}d"
                             _rows.append({"signal": _cf.stem, "column": _cc,
                                           "best_IC": round(_best_ic, 4), "best_lag": _best_lag})
-                    except Exception:
-                        pass
                 if _rows:
                     _cdf2 = pd.DataFrame(_rows).sort_values("best_IC", key=abs, ascending=False)
                     st.dataframe(_cdf2.style.format({"best_IC": "{:+.4f}"}),
