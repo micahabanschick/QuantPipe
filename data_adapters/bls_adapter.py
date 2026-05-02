@@ -26,6 +26,16 @@ log = logging.getLogger(__name__)
 
 _BASE    = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 _TIMEOUT = 20
+_BATCH   = 25   # BLS API max series per request with a registered key
+
+# BLS period codes → month numbers (shared across all methods)
+_MONTH_MAP: dict[str, str] = {
+    "M01": "01", "M02": "02", "M03": "03", "M04": "04",
+    "M05": "05", "M06": "06", "M07": "07", "M08": "08",
+    "M09": "09", "M10": "10", "M11": "11", "M12": "12",
+    "Q01": "01", "Q02": "04", "Q03": "07", "Q04": "10",
+    "A01": "01",   # annual → assign to January
+}
 
 # Curated series — high signal for macro-aware equity strategies
 POPULAR_SERIES: dict[str, str] = {
@@ -111,13 +121,6 @@ class BLSAdapter:
         if not series:
             return pl.DataFrame(schema={"date": pl.Date, series_id: pl.Float64})
 
-        _MONTH_MAP = {
-            "M01": "01", "M02": "02", "M03": "03", "M04": "04",
-            "M05": "05", "M06": "06", "M07": "07", "M08": "08",
-            "M09": "09", "M10": "10", "M11": "11", "M12": "12",
-            "Q01": "01", "Q02": "04", "Q03": "07", "Q04": "10",
-            "A01": "01",  # annual → assign to Jan
-        }
         rows = []
         for obs in series[0].get("data", []):
             period = obs.get("period", "M01")
@@ -144,7 +147,10 @@ class BLSAdapter:
         start_year: int | None = None,
         end_year: int | None = None,
     ) -> dict[str, pl.DataFrame]:
-        """Pull multiple series in a single API call (max 25 with a key, 1 without).
+        """Pull multiple series, batching in chunks of 25 (BLS API limit per request).
+
+        Unregistered access: fetches sequentially (1 per call).
+        Registered key: batches up to 25 per request, all IDs are returned.
 
         Returns:
             Dict mapping series_id → DataFrame with columns [date, series_id].
@@ -152,46 +158,39 @@ class BLSAdapter:
         if not self._key and len(series_ids) > 1:
             log.warning(
                 "BLS: unregistered access only supports 1 series per call. "
-                "Fetching sequentially — register for a free key to batch up to 25."
+                "Fetching sequentially — register for a free key to batch up to %d.",
+                _BATCH,
             )
             return {sid: self.get_series(sid, start_year, end_year) for sid in series_ids}
 
-        payload: dict[str, Any] = {"seriesid": series_ids[:25], "catalog": False}
-        if start_year:
-            payload["startyear"] = str(start_year)
-        if end_year:
-            payload["endyear"] = str(end_year)
+        results: dict[str, pl.DataFrame] = {}
+        for chunk_start in range(0, len(series_ids), _BATCH):
+            chunk = series_ids[chunk_start: chunk_start + _BATCH]
+            payload: dict[str, Any] = {"seriesid": chunk, "catalog": False}
+            if start_year:
+                payload["startyear"] = str(start_year)
+            if end_year:
+                payload["endyear"] = str(end_year)
 
-        data    = self._post(payload)
-        results = {}
-        _MONTH_MAP = {
-            "M01": "01", "M02": "02", "M03": "03", "M04": "04",
-            "M05": "05", "M06": "06", "M07": "07", "M08": "08",
-            "M09": "09", "M10": "10", "M11": "11", "M12": "12",
-            "Q01": "01", "Q02": "04", "Q03": "07", "Q04": "10",
-            "A01": "01",
-        }
-        for s in data.get("Results", {}).get("series", []):
-            sid  = s["seriesID"]
-            rows = []
-            for obs in s.get("data", []):
-                period = obs.get("period", "M01")
-                month  = _MONTH_MAP.get(period, "01")
-                year   = obs.get("year", "2000")
-                val    = obs.get("value", "")
-                rows.append({
-                    "date": f"{year}-{month}-01",
-                    sid:    float(val) if val not in ("", "-") else None,
-                })
-            if rows:
+            data = self._post(payload)
+            for s in data.get("Results", {}).get("series", []):
+                sid  = s["seriesID"]
+                rows = []
+                for obs in s.get("data", []):
+                    period = obs.get("period", "M01")
+                    month  = _MONTH_MAP.get(period, "01")
+                    year   = obs.get("year", "2000")
+                    val    = obs.get("value", "")
+                    rows.append({
+                        "date": f"{year}-{month}-01",
+                        sid:    float(val) if val not in ("", "-") else None,
+                    })
                 results[sid] = (
                     pl.DataFrame(rows)
                     .with_columns(pl.col("date").str.to_date("%Y-%m-%d"))
                     .sort("date")
                     .filter(pl.col(sid).is_not_null())
-                )
-            else:
-                results[sid] = pl.DataFrame(schema={"date": pl.Date, sid: pl.Float64})
+                ) if rows else pl.DataFrame(schema={"date": pl.Date, sid: pl.Float64})
 
         return results
 

@@ -647,7 +647,9 @@ with tab_ingest:
             key="comm_sname",
         )
 
-        if st.button("Pull", key="comm_pull", type="primary"):
+        if _comm_start > _comm_end:
+            st.error("Start date must be on or before end date.")
+        elif st.button("Pull", key="comm_pull", type="primary"):
             with st.spinner(f"Fetching {_comm_sym}…"):
                 try:
                     _comm_df = _comm.get_price_series(_comm_sym, _comm_start, _comm_end)
