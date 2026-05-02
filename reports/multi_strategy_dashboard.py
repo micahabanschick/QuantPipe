@@ -17,6 +17,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from config.settings import DATA_DIR
 from reports._theme import COLORS, apply_theme, badge, page_header, CSS, kpi_card, section_label
 
 log = logging.getLogger(__name__)
