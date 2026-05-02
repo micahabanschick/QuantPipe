@@ -72,16 +72,26 @@ def _sharpe(returns: np.ndarray, periods_per_year: float = 12.0) -> float:
     return mu / sd if sd > 1e-10 else float("nan")
 
 
-def _equity_to_monthly_returns(dates: list, values: list) -> np.ndarray:
-    """Convert an equity curve to approximate monthly returns."""
+def _equity_to_period_returns(dates: list, values: list) -> np.ndarray:
+    """Return period-over-period returns from an equity curve.
+
+    Assumes the equity values are uniformly spaced at approximately monthly
+    frequency (consistent with the monthly rebalance cadence). Dates are
+    accepted for API consistency but not used for resampling.
+    """
     if len(values) < 2:
         return np.array([])
     arr = np.array(values, dtype=float)
     return np.diff(arr) / arr[:-1]
 
 
-def _live_months(slug: str) -> float:
-    """Return months of live paper data for this strategy from trading_history."""
+def _portfolio_live_months() -> float:
+    """Return months since the first live paper rebalance.
+
+    All strategies deploy together as a blended portfolio, so live_months
+    is the same for every strategy — it reflects when the paper account
+    first executed a rebalance, not per-strategy inception.
+    """
     th_path = DATA_DIR / "gold" / "equity" / "trading_history.parquet"
     if not th_path.exists():
         return 0.0
@@ -141,9 +151,8 @@ def compute_health(
     # ── Flag accumulation ──────────────────────────────────────────────────────
     flags: list[str] = []
 
-    if not np.isnan(oos_sharpe):
-        if oos_sharpe < THRESHOLDS["oos_sharpe_watch"]:
-            flags.append("low_oos_sharpe")
+    if not np.isnan(oos_sharpe) and oos_sharpe < THRESHOLDS["oos_sharpe_watch"]:
+        flags.append("low_oos_sharpe")
 
     if not np.isnan(is_oos_ratio):
         if is_oos_ratio > THRESHOLDS["is_oos_ratio_flag"]:
@@ -165,7 +174,7 @@ def compute_health(
     # ── Status assignment ──────────────────────────────────────────────────────
     severe_flags = {"low_oos_sharpe", "severe_overfit", "excessive_drawdown", "highly_redundant"}
     n_flags  = len(flags)
-    n_severe = sum(1 for f in flags if f in severe_flags)
+    n_severe = sum(f in severe_flags for f in flags)
 
     if live_months < THRESHOLDS["live_months_new"]:
         status = "NEW"
@@ -180,10 +189,10 @@ def compute_health(
         "slug":          slug,
         "name":          name,
         "status":        status,
-        "is_sharpe":     round(is_sharpe, 3) if not np.isnan(is_sharpe) else None,
-        "oos_sharpe":    round(oos_sharpe, 3) if not np.isnan(oos_sharpe) else None,
-        "is_oos_ratio":  is_oos_ratio if not np.isnan(float(is_oos_ratio or float("nan"))) else None,
-        "max_drawdown":  round(max_dd, 3) if not np.isnan(max_dd) else None,
+        "is_sharpe":     None if np.isnan(is_sharpe) else round(is_sharpe, 3),
+        "oos_sharpe":    None if np.isnan(oos_sharpe) else round(oos_sharpe, 3),
+        "is_oos_ratio":  None if np.isnan(float(is_oos_ratio or float("nan"))) else is_oos_ratio,
+        "max_drawdown":  None if np.isnan(max_dd) else round(max_dd, 3),
         "max_correlation": max_corr,
         "live_months":   live_months,
         "flags":         ",".join(flags) if flags else "",
@@ -218,14 +227,14 @@ def main() -> int:
     # Pre-compute monthly returns per strategy for pairwise correlation
     all_returns: dict[str, np.ndarray] = {}
     for slug, r in results.items():
-        rets = _equity_to_monthly_returns(r.equity_dates, r.equity_values)
+        rets = _equity_to_period_returns(r.equity_dates, r.equity_values)
         if len(rets) >= 12:
             all_returns[slug] = rets
 
-    # Compute health for each strategy
+    # Compute health for each strategy (live_months is portfolio-wide)
+    live_m = _portfolio_live_months()
     rows = []
     for slug, r in results.items():
-        live_m = _live_months(slug)
         row = compute_health(
             slug=slug, name=r.name,
             equity_dates=r.equity_dates, equity_values=r.equity_values,
@@ -235,7 +244,7 @@ def main() -> int:
         log.info(
             "health_check: %s — %s (OOS Sharpe=%.2f, flags=%s)",
             slug, row["status"],
-            row["oos_sharpe"] or float("nan"),
+            row["oos_sharpe"] if row["oos_sharpe"] is not None else float("nan"),
             row["flags"] or "none",
         )
 
@@ -248,7 +257,7 @@ def main() -> int:
     os.replace(tmp, out_path)
     log.info("health_check: wrote %s (%d rows)", out_path.name, len(df))
 
-    n_flag = sum(1 for r in rows if r["status"] == "FLAG")
+    n_flag = sum(r["status"] == "FLAG" for r in rows)
     if n_flag:
         log.warning("health_check: %d strategy(ies) flagged — review in Blends tab", n_flag)
     return 0

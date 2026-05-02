@@ -156,14 +156,15 @@ def _metric_table(results: dict) -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def _load_strategy_health() -> dict[str, dict]:
     """Load strategy health scores from the nightly health check output."""
-    import contextlib
     path = DATA_DIR / "gold" / "equity" / "strategy_health.parquet"
     if not path.exists():
         return {}
-    with contextlib.suppress(Exception):
+    try:
         df = pl.read_parquet(path)
         return {row["slug"]: row for row in df.iter_rows(named=True)}
-    return {}
+    except OSError as exc:
+        log.warning("Could not load strategy_health.parquet: %s", exc)
+        return {}
 
 
 _STATUS_ICON = {"HEALTHY": "🟢", "WATCH": "🟡", "FLAG": "🔴", "NEW": "🔵"}
