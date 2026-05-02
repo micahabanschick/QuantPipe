@@ -36,13 +36,13 @@ BENCHMARKS: list[str] = [
     "DIA",  # Dow Jones
 ]
 
-# Inverse ETFs — used as regime-triggered downside hedges (short-term only).
-# SH = 1× inverse SPY (broad market), PSQ = 1× inverse QQQ (tech/growth).
-# Daily-reset products: only held during confirmed CONTRACTION / STAGFLATION
-# regimes where typical duration is 4–12 weeks; decay over that window is small.
+# Inverse ETFs — regime-triggered downside hedges (short-term only).
+# Daily-reset products: held only during CONTRACTION / STAGFLATION regimes
+# (typical duration 4–12 weeks); decay over that window is tolerable.
+# PSQ (inverse QQQ) is reserved for Phase 2 when a tech-heavy regime overlay
+# is needed; add it here when wired into a strategy.
 INVERSE_ETFS: list[str] = [
-    "SH",   # ProShares Short S&P 500 (1× inverse SPY)
-    "PSQ",  # ProShares Short QQQ (1× inverse QQQ)
+    "SH",   # ProShares Short S&P 500 (1× inverse SPY) — active in CONTRACTION/STAGFLATION
 ]
 
 # Full equity universe (deduplicated, sorted for reproducibility)

@@ -40,6 +40,11 @@ import numpy as np
 import polars as pl
 
 from config.settings import DATA_DIR
+from config.universes import INVERSE_ETFS as _INVERSE_ETFS
+
+# Named references to inverse ETF tickers — centralised so a ticker change
+# only needs to happen in config/universes.py.
+_SH = _INVERSE_ETFS[0]   # ProShares Short S&P 500 (1× inverse SPY)
 
 log = logging.getLogger(__name__)
 
@@ -73,8 +78,8 @@ REGIME_LABELS: dict[MacroRegime, str] = {
 REGIME_SECTORS: dict[MacroRegime, list[str]] = {
     MacroRegime.EXPANSION:          ["XLK",  "XLY",  "XLF",  "XLI"],
     MacroRegime.INFLATIONARY_BOOM:  ["XLE",  "XLB",  "XLI",  "XLF"],
-    MacroRegime.STAGFLATION:        ["XLE",  "XLP",  "SH",   "XLV"],
-    MacroRegime.CONTRACTION:        ["SH",   "XLP",  "XLV",  "TLT"],
+    MacroRegime.STAGFLATION:        ["XLE",  "XLP",  _SH,    "XLV"],
+    MacroRegime.CONTRACTION:        [_SH,    "XLP",  "XLV",  "TLT"],
     MacroRegime.RECOVERY:           ["XLY",  "XLK",  "XLF",  "XLV"],
 }
 
