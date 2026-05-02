@@ -153,6 +153,27 @@ def _metric_table(results: dict) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("Strategy") if rows else pd.DataFrame()
 
 
+@st.cache_data(ttl=300)
+def _load_strategy_health() -> dict[str, dict]:
+    """Load strategy health scores from the nightly health check output."""
+    import contextlib
+    path = DATA_DIR / "gold" / "equity" / "strategy_health.parquet"
+    if not path.exists():
+        return {}
+    with contextlib.suppress(Exception):
+        df = pl.read_parquet(path)
+        return {row["slug"]: row for row in df.iter_rows(named=True)}
+    return {}
+
+
+_STATUS_ICON = {"HEALTHY": "🟢", "WATCH": "🟡", "FLAG": "🔴", "NEW": "🔵"}
+_STATUS_COLOR = {
+    "HEALTHY": COLORS["positive"],
+    "WATCH":   COLORS["warning"],
+    "FLAG":    COLORS["negative"],
+    "NEW":     COLORS["blue"],
+}
+
 
 # ── Page ───────────────────────────────────────────────────────────────────────
 
@@ -162,7 +183,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metas = _discover()
+metas  = _discover()
+health = _load_strategy_health()
 
 if "backtest_results" not in st.session_state:
     st.session_state["backtest_results"] = {}
@@ -221,12 +243,19 @@ with tab_overview:
                 alloc_pct = alloc_norm.get(slug, 0.0)
                 m = r.metrics
                 color = _color(i)
+                _h      = health.get(slug, {})
+                _status = _h.get("status", "")
+                _icon   = _STATUS_ICON.get(_status, "")
+                _badge  = (
+                    f'<span style="font-size:0.62rem;margin-left:4px;">{_icon} {_status}</span>'
+                    if _status else ""
+                )
                 with card_cols[i]:
                     st.markdown(f"""
 <div style="background:{COLORS['card_bg']};border:1px solid {COLORS['border']};
      border-left:3px solid {color};border-radius:8px;padding:14px 16px;margin-bottom:8px;">
   <div style="font-size:0.72rem;color:{COLORS['text_muted']};text-transform:uppercase;
-       letter-spacing:0.07em;margin-bottom:6px;">{r.name}</div>
+       letter-spacing:0.07em;margin-bottom:6px;">{r.name}{_badge}</div>
   <div style="font-size:1.6rem;font-weight:800;color:{color};line-height:1;">
     {int(alloc_pct * 100)}%</div>
   <div style="font-size:0.72rem;color:{COLORS['neutral']};margin-top:4px;">allocation</div>
@@ -284,6 +313,33 @@ with tab_overview:
             apply_theme(fig, title="Equal-Weight Blend vs Individual Strategies ($10k start)", height=380)
             fig.update_layout(yaxis=dict(tickprefix="$", tickformat=",.0f"))
             st.plotly_chart(fig, use_container_width=True)
+
+        # ── Strategy Health Summary ───────────────────────────────────────
+        if health:
+            st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)
+            st.markdown(section_label("Strategy Health"), unsafe_allow_html=True)
+            _h_rows = []
+            for _slug, _r in results.items():
+                _hh = health.get(_slug, {})
+                _st = _hh.get("status", "—")
+                _h_rows.append({
+                    "Strategy":      _r.name,
+                    "Status":        f"{_STATUS_ICON.get(_st, '')} {_st}",
+                    "OOS Sharpe":    f"{_hh['oos_sharpe']:.2f}"    if _hh.get("oos_sharpe")    is not None else "—",
+                    "IS/OOS Ratio":  f"{_hh['is_oos_ratio']:.1f}×" if _hh.get("is_oos_ratio")  is not None else "—",
+                    "Max DD":        f"{_hh['max_drawdown']:.1%}"   if _hh.get("max_drawdown")  is not None else "—",
+                    "Max Corr":      f"{_hh['max_correlation']:.2f}" if _hh.get("max_correlation") is not None else "—",
+                    "Live (mo)":     str(_hh.get("live_months", "—")),
+                    "Flags":         _hh.get("flags", "") or "—",
+                })
+            st.dataframe(pd.DataFrame(_h_rows), use_container_width=True, hide_index=True)
+            st.caption(
+                "🟢 HEALTHY  🟡 WATCH (1 flag or < 6 mo live)  "
+                "🔴 FLAG (2+ flags)  🔵 NEW (< 1 mo live) · "
+                "Updated nightly by the pipeline · OOS = last ⅓ of backtest"
+            )
+        elif results:
+            st.caption("Run backtests and let the pipeline run once to populate health scores.")
 
         # ── Cross-strategy P&L Attribution ────────────────────────────────
         st.markdown("<div style='height:8px'/>", unsafe_allow_html=True)

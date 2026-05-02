@@ -153,6 +153,12 @@ def run_pipeline(skip_ingest: bool = False, as_of: date | None = None) -> int:
     else:
         log.info("--- Step: pull_earnings SKIPPED (no ALPHA_VANTAGE_API_KEY) ---")
 
+    # Step 6 — strategy health check (best-effort, never aborts pipeline)
+    from orchestration.health_check_strategies import main as health_check_main
+    code, _ = _run_step("health_check_strategies", health_check_main)
+    if code != 0:
+        log.warning("Strategy health check had errors — check logs (pipeline continues)")
+
     # Summary
     total_elapsed = time.monotonic() - t_start
     log.info(f"======== Pipeline complete in {total_elapsed:.1f}s | "
