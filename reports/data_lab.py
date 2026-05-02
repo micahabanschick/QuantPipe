@@ -10,6 +10,7 @@ Tabs:
     Tradability      — Spearman IC at multiple lags, rolling IC, scatter
 """
 
+import contextlib
 import json
 from datetime import date, datetime, timedelta
 from io import StringIO
@@ -22,8 +23,10 @@ import plotly.graph_objects as go
 from scipy.stats import spearmanr
 import streamlit as st
 
-from config.settings import DATA_DIR, FRED_API_KEY
+from config.settings import DATA_DIR, FRED_API_KEY, ALPHA_VANTAGE_API_KEY
 from data_adapters.fred_adapter import FREDAdapter, POPULAR_SERIES
+from data_adapters.worldbank_adapter import WorldBankAdapter, POPULAR_INDICATORS, MAJOR_ECONOMIES
+from data_adapters.alphavantage_adapter import AlphaVantageAdapter, MACRO_SERIES
 from storage.parquet_store import load_bars
 from reports._theme import (
     CSS, COLORS, PLOTLY_CONFIG,
@@ -41,10 +44,8 @@ _META_FILE = ALT_DIR / ".meta.json"
 
 def _load_meta() -> dict:
     if _META_FILE.exists():
-        try:
+        with contextlib.suppress(Exception):
             return json.loads(_META_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            pass
     return {}
 
 
@@ -91,44 +92,84 @@ _crypto_syms = _crypto_symbols_available()
 
 with tab_reg:
     _fred_live = bool(FRED_API_KEY)
-    # _crypto section appended below after FRED block
-    _fc        = COLORS["green"] if _fred_live else COLORS["negative"]
-    _fbg       = "rgba(0,230,118,0.08)" if _fred_live else "rgba(255,77,77,0.08)"
-    _flabel    = "LIVE" if _fred_live else "KEY MISSING"
-    _fsamples  = "".join(
-        f'<li style="color:{COLORS["text_muted"]};font-size:0.76rem;">'
-        f'<code style="color:{COLORS["gold"]};font-size:0.72rem;">{sid}</code>'
-        f" — {desc}</li>"
-        for sid, desc in list(POPULAR_SERIES.items())[:6]
-    )
-    st.markdown(section_label("Live Connectors"), unsafe_allow_html=True)
-    st.markdown(f"""
-<div style="background:{_fbg};border:1px solid {_fc}44;border-left:3px solid {_fc};
+    _av_live   = bool(ALPHA_VANTAGE_API_KEY)
+
+    def _connector_card(icon, title, label, label_color, body, samples_html, footer=""):
+        bg  = f"rgba({','.join(str(int(label_color.lstrip('#')[i:i+2], 16)) for i in (0,2,4))},0.08)" \
+              if label_color.startswith("#") else "rgba(0,230,118,0.08)"
+        return f"""
+<div style="background:{bg};border:1px solid {label_color}44;border-left:3px solid {label_color};
             border-radius:8px;padding:14px 16px;margin-bottom:16px;">
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-    <span style="font-size:1.1rem;">&#x1F4E1;</span>
-    <span style="color:{COLORS['text']};font-size:0.92rem;font-weight:700;">FRED — Federal Reserve Economic Data</span>
-    <span style="background:{_fc}22;color:{_fc};font-size:0.62rem;font-weight:700;
+    <span style="font-size:1.1rem;">{icon}</span>
+    <span style="color:{COLORS['text']};font-size:0.92rem;font-weight:700;">{title}</span>
+    <span style="background:{label_color}22;color:{label_color};font-size:0.62rem;font-weight:700;
                  letter-spacing:0.08em;padding:2px 8px;border-radius:3px;
-                 border:1px solid {_fc}55;">{_flabel}</span>
+                 border:1px solid {label_color}55;">{label}</span>
   </div>
-  <p style="color:{COLORS['neutral']};font-size:0.78rem;margin:0 0 8px;line-height:1.5;">
-    {len(POPULAR_SERIES)} curated macro &amp; financial series.
-    Pull any via <b>Ingest &amp; Clean</b>, or enter any custom FRED series ID.
-  </p>
-  <ul style="margin:0;padding-left:16px;">{_fsamples}</ul>
-  <p style="color:{COLORS['text_muted']};font-size:0.72rem;margin:8px 0 0;">
-    + {len(POPULAR_SERIES)-6} more curated &middot; 800,000+ series via search
-  </p>
-</div>
-""", unsafe_allow_html=True)
+  <p style="color:{COLORS['neutral']};font-size:0.78rem;margin:0 0 8px;line-height:1.5;">{body}</p>
+  <ul style="margin:0;padding-left:16px;">{samples_html}</ul>
+  {f'<p style="color:{COLORS["text_muted"]};font-size:0.72rem;margin:8px 0 0;">{footer}</p>' if footer else ""}
+</div>"""
+
+    def _sample_items(items: list[tuple[str, str]], code=True) -> str:
+        return "".join(
+            f'<li style="color:{COLORS["text_muted"]};font-size:0.76rem;">'
+            + (f'<code style="color:{COLORS["gold"]};font-size:0.72rem;">{k}</code> — {v}'
+               if code else f"{k} — {v}")
+            + "</li>"
+            for k, v in items
+        )
+
+    st.markdown(section_label("Live Connectors"), unsafe_allow_html=True)
+
+    # FRED
+    _fc = COLORS["positive"] if _fred_live else COLORS["negative"]
+    st.markdown(_connector_card(
+        "📡", "FRED — Federal Reserve Economic Data",
+        "LIVE" if _fred_live else "KEY MISSING", _fc,
+        f"{len(POPULAR_SERIES)} curated macro &amp; financial series. "
+        "Pull any via <b>Ingest &amp; Clean</b>, or enter any custom FRED series ID.",
+        _sample_items(list(POPULAR_SERIES.items())[:6]),
+        f"+ {len(POPULAR_SERIES)-6} more curated · 800,000+ series via search",
+    ), unsafe_allow_html=True)
+
+    # World Bank
+    _wb_samples = _sample_items(list(POPULAR_INDICATORS.items())[:6])
+    st.markdown(_connector_card(
+        "🌍", "World Bank — Open Data",
+        "LIVE (no key needed)", COLORS["positive"],
+        f"{len(POPULAR_INDICATORS)} curated macro indicators across {len(MAJOR_ECONOMIES)} major economies. "
+        "Annual frequency. Pull via <b>Ingest &amp; Clean → World Bank</b>.",
+        _wb_samples,
+        f"+ {len(POPULAR_INDICATORS)-6} more curated · 16,000+ indicators via search",
+    ), unsafe_allow_html=True)
+
+    # Alpha Vantage
+    _avc = COLORS["positive"] if _av_live else COLORS["negative"]
+    _av_samples = _sample_items([
+        ("REAL_GDP",   "US Real GDP (Quarterly)"),
+        ("CPI",        "US Consumer Price Index (Monthly)"),
+        ("EARNINGS",   "Quarterly EPS actual vs estimate per ticker"),
+        ("OVERVIEW",   "P/E, EPS, market cap, beta, margins per ticker"),
+        ("INCOME_STATEMENT", "Quarterly revenue, EBITDA, net income per ticker"),
+        ("TREASURY_YIELD",   "US Treasury Yield (Daily)"),
+    ])
+    st.markdown(_connector_card(
+        "📊", "Alpha Vantage — Fundamentals & Macro",
+        "LIVE" if _av_live else "KEY MISSING", _avc,
+        f"{len(MACRO_SERIES)} US macro series + company fundamentals (P/E, EPS, revenue, earnings history). "
+        "Pull via <b>Ingest &amp; Clean → Alpha Vantage</b>.",
+        _av_samples,
+        "25 req/day free tier active" if _av_live else "Free tier: 25 req/day · Get a key at alphavantage.co",
+    ), unsafe_allow_html=True)
 
     st.markdown(section_label("Planned Connectors"), unsafe_allow_html=True)
     st.caption("Validate each source in Tradability Check before building a full connector.")
     _planned = [
         ("Web Scrapers", "Job postings, Glassdoor reviews, regulatory filings.",
          ["Job openings per ticker", "Employee sentiment score"]),
-        ("Other API Connectors", "Quandl, Alpha Vantage, World Bank, BLS.",
+        ("Other API Connectors", "Quandl, BLS, and others.",
          ["Harvest cycle indices", "Credit card spend by sector"]),
         ("File Watchers", "Scheduled CSV/JSON drops from vendors.",
          ["Vendor data dumps", "Earnings call NLP scores"]),
@@ -217,13 +258,22 @@ with tab_reg:
 with tab_ingest:
 
     _fred_ok = bool(FRED_API_KEY)
-    _modes   = (
-        ["FRED — Federal Reserve", "Upload File (CSV / JSON)"]
-        if _fred_ok else
-        ["Upload File (CSV / JSON)", "FRED (add FRED_API_KEY to .env to enable)"]
-    )
-    _mode    = st.radio("Data source", _modes, horizontal=True, key="ic_mode")
-    _is_fred = _mode.startswith("FRED") and _fred_ok
+    _av_ok   = bool(ALPHA_VANTAGE_API_KEY)
+    _modes   = ["World Bank — Macro (no key needed)"]
+    if _fred_ok:
+        _modes.insert(0, "FRED — Federal Reserve")
+    else:
+        _modes.append("FRED (add FRED_API_KEY to .env)")
+    if _av_ok:
+        _modes.insert(1 if _fred_ok else 1, "Alpha Vantage — Fundamentals")
+    else:
+        _modes.append("Alpha Vantage (add ALPHA_VANTAGE_API_KEY to .env)")
+    _modes.append("Upload File (CSV / JSON)")
+
+    _mode     = st.radio("Data source", _modes, horizontal=True, key="ic_mode")
+    _is_fred  = _mode.startswith("FRED") and _fred_ok
+    _is_wb    = _mode.startswith("World Bank")
+    _is_av    = _mode.startswith("Alpha Vantage") and _av_ok
     st.markdown("<div style='height:4px'/>", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -246,8 +296,7 @@ with tab_ingest:
             _cust = st.text_input("Or enter any FRED series ID",
                                    placeholder="e.g. MORTGAGE30US", key="ic_cust")
 
-        _sid = _cust.strip().upper() if _cust.strip() \
-               else (_pop if not _pop.startswith("—") else None)
+        _sid = _cust.strip().upper() or (None if _pop.startswith("—") else _pop)
 
         _sq = st.text_input("Search FRED catalogue",
                              placeholder="inflation, jobs…", key="ic_sq")
@@ -321,6 +370,278 @@ with tab_ingest:
                     })
                     st.success(f"Saved to data/alt/{_sname}.parquet")
                     st.info("Go to Tradability Check to analyse this signal.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # WORLD BANK BRANCH
+    # ══════════════════════════════════════════════════════════════════════════
+    elif _is_wb:
+        _wb = WorldBankAdapter()
+        st.markdown(section_label("World Bank — Macro Indicator"), unsafe_allow_html=True)
+
+        wb1, wb2 = st.columns(2)
+        with wb1:
+            _wb_country = st.selectbox(
+                "Country",
+                list(MAJOR_ECONOMIES.keys()),
+                format_func=lambda c: f"{c} — {MAJOR_ECONOMIES[c]}",
+                key="wb_country",
+            )
+        with wb2:
+            _wb_ind_choice = st.selectbox(
+                "Indicator",
+                ["— pick or enter custom below —"] + list(POPULAR_INDICATORS.keys()),
+                format_func=lambda k: k if k.startswith("—")
+                            else f"{k} — {POPULAR_INDICATORS.get(k, '')}",
+                key="wb_ind",
+            )
+        _wb_custom = st.text_input(
+            "Or enter any World Bank indicator code",
+            placeholder="e.g. SL.EMP.TOTL.SP.ZS",
+            key="wb_custom",
+        )
+        _wb_ind = _wb_custom.strip() or (None if _wb_ind_choice.startswith("—") else _wb_ind_choice)
+
+        wbyr1, wbyr2 = st.columns(2)
+        with wbyr1:
+            _wb_start = st.number_input("Start year", min_value=1960,
+                                         max_value=date.today().year, value=2000, key="wb_start")
+        with wbyr2:
+            _wb_end = st.number_input("End year", min_value=1960,
+                                       max_value=date.today().year, value=date.today().year, key="wb_end")
+
+        _wb_sname = st.text_input(
+            "Save as",
+            value=f"wb_{_wb_country.lower()}_{(_wb_ind or 'indicator').lower().replace('.', '_')}",
+            key="wb_sname",
+        )
+
+        if _wb_ind is None:
+            st.info("Pick an indicator from the dropdown or enter a custom code above.")
+        elif st.button("Pull from World Bank", key="wb_pull", type="primary"):
+            with st.spinner(f"Fetching {_wb_ind} for {_wb_country}…"):
+                try:
+                    _wb_info = _wb.get_indicator_info(_wb_ind)
+                    _wb_df   = _wb.get_indicator(_wb_country, _wb_ind,
+                                                  start_year=int(_wb_start),
+                                                  end_year=int(_wb_end))
+                except Exception as _exc:
+                    st.error(f"World Bank error: {_exc}")
+                    _wb_df = None
+                    _wb_info = {}
+            if _wb_df is not None and not _wb_df.is_empty():
+                _wb_pd = _wb_df.to_pandas()
+                st.success(f"Pulled {len(_wb_pd):,} rows for {_wb_info.get('name', _wb_ind)}")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Rows", f"{len(_wb_pd):,}")
+                m2.metric("From", str(_wb_pd['date'].min().year))
+                m3.metric("To",   str(_wb_pd['date'].max().year))
+                st.dataframe(_wb_pd, use_container_width=True, hide_index=True)
+                _fig_wb = go.Figure(go.Scatter(
+                    x=_wb_pd["date"], y=_wb_pd["value"], mode="lines+markers",
+                    line=dict(color=COLORS["blue"], width=2),
+                    marker=dict(size=5),
+                    name=_wb_country,
+                ))
+                _title_wb = _wb_info.get("name", _wb_ind)
+                apply_theme(_fig_wb, title=f"{_title_wb} — {MAJOR_ECONOMIES.get(_wb_country, _wb_country)}", height=260)
+                st.plotly_chart(_fig_wb, use_container_width=True, config=PLOTLY_CONFIG)
+                # Save with value column renamed to indicator code
+                _wb_save = _wb_df.rename({"value": _wb_ind})
+                _wb_save.write_parquet(ALT_DIR / f"{_wb_sname}.parquet")
+                _save_meta(_wb_sname, {
+                    "source": "WorldBank", "indicator": _wb_ind,
+                    "country": _wb_country,
+                    "title": _wb_info.get("name", _wb_ind),
+                    "unit": _wb_info.get("unit", ""),
+                    "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                    "rows": len(_wb_pd),
+                    "date_from": str(int(_wb_start)), "date_to": str(int(_wb_end)),
+                })
+                st.success(f"Saved to data/alt/{_wb_sname}.parquet")
+                st.info("Go to Tradability Check to analyse this signal.")
+            elif _wb_df is not None:
+                st.warning("No data returned — check the indicator code and year range.")
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ALPHA VANTAGE BRANCH
+    # ══════════════════════════════════════════════════════════════════════════
+    elif _is_av:
+        _av = AlphaVantageAdapter(ALPHA_VANTAGE_API_KEY)
+        st.markdown(section_label("Alpha Vantage"), unsafe_allow_html=True)
+
+        _av_type = st.radio(
+            "Data type",
+            ["US Macro Series", "Company Fundamentals", "Earnings History", "Income Statement"],
+            horizontal=True, key="av_type",
+        )
+
+        # ── Macro series ──────────────────────────────────────────────────────
+        if _av_type == "US Macro Series":
+            avm1, avm2 = st.columns(2)
+            with avm1:
+                _av_fn = st.selectbox(
+                    "Series",
+                    list(MACRO_SERIES.keys()),
+                    format_func=lambda k: f"{k} — {MACRO_SERIES[k]}",
+                    key="av_fn",
+                )
+            with avm2:
+                _av_interval = st.selectbox(
+                    "Interval",
+                    ["quarterly", "annual", "monthly", "weekly", "daily"],
+                    key="av_interval",
+                )
+            _av_sname = st.text_input("Save as", value=f"av_{_av_fn.lower()}", key="av_sname_macro")
+            if st.button("Pull from Alpha Vantage", key="av_pull_macro", type="primary"):
+                with st.spinner(f"Fetching {_av_fn}…"):
+                    try:
+                        _av_df = _av.get_macro_series(_av_fn, interval=_av_interval)
+                    except Exception as _exc:
+                        st.error(f"Alpha Vantage error: {_exc}")
+                        _av_df = None
+                if _av_df is not None and not _av_df.is_empty():
+                    _av_pd = _av_df.to_pandas()
+                    st.success(f"Pulled {len(_av_pd):,} rows for {_av_fn}")
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Rows", f"{len(_av_pd):,}")
+                    m2.metric("Nulls", f"{_av_pd['value'].isnull().sum():,}")
+                    m3.metric("Range", f"{_av_pd['date'].min().date()} to {_av_pd['date'].max().date()}")
+                    _fig_av = go.Figure(go.Scatter(
+                        x=_av_pd["date"], y=_av_pd["value"], mode="lines",
+                        line=dict(color=COLORS["purple"], width=2),
+                    ))
+                    apply_theme(_fig_av, title=f"{MACRO_SERIES.get(_av_fn, _av_fn)}", height=260)
+                    st.plotly_chart(_fig_av, use_container_width=True, config=PLOTLY_CONFIG)
+                    _av_df.write_parquet(ALT_DIR / f"{_av_sname}.parquet")
+                    _save_meta(_av_sname, {
+                        "source": "AlphaVantage", "function": _av_fn,
+                        "title": MACRO_SERIES.get(_av_fn, _av_fn),
+                        "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                        "rows": len(_av_pd),
+                        "date_from": str(_av_pd["date"].min().date()),
+                        "date_to":   str(_av_pd["date"].max().date()),
+                    })
+                    st.success(f"Saved to data/alt/{_av_sname}.parquet")
+                    st.info("Go to Tradability Check to analyse this signal.")
+                elif _av_df is not None:
+                    st.warning("No data returned.")
+
+        # ── Company Fundamentals ──────────────────────────────────────────────
+        elif _av_type == "Company Fundamentals":
+            _av_sym = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…", key="av_sym_ov")
+            _av_sname = st.text_input("Save as",
+                                       value=f"av_overview_{_av_sym.lower()}" if _av_sym else "av_overview",
+                                       key="av_sname_ov")
+            if _av_sym and st.button("Pull Overview", key="av_pull_ov", type="primary"):
+                with st.spinner(f"Fetching overview for {_av_sym.upper()}…"):
+                    try:
+                        _ov = _av.get_company_overview(_av_sym.upper())
+                    except Exception as _exc:
+                        st.error(f"Alpha Vantage error: {_exc}")
+                        _ov = {}
+                if _ov:
+                    st.success(f"Fundamentals for {_ov.get('Name', _av_sym.upper())}")
+                    _ov_rows = [{"Field": k, "Value": v} for k, v in _ov.items() if v is not None]
+                    st.dataframe(pd.DataFrame(_ov_rows), use_container_width=True, hide_index=True)
+                    _ov_df = pl.DataFrame([_ov])
+                    _ov_df.write_parquet(ALT_DIR / f"{_av_sname}.parquet")
+                    _save_meta(_av_sname, {
+                        "source": "AlphaVantage", "function": "OVERVIEW",
+                        "symbol": _av_sym.upper(),
+                        "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                        "rows": 1,
+                    })
+                    st.success(f"Saved to data/alt/{_av_sname}.parquet")
+                elif _ov is not None:
+                    st.warning("No data returned — check the ticker symbol.")
+
+        # ── Earnings History ──────────────────────────────────────────────────
+        elif _av_type == "Earnings History":
+            _av_sym = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…", key="av_sym_earn")
+            _av_sname = st.text_input("Save as",
+                                       value=f"av_earnings_{_av_sym.lower()}" if _av_sym else "av_earnings",
+                                       key="av_sname_earn")
+            if _av_sym and st.button("Pull Earnings", key="av_pull_earn", type="primary"):
+                with st.spinner(f"Fetching earnings for {_av_sym.upper()}…"):
+                    try:
+                        _earn_df = _av.get_earnings(_av_sym.upper())
+                    except Exception as _exc:
+                        st.error(f"Alpha Vantage error: {_exc}")
+                        _earn_df = None
+                if _earn_df is not None and not _earn_df.is_empty():
+                    _earn_pd = _earn_df.to_pandas()
+                    st.success(f"Pulled {len(_earn_pd)} quarters of earnings for {_av_sym.upper()}")
+                    st.dataframe(_earn_pd, use_container_width=True, hide_index=True)
+                    _fig_earn = go.Figure()
+                    _fig_earn.add_trace(go.Bar(
+                        x=_earn_pd["date"], y=_earn_pd["reported_eps"],
+                        name="Reported EPS", marker_color=COLORS["positive"],
+                    ))
+                    _fig_earn.add_trace(go.Scatter(
+                        x=_earn_pd["date"], y=_earn_pd["estimated_eps"],
+                        name="Estimated EPS", mode="lines+markers",
+                        line=dict(color=COLORS["gold"], width=2, dash="dot"),
+                    ))
+                    apply_theme(_fig_earn, title=f"{_av_sym.upper()} — Quarterly EPS", height=280)
+                    st.plotly_chart(_fig_earn, use_container_width=True, config=PLOTLY_CONFIG)
+                    _earn_df.write_parquet(ALT_DIR / f"{_av_sname}.parquet")
+                    _save_meta(_av_sname, {
+                        "source": "AlphaVantage", "function": "EARNINGS",
+                        "symbol": _av_sym.upper(),
+                        "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                        "rows": len(_earn_pd),
+                        "date_from": str(_earn_pd["date"].min().date()),
+                        "date_to":   str(_earn_pd["date"].max().date()),
+                    })
+                    st.success(f"Saved to data/alt/{_av_sname}.parquet")
+                    st.info("Go to Tradability Check to test EPS surprise as a signal.")
+                elif _earn_df is not None:
+                    st.warning("No earnings data returned — check the ticker symbol.")
+
+        # ── Income Statement ──────────────────────────────────────────────────
+        else:
+            _av_sym    = st.text_input("Ticker symbol", placeholder="AAPL, MSFT, GOOGL…", key="av_sym_inc")
+            _av_annual = st.toggle("Annual reports", value=False, key="av_annual")
+            _av_sname  = st.text_input("Save as",
+                                        value=f"av_income_{_av_sym.lower()}" if _av_sym else "av_income",
+                                        key="av_sname_inc")
+            if _av_sym and st.button("Pull Income Statement", key="av_pull_inc", type="primary"):
+                with st.spinner(f"Fetching income statement for {_av_sym.upper()}…"):
+                    try:
+                        _inc_df = _av.get_income_statement(_av_sym.upper(), annual=_av_annual)
+                    except Exception as _exc:
+                        st.error(f"Alpha Vantage error: {_exc}")
+                        _inc_df = None
+                if _inc_df is not None and not _inc_df.is_empty():
+                    _inc_pd = _inc_df.to_pandas()
+                    st.success(f"Pulled {len(_inc_pd)} periods for {_av_sym.upper()}")
+                    st.dataframe(_inc_pd, use_container_width=True, hide_index=True)
+                    _fig_inc = go.Figure()
+                    for _col, _color in [("total_revenue", COLORS["blue"]),
+                                          ("gross_profit",  COLORS["positive"]),
+                                          ("net_income",    COLORS["gold"])]:
+                        if _col in _inc_pd.columns:
+                            _fig_inc.add_trace(go.Bar(
+                                x=_inc_pd["date"], y=_inc_pd[_col] / 1e9,
+                                name=_col.replace("_", " ").title(),
+                                marker_color=_color, opacity=0.8,
+                            ))
+                    apply_theme(_fig_inc, title=f"{_av_sym.upper()} — Income Statement ($B)", height=300)
+                    _fig_inc.update_layout(barmode="group", yaxis=dict(ticksuffix="B"))
+                    st.plotly_chart(_fig_inc, use_container_width=True, config=PLOTLY_CONFIG)
+                    _inc_df.write_parquet(ALT_DIR / f"{_av_sname}.parquet")
+                    _save_meta(_av_sname, {
+                        "source": "AlphaVantage", "function": "INCOME_STATEMENT",
+                        "symbol": _av_sym.upper(), "annual": _av_annual,
+                        "last_refreshed": datetime.now().isoformat(timespec="seconds"),
+                        "rows": len(_inc_pd),
+                        "date_from": str(_inc_pd["date"].min().date()),
+                        "date_to":   str(_inc_pd["date"].max().date()),
+                    })
+                    st.success(f"Saved to data/alt/{_av_sname}.parquet")
+                    st.info("Go to Tradability Check to analyse revenue growth as a signal.")
+                elif _inc_df is not None:
+                    st.warning("No income statement data returned.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # UPLOAD BRANCH
@@ -632,9 +953,8 @@ with tab_ingest:
 
 with tab_trade:
 
-    _tfiles = sorted(ALT_DIR.glob("*.parquet"))
-    if not _tfiles:
-        st.info("No saved alt data yet. Pull from FRED or upload a file in Ingest & Clean.")
+    if not (_tfiles := sorted(ALT_DIR.glob("*.parquet"))):
+        st.info("No saved alt data yet. Pull from FRED, World Bank, Alpha Vantage, or upload a file in Ingest & Clean.")
     else:
         # ── Multi-signal comparison ────────────────────────────────────────────
         with st.expander("Compare All Signals", expanded=False):
@@ -689,7 +1009,7 @@ with tab_trade:
             _equity_targets = ["SPY", "QQQ", "IWM", "Equal-weight universe"]
             _crypto_targets = [f"CRYPTO:{s}" for s in _crypto_syms[:8]]
             _teq  = st.selectbox("Price target (equity or crypto)",
-                                  _equity_targets + (_crypto_targets if _crypto_targets else []),
+                                  _equity_targets + (_crypto_targets or []),
                                   key="tc_eq",
                                   help="Select an equity ETF or a crypto symbol as the forward-return target")
         with _tc4:
@@ -825,7 +1145,7 @@ with tab_trade:
                 _fig_l = go.Figure(go.Bar(
                     x=_ldf["lag"], y=_ldf["IC"],
                     marker=dict(color=_bc, line=dict(width=0)),
-                    text=[f"{v:+.4f}" if not pd.isna(v) else "n/a" for v in _ldf["IC"]],
+                    text=["n/a" if pd.isna(v) else f"{v:+.4f}" for v in _ldf["IC"]],
                     textposition="outside",
                 ))
                 _fig_l.add_hline(y=0.05, line=dict(color=COLORS["positive"], width=1, dash="dot"),
