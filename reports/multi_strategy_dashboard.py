@@ -37,12 +37,20 @@ def _hex_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
+import math as _math
+
+
+def _is_missing(v) -> bool:
+    """True for None and float NaN — both mean "no data"."""
+    return v is None or (isinstance(v, float) and _math.isnan(v))
+
+
 def _pct(v, decimals=1):
-    return f"{v * 100:+.{decimals}f}%" if v is not None else "—"
+    return "—" if _is_missing(v) else f"{v * 100:+.{decimals}f}%"
 
 
 def _fmt(v, pct=True, decimals=1):
-    if v is None:
+    if _is_missing(v):
         return "—"
     return f"{v * 100:.{decimals}f}%" if pct else f"{v:.{decimals}f}"
 
@@ -268,7 +276,7 @@ with tab_overview:
       <div style="font-size:0.62rem;color:{COLORS['text_muted']};">CAGR</div>
     </div>
     <div style="text-align:center;">
-      <div style="font-size:0.78rem;font-weight:700;color:{COLORS['text']};">{m.get('sharpe', 0):.2f}</div>
+      <div style="font-size:0.78rem;font-weight:700;color:{COLORS['text']};">{_fmt(m.get('sharpe'), pct=False, decimals=2)}</div>
       <div style="font-size:0.62rem;color:{COLORS['text_muted']};">Sharpe</div>
     </div>
     <div style="text-align:center;">
