@@ -1,7 +1,7 @@
-"""Multi-Strategy Dashboard — Portfolio group, page 1.
+"""Blends — compare and optimise strategy blends. Read-only; use Deployment to save configs.
 
 Tabs:
-  1. Overview    — deployed strategies, blended equity curve, allocation pie
+  1. Overview    — active strategies, blended equity curve, allocation pie
   2. Comparison  — metrics table, overlaid curves, drawdown, rolling Sharpe, monthly returns
   3. Optimizer   — correlation heatmap, allocation optimizer, efficient frontier
 """
@@ -122,36 +122,12 @@ def _metric_table(results: dict) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("Strategy") if rows else pd.DataFrame()
 
 
-def _save_allocations(allocs: dict, results: dict, config, metas: list):
-    from portfolio.multi_strategy import (
-        write_deployment_config, read_deployment_config,
-        DeploymentConfig, DeployedStrategy,
-    )
-    existing = config or read_deployment_config()
-    old_params = {s.slug: s.backtest_params for s in existing.strategies} if existing else {}
-    meta_map = {m.slug: m for m in metas}
-    strategies = []
-    for slug, weight in allocs.items():
-        m = meta_map.get(slug)
-        strategies.append(DeployedStrategy(
-            slug=slug,
-            name=results[slug].name if slug in results else slug,
-            active=True,
-            allocation_weight=round(weight, 6),
-            backtest_params=old_params.get(slug, m.default_params if m else {}),
-        ))
-    write_deployment_config(DeploymentConfig(
-        version=(existing.version if existing else 0),
-        updated_at="",
-        strategies=strategies,
-    ))
-
 
 # ── Page ───────────────────────────────────────────────────────────────────────
 
 st.markdown(CSS, unsafe_allow_html=True)
 st.markdown(
-    page_header("Multi-Strategy", "Blend strategies, compare performance, and optimise allocations."),
+    page_header("Blends", "Compare strategy blends and optimise allocations. Deploy changes in the Deployment tab."),
     unsafe_allow_html=True,
 )
 
@@ -558,11 +534,7 @@ with tab_optimizer:
                 st.plotly_chart(fig_bar, use_container_width=True)
                 st.caption("Error bars show 5th–95th percentile from 200 bootstrap resamples.")
 
-                if st.button("Deploy These Allocations", type="primary", key="deploy_opt"):
-                    _save_allocations(allocs, results, config, metas)
-                    st.success("Deployment config saved.")
-                    st.cache_resource.clear()
-                    st.rerun()
+                st.info("To deploy these allocations, copy the weights to **Deployment → Strategy Config**.", icon="ℹ️")
 
             st.markdown("### Efficient Frontier")
             _n_sims = 2000
