@@ -283,5 +283,7 @@ All sensitive credentials are stored in **Dashlane** under the note **"QuantPipe
 | IBKR paper account ID (`DUQ368627`) | Reference only |
 | Backblaze B2 key ID + secret | `/opt/quantpipe/.env` and desktop `.env` |
 | FRED API key | `/opt/quantpipe/.env` and desktop `.env` |
+| Alpha Vantage API key (`CYIIV9IWJI87IPWV`) | `/opt/quantpipe/.env` and desktop `.env` |
+| BLS API key | Not yet registered — optional free key at data.bls.gov/registrationEngine |
 
 Non-sensitive config (VPN IPs, ports, service names) lives in this runbook.

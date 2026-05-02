@@ -6,7 +6,7 @@
 
 An end-to-end quantitative finance pipeline for systematic equity and crypto trading. Built around a **Sector × Size × Style ETF rotation** framework with regime-adaptive overlays, a multi-strategy portfolio management layer, and direct Interactive Brokers execution.
 
-**Stack:** Python 3.12 · Polars · DuckDB · Parquet · cvxpy · PyPortfolioOpt · scipy · ib_insync · CCXT · Streamlit · Plotly · FRED API · `uv`
+**Stack:** Python 3.12 · Polars · DuckDB · Parquet · cvxpy · PyPortfolioOpt · scipy · ib_insync · CCXT · Streamlit · Plotly · FRED · World Bank · BLS · Alpha Vantage · Commodities (futures) · `uv`
 
 **Status:** Phases 0–8 complete. Portfolio management, multi-strategy blending, IB paper trading via IB Gateway, real-time monitoring dashboards, and graduate-level time-series analytics all operational.
 
@@ -34,9 +34,12 @@ Data flows in one direction through clearly separated layers. No module reaches 
 
 ```
 [Vendors]
-    │  yfinance (equities/ETFs)
+    │  yfinance (equities/ETFs + 40+ commodity futures)
     │  CCXT (crypto)
-    │  FRED API (macro series)
+    │  FRED API (800k+ macro series)
+    │  World Bank Open Data (16k+ macro indicators, no key)
+    │  BLS (labour market + inflation, no key)
+    │  Alpha Vantage (fundamentals: EPS, P/E, revenue, earnings)
     │  IBKR (live/paper via IB Gateway)
     ▼
 [data_adapters]       ← unified DataAdapter protocol, retry + dead-letter logging
@@ -77,7 +80,11 @@ QuantPipe/
 │   ├── base.py                     # DataAdapter protocol + OHLCV schema
 │   ├── yfinance_adapter.py         # equity/ETF data (retry + dead-letter)
 │   ├── ccxt_adapter.py             # crypto OHLCV (pagination guard + retry)
-│   └── fred_adapter.py             # FRED macro/financial series (pure requests)
+│   ├── fred_adapter.py             # FRED macro/financial series (pure requests)
+│   ├── worldbank_adapter.py        # World Bank Open Data (no key; 16k+ indicators)
+│   ├── bls_adapter.py              # BLS labour market + inflation (no key)
+│   ├── alphavantage_adapter.py     # Alpha Vantage fundamentals + US macro
+│   └── commodities_adapter.py      # Commodity futures + ETFs via yfinance
 ├── storage/
 │   ├── parquet_store.py            # atomic reads/writes, file-locked partitions
 │   └── universe.py                 # universe registry
@@ -169,7 +176,8 @@ QuantPipe/
 │       ├── order_journal.parquet   # append-only order audit trail
 │       ├── trading_history.parquet # per-broker NAV snapshots
 │       ├── deployment_config.json  # active strategy deployment config
-│       └── deployment_history.jsonl# immutable deployment event log
+│       ├── deployment_history.jsonl# immutable deployment event log
+│       └── saved_blends.jsonl      # named blend configs saved from Blends tab
 ├── .pipeline_heartbeat.json        # machine-readable pipeline status
 ├── pyproject.toml
 └── .env                            # secrets (never committed)
@@ -187,7 +195,17 @@ Real-time pipeline status read from `.pipeline_heartbeat.json`. Shows last run t
 ![Pipeline Health](docs/screenshots/pipeline_health.png)
 
 ### Data Lab
-Alt-data exploration hub. Connects to the FRED API (20 curated macro/financial series), supports CSV/JSON upload, applies cleaning transforms (fill, outlier, resample, normalise), and runs tradability checks (Spearman IC at multiple lags, rolling IC, multi-signal comparison, promote-to-feature flow).
+Alt-data exploration hub with 5 live connectors and a tradability pipeline:
+
+| Connector | Key required | What you get |
+|---|---|---|
+| FRED | Free key | 800k+ macro series (unemployment, CPI, yields, VIX…) |
+| World Bank | None | GDP, inflation, labour, trade for 200+ countries |
+| BLS | Optional free key | Payrolls, unemployment, CPI, PPI, JOLTS, productivity |
+| Commodities | None | 40+ futures (crude, gold, corn…) + ETFs (GLD, USO…) |
+| Alpha Vantage | Free key | EPS, P/E, revenue, earnings history per ticker |
+
+Upload CSV/JSON, apply cleaning transforms (fill, outlier, resample, normalise), and run tradability checks (Spearman IC at multiple lags, rolling IC, multi-signal comparison, promote-to-feature flow).
 
 ![Data Lab](docs/screenshots/data_lab.png)
 
@@ -227,7 +245,7 @@ Full strategy development environment: ACE code editor with syntax highlighting,
 ![Strategy Lab](docs/screenshots/strategy_lab.png)
 
 ### Performance
-Four-tab tearsheet:
+Tearsheet for any saved blend config. Select from blends saved in the Blends tab — the equity curve is computed by blending each strategy's backtest returns by the saved weights.
 - **Overview** — equity curve vs benchmark, trailing returns (grouped bars), annual returns bar chart
 - **Portfolio** — holdings, sector donut, weight history, contribution analysis
 - **Risk** — VaR/CVaR, stress scenarios, rolling vol/drawdown, factor exposure, return attribution
@@ -235,14 +253,11 @@ Four-tab tearsheet:
 
 ![Performance](docs/screenshots/performance.png)
 
-### Portfolio Management
-Six-tab multi-strategy control centre:
-- **Overview** — blended portfolio KPIs, allocation pie, blended equity curve vs components vs SPY
+### Blends
+Three-tab strategy comparison and blend optimisation tool (read-only — use Deployment to activate):
+- **Overview** — all 9 strategies with equal-weight blend, blended equity curve vs SPY, P&L attribution
 - **Comparison** — metrics table, overlaid equity curves, drawdown, rolling Sharpe, monthly return heatmaps
-- **Optimizer** — correlation heatmap, 4 optimization methods with bootstrap CI bars, efficient frontier (2,000 random portfolios)
-- **Deployment** — per-strategy active toggles, weight sliders, save config
-- **Drift Monitor** — target vs actual weight drift with alert thresholds
-- **Trade** — IB connection settings, auto-detect port scan, paper/live mode, pre-flight check, execute rebalance
+- **Optimizer** — correlation heatmap, 4 optimization methods with bootstrap CI bars, efficient frontier; **Save as Blend** button writes to `saved_blends.jsonl` for Performance analysis
 
 ![Portfolio Management](docs/screenshots/portfolio_mgmt.png)
 
@@ -261,7 +276,10 @@ Live monitoring of the IBKR paper account (`DUQ368627`):
 Minimal IBKR live account monitor: TCP connection probe, read-only live snapshot (NAV + open positions), historical live NAV chart. Full live execution is triggered from the Portfolio → Trade tab.
 
 ### Deployment
-Deployment config viewer and immutable deployment history log.
+The only tab where trades can be configured and executed:
+- **Strategy Config** — toggle strategies active/inactive, set allocation weights (defaults to all unchecked); Check All / Uncheck All buttons; load weights from any saved blend
+- **Drift Monitor** — target vs actual weight drift with alert thresholds
+- **Trade** — IB paper/live execution with pre-flight check
 
 ![Deployment](docs/screenshots/deployment.png)
 
@@ -273,7 +291,19 @@ Deployment config viewer and immutable deployment history log.
 Central settings loaded from environment variables via `.env`. All paths, API keys, IBKR connection parameters, and alert tokens live here. Import with `from config.settings import ...`.
 
 ### `data_adapters`
-Implements the `DataAdapter` protocol. Each adapter handles retries (3 attempts, exponential backoff), dead-letter logging to `logs/dead_letters.log`, and returns a validated Polars DataFrame in the standard OHLCV schema.
+Six live connectors, each returning a validated Polars DataFrame:
+
+| Adapter | Key | Data |
+|---|---|---|
+| `yfinance_adapter` | None | Equity/ETF OHLCV + 40+ commodity futures |
+| `ccxt_adapter` | Exchange keys | Crypto OHLCV |
+| `fred_adapter` | Free | 800k+ macro series |
+| `worldbank_adapter` | None | 16k+ macro indicators, multi-country |
+| `bls_adapter` | Optional free | Labour market, CPI, PPI, productivity |
+| `alphavantage_adapter` | Free | EPS, P/E, revenue, earnings history |
+| `commodities_adapter` | None | Futures + ETF price series (wraps yfinance) |
+
+Price adapters handle retries (3 attempts, exponential backoff) and dead-letter logging to `logs/dead_letters.log`.
 
 ### `storage`
 Bronze layer: partitioned Parquet files at `data/bronze/{asset_class}/daily/symbol=X/`. All writes are atomic (`.tmp` + `os.replace`) and file-locked to prevent concurrent corruption. Gold layer: derived artefacts (target weights, portfolio log, order journal, NAV history).
@@ -391,6 +421,8 @@ uv sync --all-extras
 | `B2_ACCOUNT_ID` | Backblaze B2 application key ID | — |
 | `B2_APPLICATION_KEY` | Backblaze B2 application key secret | — |
 | `B2_BUCKET` | Backblaze B2 bucket name | — |
+| `ALPHA_VANTAGE_API_KEY` | Alpha Vantage fundamentals key (free at alphavantage.co) | — |
+| `BLS_API_KEY` | BLS registration key (optional; free at bls.gov — raises limit 25→500 req/day) | — |
 | `VAULT_ADDR` | HashiCorp Vault address (server only) | — |
 | `VAULT_TOKEN` | HashiCorp Vault app token (server only) | — |
 
