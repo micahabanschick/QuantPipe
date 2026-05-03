@@ -73,3 +73,4 @@ credentials*.json
 
 # Local planning and backlog documents
 FEATURE_BACKLOG.md
+MOBILE_SETUP.md
