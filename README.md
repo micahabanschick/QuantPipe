@@ -275,6 +275,11 @@ Live monitoring of the IBKR paper account (`DUQ368627`):
 ### Live Trading
 Minimal IBKR live account monitor: TCP connection probe, read-only live snapshot (NAV + open positions), historical live NAV chart. Full live execution is triggered from the Portfolio → Trade tab.
 
+### Mobile App (iPhone PWA)
+A separate FastAPI + Progressive Web App on port 8503. Read-only. Installable as a home screen app on iPhone via Safari → Add to Home Screen. Accessible over WireGuard VPN at `http://10.0.0.1:8503`.
+
+**5 pages:** Home (NAV, daily P&L, sparkline, macro regime) · Performance (equity curve, Sharpe, CAGR, drawdown) · Portfolio (donut chart, positions list) · Trades (recent orders with slippage) · Health (strategy health badges, pipeline status)
+
 ### Deployment
 The only tab where trades can be configured and executed:
 - **Strategy Config** — toggle strategies active/inactive, set allocation weights (defaults to all unchecked); Check All / Uncheck All buttons; load weights from any saved blend
