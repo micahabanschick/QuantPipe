@@ -1,0 +1,21 @@
+[Unit]
+Description=QuantPipe Mobile Dashboard (FastAPI + PWA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=quantpipe
+WorkingDirectory=/opt/quantpipe
+EnvironmentFile=/opt/quantpipe/.env
+Environment="PATH=/opt/quantpipe/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/quantpipe/.venv/bin/uvicorn mobile.api:app --host 0.0.0.0 --port 8503 --workers 1
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/quantpipe/mobile.log
+StandardError=append:/var/log/quantpipe/mobile.log
+MemoryMax=256M
+CPUQuota=30%
+
+[Install]
+WantedBy=multi-user.target

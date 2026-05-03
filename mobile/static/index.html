@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="QuantPipe">
+  <meta name="theme-color" content="#0A0D1A">
+  <meta name="description" content="QuantPipe portfolio dashboard">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icon-192.png">
+  <title>QuantPipe</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+  <style>
+    /* ── Variables ─────────────────────────────────────────── */
+    :root {
+      --bg:         #0A0D1A;
+      --surface:    #0F1325;
+      --card:       #141C35;
+      --card-2:     #1B2445;
+      --border:     rgba(201,162,39,0.18);
+      --gold:       #C9A227;
+      --gold-dim:   #8A6B18;
+      --green:      #00E676;
+      --green-dim:  #00A854;
+      --red:        #FF4D4D;
+      --blue:       #4A90D9;
+      --purple:     #7B5EA7;
+      --text:       #EEF2FF;
+      --text-2:     #A8B3CC;
+      --text-dim:   #5A6478;
+      --nav-h:      64px;
+      --safe-top:   env(safe-area-inset-top, 0px);
+      --safe-bot:   env(safe-area-inset-bottom, 0px);
+      --safe-l:     env(safe-area-inset-left, 0px);
+      --safe-r:     env(safe-area-inset-right, 0px);
+    }
+
+    /* ── Reset & Base ─────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+      font-size: 16px;
+      -webkit-font-smoothing: antialiased;
+      -webkit-text-size-adjust: 100%;
+      overscroll-behavior: none;
+    }
+
+    button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+    a { color: var(--gold); text-decoration: none; }
+
+    /* ── App Shell ────────────────────────────────────────── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+      max-width: 480px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    /* ── Header ───────────────────────────────────────────── */
+    #header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: calc(var(--safe-top) + 12px) 20px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #header h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--gold);
+      letter-spacing: 0.04em;
+    }
+    #refresh-btn {
+      width: 36px; height: 36px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%;
+      background: var(--card);
+      color: var(--text-2);
+      font-size: 1rem;
+      transition: opacity 0.2s;
+    }
+    #refresh-btn:active { opacity: 0.6; }
+    #refresh-btn.spinning { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Page Container ───────────────────────────────────── */
+    #pages {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 16px 16px calc(var(--nav-h) + var(--safe-bot) + 16px);
+      padding-left: calc(16px + var(--safe-l));
+      padding-right: calc(16px + var(--safe-r));
+    }
+
+    .page { display: none; }
+    .page.active { display: block; }
+
+    /* ── Bottom Navigation ────────────────────────────────── */
+    #bottom-nav {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      z-index: 200;
+      padding-bottom: var(--safe-bot);
+      padding-left: var(--safe-l);
+      padding-right: var(--safe-r);
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+    }
+    .nav-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      min-height: 54px;
+      min-width: 44px;
+      padding: 8px 4px;
+      color: var(--text-dim);
+      font-size: 0.6rem;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      transition: color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .nav-btn .nav-icon { font-size: 1.35rem; line-height: 1; }
+    .nav-btn.active { color: var(--gold); }
+    .nav-btn:active { opacity: 0.7; }
+
+    /* ── Cards ────────────────────────────────────────────── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .card-title {
+      font-size: 0.68rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+
+    /* ── KPI Grid ─────────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .kpi {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 12px;
+    }
+    .kpi-label {
+      font-size: 0.65rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+    .kpi-value {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--text);
+      line-height: 1;
+    }
+    .kpi-value.positive { color: var(--green); }
+    .kpi-value.negative { color: var(--red); }
+    .kpi-value.gold     { color: var(--gold); }
+
+    /* ── Big NAV display ─────────────────────────────────── */
+    .nav-big {
+      text-align: center;
+      padding: 20px 0 8px;
+    }
+    .nav-amount {
+      font-size: 2.6rem;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -0.02em;
+      line-height: 1;
+    }
+    .nav-pnl {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 20px;
+    }
+    .nav-pnl.positive { background: rgba(0,230,118,0.12); color: var(--green); }
+    .nav-pnl.negative { background: rgba(255,77,77,0.12); color: var(--red); }
+    .nav-pnl.neutral  { background: var(--card-2); color: var(--text-2); }
+
+    /* ── Status Pill ──────────────────────────────────────── */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .status-ok       { background: rgba(0,230,118,0.12); color: var(--green); }
+    .status-partial  { background: rgba(201,162,39,0.15); color: var(--gold); }
+    .status-failed   { background: rgba(255,77,77,0.12); color: var(--red); }
+    .status-unknown  { background: var(--card-2); color: var(--text-2); }
+
+    /* ── Chart containers ─────────────────────────────────── */
+    .chart-wrap {
+      position: relative;
+      width: 100%;
+    }
+    .chart-wrap canvas { border-radius: 8px; }
+
+    /* ── Period selector ──────────────────────────────────── */
+    .period-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .period-btn {
+      flex: 1;
+      padding: 7px 4px;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      background: var(--card);
+      border: 1px solid transparent;
+      transition: all 0.15s;
+      text-align: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .period-btn.active {
+      color: var(--gold);
+      border-color: var(--gold-dim);
+      background: rgba(201,162,39,0.08);
+    }
+    .period-btn:active { opacity: 0.7; }
+
+    /* ── Position list ────────────────────────────────────── */
+    .pos-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .pos-item:last-child { border-bottom: none; }
+    .pos-symbol {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .pos-weight {
+      font-size: 0.8rem;
+      color: var(--text-2);
+      margin-top: 2px;
+    }
+    .pos-value {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+      text-align: right;
+    }
+
+    /* ── Trade cards ──────────────────────────────────────── */
+    .trade-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+    }
+    .trade-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .trade-symbol { font-size: 0.95rem; font-weight: 700; }
+    .trade-date   { font-size: 0.72rem; color: var(--text-dim); }
+    .trade-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: var(--text-2);
+      margin-top: 4px;
+    }
+    .side-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+    .side-buy  { background: rgba(0,230,118,0.15); color: var(--green); }
+    .side-sell { background: rgba(255,77,77,0.12); color: var(--red); }
+    .slip-good { color: var(--green); }
+    .slip-bad  { color: var(--red); }
+
+    /* ── Strategy health table ────────────────────────────── */
+    .strat-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    .strat-row:last-child { border-bottom: none; }
+    .strat-icon { font-size: 1.1rem; flex-shrink: 0; }
+    .strat-name { font-size: 0.82rem; font-weight: 600; flex: 1; }
+    .strat-meta { font-size: 0.7rem; color: var(--text-dim); margin-top: 2px; }
+    .strat-right { text-align: right; flex-shrink: 0; }
+    .strat-oos   { font-size: 0.78rem; font-weight: 600; color: var(--text-2); }
+
+    /* ── Regime badge ─────────────────────────────────────── */
+    .regime-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      background: rgba(201,162,39,0.1);
+      border: 1px solid var(--gold-dim);
+      color: var(--gold);
+      margin-bottom: 12px;
+    }
+
+    /* ── Sector chips ─────────────────────────────────────── */
+    .sector-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .chip {
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      background: var(--card-2);
+      color: var(--text-2);
+      border: 1px solid rgba(255,255,255,0.07);
+    }
+
+    /* ── Empty / loading states ───────────────────────────── */
+    .empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-dim);
+      font-size: 0.88rem;
+    }
+    .empty-icon { font-size: 2.5rem; margin-bottom: 12px; }
+    .loading { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+
+    /* ── Section header ───────────────────────────────────── */
+    .section-header {
+      font-size: 0.68rem;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin: 18px 0 10px;
+    }
+    .section-header:first-child { margin-top: 0; }
+
+    /* ── Divider ──────────────────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 12px 0;
+    }
+
+    /* ── Info row ─────────────────────────────────────────── */
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      font-size: 0.83rem;
+    }
+    .info-row .label { color: var(--text-dim); }
+    .info-row .value { font-weight: 600; }
+
+    /* ── Desktop fallback (>480px) ────────────────────────── */
+    @media (min-width: 481px) {
+      #app { box-shadow: 0 0 80px rgba(0,0,0,0.6); }
+      body { background: #050810; }
+    }
+
+    /* Disable hover on touch devices */
+    @media (hover: none) {
+      .nav-btn:hover, .period-btn:hover { opacity: 1; color: inherit; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Header -->
+  <header id="header">
+    <h1>⚡ QUANTPIPE</h1>
+    <button id="refresh-btn" onclick="refreshPage()" aria-label="Refresh">↻</button>
+  </header>
+
+  <!-- Pages -->
+  <main id="pages">
+
+    <!-- ── HOME ─────────────────────────────────────────── -->
+    <div id="page-home" class="page active">
+      <div id="home-content"><div class="loading">Loading…</div></div>
+    </div>
+
+    <!-- ── PERFORMANCE ──────────────────────────────────── -->
+    <div id="page-performance" class="page">
+      <div class="period-tabs" id="period-tabs">
+        <button class="period-btn" data-period="1m">1M</button>
+        <button class="period-btn" data-period="3m">3M</button>
+        <button class="period-btn" data-period="6m">6M</button>
+        <button class="period-btn" data-period="1y">1Y</button>
+        <button class="period-btn active" data-period="all">All</button>
+      </div>
+      <div id="perf-content"><div class="loading">Loading…</div></div>
+    </div>
+
+    <!-- ── PORTFOLIO ─────────────────────────────────────── -->
+    <div id="page-portfolio" class="page">
+      <div id="port-content"><div class="loading">Loading…</div></div>
+    </div>
+
+    <!-- ── TRADES ────────────────────────────────────────── -->
+    <div id="page-trades" class="page">
+      <div id="trades-content"><div class="loading">Loading…</div></div>
+    </div>
+
+    <!-- ── HEALTH ────────────────────────────────────────── -->
+    <div id="page-health" class="page">
+      <div id="health-content"><div class="loading">Loading…</div></div>
+    </div>
+
+  </main>
+
+  <!-- Bottom Navigation -->
+  <nav id="bottom-nav" role="navigation">
+    <button class="nav-btn active" data-page="home" onclick="showPage('home')">
+      <span class="nav-icon">🏠</span><span>Home</span>
+    </button>
+    <button class="nav-btn" data-page="performance" onclick="showPage('performance')">
+      <span class="nav-icon">📈</span><span>Perf</span>
+    </button>
+    <button class="nav-btn" data-page="portfolio" onclick="showPage('portfolio')">
+      <span class="nav-icon">💼</span><span>Portfolio</span>
+    </button>
+    <button class="nav-btn" data-page="trades" onclick="showPage('trades')">
+      <span class="nav-icon">🔄</span><span>Trades</span>
+    </button>
+    <button class="nav-btn" data-page="health" onclick="showPage('health')">
+      <span class="nav-icon">🏥</span><span>Health</span>
+    </button>
+  </nav>
+</div>
+
+<script>
+/* ── State ──────────────────────────────────────────────── */
+let currentPage = 'home';
+let currentPeriod = 'all';
+let charts = {};
+let pageLoaded = {};
+
+/* ── Navigation ─────────────────────────────────────────── */
+function showPage(page) {
+  if (currentPage === page) return;
+
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.nav-btn[data-page="${page}"]`).classList.add('active');
+
+  currentPage = page;
+  loadPage(page);
+}
+
+function loadPage(page) {
+  if (page === 'home')        loadHome();
+  else if (page === 'performance') loadPerf();
+  else if (page === 'portfolio')   loadPortfolio();
+  else if (page === 'trades')      loadTrades();
+  else if (page === 'health')      loadHealth();
+}
+
+function refreshPage() {
+  pageLoaded = {};
+  const btn = document.getElementById('refresh-btn');
+  btn.classList.add('spinning');
+  loadPage(currentPage);
+  setTimeout(() => btn.classList.remove('spinning'), 800);
+}
+
+/* ── API Fetch ──────────────────────────────────────────── */
+async function fetchAPI(endpoint) {
+  const r = await fetch('/api/' + endpoint);
+  if (!r.ok) throw new Error(`API ${endpoint} failed: ${r.status}`);
+  return r.json();
+}
+
+/* ── Formatters ─────────────────────────────────────────── */
+const fmt = {
+  dollar:  v => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', {minimumFractionDigits: 0, maximumFractionDigits: 0}),
+  pct:     v => v == null ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%',
+  pctSign: v => v == null ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%',
+  num2:    v => v == null ? '—' : Number(v).toFixed(2),
+  num1:    v => v == null ? '—' : Number(v).toFixed(1),
+  date:    v => v ? v.substring(0, 10) : '—',
+  timeAgo: iso => {
+    if (!iso) return '—';
+    const diff = (Date.now() - new Date(iso)) / 1000;
+    if (diff < 60)    return Math.round(diff) + 's ago';
+    if (diff < 3600)  return Math.round(diff/60) + 'm ago';
+    if (diff < 86400) return Math.round(diff/3600) + 'h ago';
+    return Math.round(diff/86400) + 'd ago';
+  },
+};
+
+function pnlClass(v) {
+  if (v == null) return 'neutral';
+  return v >= 0 ? 'positive' : 'negative';
+}
+function pnlColor(v) {
+  if (v == null) return 'var(--text)';
+  return v >= 0 ? 'var(--green)' : 'var(--red)';
+}
+
+/* ── Chart.js defaults ──────────────────────────────────── */
+Chart.defaults.color = '#5A6478';
+Chart.defaults.borderColor = 'rgba(30,38,100,0.45)';
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, system-ui, sans-serif';
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+/* ── HOME ───────────────────────────────────────────────── */
+async function loadHome() {
+  if (pageLoaded.home) return;
+  const el = document.getElementById('home-content');
+  try {
+    const [sum, reg] = await Promise.all([fetchAPI('summary'), fetchAPI('regime')]);
+    pageLoaded.home = true;
+
+    const pnlPct   = sum.daily_pnl_pct;
+    const pipeStatus = sum.pipeline?.status || 'unknown';
+    const pipeClass  = pipeStatus === 'ok' ? 'status-ok'
+                     : pipeStatus === 'partial' ? 'status-partial'
+                     : pipeStatus === 'failed' ? 'status-failed' : 'status-unknown';
+    const pipeEmoji  = pipeStatus === 'ok' ? '🟢' : pipeStatus === 'partial' ? '🟡' : '🔴';
+
+    el.innerHTML = `
+      <div class="nav-big">
+        <div class="nav-amount">${fmt.dollar(sum.nav)}</div>
+        <div style="margin-top:10px">
+          <span class="nav-pnl ${pnlClass(pnlPct)}">
+            ${pnlPct != null ? fmt.pct(pnlPct) : '—'} today
+            ${sum.daily_pnl != null ? '(' + fmt.dollar(sum.daily_pnl) + ')' : ''}
+          </span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-label">Total Return</div>
+          <div class="kpi-value ${pnlClass(sum.total_return)}">${fmt.pctSign(sum.total_return)}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Positions</div>
+          <div class="kpi-value">${sum.n_positions}</div>
+        </div>
+      </div>
+
+      ${sum.sparkline && sum.sparkline.length > 1 ? `
+      <div class="card">
+        <div class="card-title">7-Day NAV</div>
+        <div class="chart-wrap" style="height:80px">
+          <canvas id="sparkline-chart"></canvas>
+        </div>
+      </div>` : ''}
+
+      <div class="card">
+        <div class="card-title">Pipeline</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <span class="status-pill ${pipeClass}">${pipeEmoji} ${pipeStatus.toUpperCase()}</span>
+          <span style="font-size:0.78rem;color:var(--text-dim)">${fmt.timeAgo(sum.pipeline?.ts_utc)}</span>
+        </div>
+        ${sum.pipeline?.failures?.length ? `
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--red)">
+          ⚠ ${sum.pipeline.failures.join(', ')}
+        </div>` : ''}
+      </div>
+
+      ${reg.regime ? `
+      <div class="card">
+        <div class="card-title">Macro Regime</div>
+        <div class="regime-badge">📊 ${reg.label}</div>
+        <div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:6px">Active sectors</div>
+        <div class="sector-chips">${(reg.sectors||[]).map(s=>`<span class="chip">${s}</span>`).join('')}</div>
+      </div>` : ''}
+    `;
+
+    // Sparkline chart
+    if (sum.sparkline && sum.sparkline.length > 1) {
+      const ctx = document.getElementById('sparkline-chart');
+      if (ctx) {
+        destroyChart('sparkline');
+        const color = (sum.sparkline[sum.sparkline.length-1] || 0) >= (sum.sparkline[0] || 0)
+          ? '#00E676' : '#FF4D4D';
+        charts['sparkline'] = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: sum.sparkline.map((_, i) => i),
+            datasets: [{
+              data: sum.sparkline,
+              borderColor: color,
+              borderWidth: 2,
+              fill: true,
+              backgroundColor: color.replace(')', ', 0.08)').replace('rgb', 'rgba').replace('#00E676','rgba(0,230,118,0.08)').replace('#FF4D4D','rgba(255,77,77,0.08)'),
+              tension: 0.4,
+              pointRadius: 0,
+            }],
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: { x: { display: false }, y: { display: false } },
+            animation: false,
+          },
+        });
+      }
+    }
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>Could not load data.<br>${e.message}</div>`;
+  }
+}
+
+/* ── PERFORMANCE ────────────────────────────────────────── */
+async function loadPerf(force) {
+  if (pageLoaded['perf-' + currentPeriod] && !force) return;
+  const el = document.getElementById('perf-content');
+  el.innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const d = await fetchAPI('performance?period=' + currentPeriod);
+    pageLoaded['perf-' + currentPeriod] = true;
+    const m = d.metrics;
+
+    el.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-label">Total Return</div>
+          <div class="kpi-value ${pnlClass(m.total_return)}">${fmt.pctSign(m.total_return)}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">CAGR</div>
+          <div class="kpi-value ${pnlClass(m.cagr)}">${fmt.pctSign(m.cagr)}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Sharpe</div>
+          <div class="kpi-value ${m.sharpe > 1 ? 'positive' : m.sharpe < 0 ? 'negative' : ''}">${fmt.num2(m.sharpe)}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Max Drawdown</div>
+          <div class="kpi-value negative">${fmt.pctSign(m.max_drawdown)}</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Equity Curve</div>
+        <div class="chart-wrap" style="height:240px">
+          <canvas id="equity-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Drawdown</div>
+        <div class="chart-wrap" style="height:120px">
+          <canvas id="dd-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between">
+          <span style="font-size:0.8rem;color:var(--text-dim)">Positions</span>
+          <span style="font-size:0.8rem;font-weight:600">${m.n_positions}</span>
+        </div>
+        ${m.gross_exposure != null ? `
+        <div style="display:flex;justify-content:space-between;margin-top:8px">
+          <span style="font-size:0.8rem;color:var(--text-dim)">Gross Exposure</span>
+          <span style="font-size:0.8rem;font-weight:600">${fmt.pct(m.gross_exposure)}</span>
+        </div>` : ''}
+      </div>
+    `;
+
+    // Equity chart
+    if (d.equity_curve?.dates?.length > 1) {
+      destroyChart('equity');
+      const ctx = document.getElementById('equity-chart');
+      const vals = d.equity_curve.values;
+      const isUp = vals[vals.length-1] >= vals[0];
+      charts['equity'] = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: d.equity_curve.dates,
+          datasets: [{
+            data: vals,
+            borderColor: isUp ? '#00E676' : '#FF4D4D',
+            borderWidth: 2,
+            fill: true,
+            backgroundColor: isUp ? 'rgba(0,230,118,0.06)' : 'rgba(255,77,77,0.06)',
+            tension: 0.2,
+            pointRadius: 0,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: {
+            mode: 'index', intersect: false,
+            callbacks: { label: ctx => '$' + Number(ctx.parsed.y).toLocaleString() },
+          }},
+          scales: {
+            x: { ticks: { maxTicksLimit: 5, font: { size: 10 } }, grid: { display: false } },
+            y: { ticks: { font: { size: 10 }, callback: v => '$' + (v/1000).toFixed(0)+'k' } },
+          },
+        },
+      });
+    }
+
+    // Drawdown chart
+    if (d.drawdown?.values?.length > 1) {
+      destroyChart('drawdown');
+      const ctx2 = document.getElementById('dd-chart');
+      charts['drawdown'] = new Chart(ctx2, {
+        type: 'line',
+        data: {
+          labels: d.drawdown.dates,
+          datasets: [{
+            data: d.drawdown.values,
+            borderColor: '#FF4D4D',
+            borderWidth: 1.5,
+            fill: true,
+            backgroundColor: 'rgba(255,77,77,0.10)',
+            tension: 0.2,
+            pointRadius: 0,
+          }],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false,
+            callbacks: { label: ctx => (ctx.parsed.y * 100).toFixed(1) + '%' } }},
+          scales: {
+            x: { ticks: { maxTicksLimit: 4, font: { size: 10 } }, grid: { display: false } },
+            y: { ticks: { font: { size: 10 }, callback: v => (v*100).toFixed(0)+'%' } },
+          },
+        },
+      });
+    }
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>${e.message}</div>`;
+  }
+}
+
+// Period tab wiring
+document.querySelectorAll('.period-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentPeriod = btn.dataset.period;
+    loadPerf(true);
+  });
+});
+
+/* ── PORTFOLIO ──────────────────────────────────────────── */
+async function loadPortfolio() {
+  if (pageLoaded.portfolio) return;
+  const el = document.getElementById('port-content');
+  try {
+    const d = await fetchAPI('portfolio');
+    pageLoaded.portfolio = true;
+
+    if (!d.positions?.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">💼</div>No positions yet.</div>`;
+      return;
+    }
+
+    const posHtml = d.positions.map(p => `
+      <div class="pos-item">
+        <div>
+          <div class="pos-symbol">${p.symbol}</div>
+          <div class="pos-weight">${fmt.pct(p.weight)}</div>
+        </div>
+        <div class="pos-value">${fmt.dollar(p.value)}</div>
+      </div>`).join('');
+
+    el.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi">
+          <div class="kpi-label">NAV</div>
+          <div class="kpi-value gold">${fmt.dollar(d.nav)}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">Positions</div>
+          <div class="kpi-value">${d.n_positions}</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:12px">
+        <div class="chart-wrap" style="height:250px;display:flex;align-items:center;justify-content:center">
+          <canvas id="donut-chart" style="max-width:250px;max-height:250px"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Holdings — as of ${fmt.date(d.as_of)}</div>
+        ${posHtml}
+      </div>
+
+      ${d.gross_exposure != null ? `
+      <div class="info-row" style="padding:8px 4px">
+        <span class="label">Gross Exposure</span>
+        <span class="value">${fmt.pct(d.gross_exposure)}</span>
+      </div>` : ''}
+    `;
+
+    // Donut chart
+    destroyChart('donut');
+    const ctx = document.getElementById('donut-chart');
+    const colors = ['#C9A227','#00E676','#7B5EA7','#4A90D9','#FF4D4D','#F5A623','#50E3C2','#BD10E0','#00BCD4','#8BC34A','#FF9800','#9C27B0'];
+    charts['donut'] = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: d.positions.map(p => p.symbol),
+        datasets: [{
+          data: d.positions.map(p => p.weight),
+          backgroundColor: colors.slice(0, d.positions.length),
+          borderColor: '#0A0D1A',
+          borderWidth: 2,
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        cutout: '62%',
+        plugins: {
+          legend: {
+            display: true,
+            position: 'right',
+            labels: { font: { size: 10 }, color: '#A8B3CC', boxWidth: 10, padding: 8 },
+          },
+          tooltip: {
+            callbacks: { label: ctx => ctx.label + ': ' + (ctx.parsed * 100).toFixed(1) + '%' },
+          },
+        },
+      },
+    });
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>${e.message}</div>`;
+  }
+}
+
+/* ── TRADES ─────────────────────────────────────────────── */
+async function loadTrades() {
+  if (pageLoaded.trades) return;
+  const el = document.getElementById('trades-content');
+  try {
+    const d = await fetchAPI('trades');
+    pageLoaded.trades = true;
+
+    if (!d.trades?.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">🔄</div>No trades yet.</div>`;
+      return;
+    }
+
+    const cards = d.trades.map(t => {
+      const slipClass = t.slippage_bps == null ? '' : Math.abs(t.slippage_bps) <= 5 ? 'slip-good' : 'slip-bad';
+      return `
+      <div class="trade-card">
+        <div class="trade-header">
+          <div>
+            <span class="trade-symbol">${t.symbol}</span>
+            <span class="side-badge ${t.side === 'BUY' ? 'side-buy' : 'side-sell'}" style="margin-left:8px">${t.side}</span>
+          </div>
+          <div class="trade-date">${fmt.date(t.date)}</div>
+        </div>
+        <div class="trade-row">
+          <span>Qty: ${t.qty != null ? Math.abs(t.qty) : '—'}</span>
+          <span>Est: ${fmt.dollar(t.est_price)}</span>
+          <span>Fill: ${fmt.dollar(t.fill_price)}</span>
+          ${t.slippage_bps != null ? `<span class="${slipClass}">${t.slippage_bps > 0 ? '+' : ''}${t.slippage_bps} bps</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="font-size:0.78rem;color:var(--text-dim);margin-bottom:10px">
+        Showing ${d.trades.length} of ${d.total} total orders
+      </div>
+      ${cards}
+    `;
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>${e.message}</div>`;
+  }
+}
+
+/* ── HEALTH ─────────────────────────────────────────────── */
+async function loadHealth() {
+  if (pageLoaded.health) return;
+  const el = document.getElementById('health-content');
+  try {
+    const d = await fetchAPI('health');
+    pageLoaded.health = true;
+
+    const p = d.pipeline;
+    const pipeClass = p.status === 'ok' ? 'status-ok' : p.status === 'partial' ? 'status-partial' : p.status === 'failed' ? 'status-failed' : 'status-unknown';
+    const pipeEmoji = p.status === 'ok' ? '🟢' : p.status === 'partial' ? '🟡' : '🔴';
+
+    const statusIcon = { HEALTHY: '🟢', WATCH: '🟡', FLAG: '🔴', NEW: '🔵' };
+
+    const stratRows = d.strategies.map(s => `
+      <div class="strat-row">
+        <span class="strat-icon">${statusIcon[s.status] || '⚪'}</span>
+        <div style="flex:1;min-width:0">
+          <div class="strat-name">${s.name}</div>
+          ${s.flags ? `<div class="strat-meta">${s.flags}</div>` : ''}
+        </div>
+        <div class="strat-right">
+          <div class="strat-oos">${s.oos_sharpe != null ? 'OOS ' + fmt.num2(s.oos_sharpe) : s.status}</div>
+          ${s.live_months != null ? `<div style="font-size:0.68rem;color:var(--text-dim)">${s.live_months}mo live</div>` : ''}
+        </div>
+      </div>`).join('');
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title">Pipeline</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span class="status-pill ${pipeClass}">${pipeEmoji} ${p.status?.toUpperCase()}</span>
+          <span style="font-size:0.78rem;color:var(--text-dim)">${fmt.timeAgo(p.ts_utc)}</span>
+        </div>
+        ${p.elapsed_s != null ? `
+        <div class="info-row" style="padding:4px 0">
+          <span class="label">Duration</span>
+          <span class="value">${p.elapsed_s.toFixed(1)}s</span>
+        </div>` : ''}
+        ${p.next_run_utc ? `
+        <div class="info-row" style="padding:4px 0">
+          <span class="label">Next run</span>
+          <span class="value" style="font-size:0.78rem">${new Date(p.next_run_utc).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} UTC</span>
+        </div>` : ''}
+        ${p.failures?.length ? `
+        <div style="margin-top:8px;font-size:0.75rem;color:var(--red)">⚠ ${p.failures.join(', ')}</div>` : ''}
+      </div>
+
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <div class="kpi" style="flex:1">
+          <div class="kpi-label">Healthy</div>
+          <div class="kpi-value positive">${d.n_healthy}</div>
+        </div>
+        <div class="kpi" style="flex:1">
+          <div class="kpi-label">Watch</div>
+          <div class="kpi-value gold">${d.n_watch}</div>
+        </div>
+        <div class="kpi" style="flex:1">
+          <div class="kpi-label">Flag</div>
+          <div class="kpi-value negative">${d.n_flag}</div>
+        </div>
+        <div class="kpi" style="flex:1">
+          <div class="kpi-label">New</div>
+          <div class="kpi-value" style="color:var(--blue)">${d.n_new}</div>
+        </div>
+      </div>
+
+      ${d.strategies.length ? `
+      <div class="card">
+        <div class="card-title">Strategy Health</div>
+        ${stratRows}
+      </div>
+
+      <div style="font-size:0.68rem;color:var(--text-dim);text-align:center;padding:8px 0">
+        🟢 HEALTHY &nbsp; 🟡 WATCH &nbsp; 🔴 FLAG &nbsp; 🔵 NEW
+      </div>` : `<div class="empty"><div class="empty-icon">🏥</div>Run backtests to see health scores.</div>`}
+    `;
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div>${e.message}</div>`;
+  }
+}
+
+/* ── Service Worker registration ────────────────────────── */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+
+/* ── Boot ───────────────────────────────────────────────── */
+loadHome();
+</script>
+</body>
+</html>

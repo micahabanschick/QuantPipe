@@ -122,6 +122,41 @@ Systemd unit files tracked in `deploy/systemd/`. Changes to unit files must be a
 
 ---
 
+## Mobile Dashboard (iPhone PWA)
+
+A lightweight FastAPI + Progressive Web App running on port **8503** alongside Streamlit.
+Read-only. Accessible via WireGuard VPN from iPhone.
+
+**URL:** `http://10.0.0.1:8503`
+
+**iPhone setup:**
+1. Install WireGuard from App Store, import `quantpipe.conf` (same config as desktop)
+2. Open Safari → `http://10.0.0.1:8503`
+3. Tap Share (box with arrow) → **Add to Home Screen** → installed as native-feeling app
+
+```bash
+# Check status
+systemctl status quantpipe-mobile
+
+# Start / stop
+systemctl start quantpipe-mobile
+systemctl stop quantpipe-mobile
+
+# View logs
+tail -f /var/log/quantpipe/mobile.log
+
+# First-time install on server (after merge)
+cp /opt/quantpipe/deploy/systemd/quantpipe-mobile.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable quantpipe-mobile
+systemctl start quantpipe-mobile
+ss -tlnp | grep 8503   # verify listening
+```
+
+**Pages:** Home (NAV + P&L) · Performance (equity curve) · Portfolio (positions) · Trades · Health (strategy scores)
+
+---
+
 ## WireGuard VPN
 
 Desktop VPN is configured and auto-starts on boot (Windows service: `WireGuardTunnel$quantpipe`).
