@@ -139,7 +139,7 @@ async def summary():
             cash   = _safe(latest.get("cash"))
             n_positions = int(latest.get("n_positions", 0))
             if len(th) >= 2:
-                prev_nav = _safe(th[-2].to_dicts()[0].get("nav"))
+                prev_nav = _safe(th.slice(-2, 1).to_dicts()[0].get("nav"))
 
     # Current positions count from latest target weights
     if tw_df is not None and not tw_df.is_empty():
@@ -207,22 +207,28 @@ async def performance(period: str = "all"):
             th = th.filter(pl.col("date") >= cutoff)
 
         if not th.is_empty():
-            dates  = [str(d) for d in th["date"].to_list()]
-            values = [_safe(float(v)) for v in th["nav"].to_list()]
+            # Filter nulls and keep dates/values aligned
+            pairs = [(str(d), _safe(float(v)))
+                     for d, v in zip(th["date"].to_list(), th["nav"].to_list())
+                     if v is not None]
+            dates  = [p[0] for p in pairs]
+            values = [p[1] for p in pairs]
 
-    n_days = len(values)
-    sharpe  = _sharpe(values)
-    cagr    = _cagr(values, n_days)
-    max_dd  = _max_drawdown(values)
+    # Helpers expect clean float lists — nulls already removed above
+    clean = [v for v in values if v is not None]
+    n_days = len(clean)
+    sharpe  = _sharpe(clean)
+    cagr    = _cagr(clean, n_days)
+    max_dd  = _max_drawdown(clean)
     total_r = None
-    if len(values) >= 2 and values[0] and values[-1]:
-        total_r = _safe(round((values[-1] - values[0]) / values[0], 4))
+    if len(clean) >= 2 and clean[0] is not None and clean[-1] is not None:
+        total_r = _safe(round((clean[-1] - clean[0]) / clean[0], 4))
 
-    # Drawdown series
+    # Drawdown series — already aligned with dates (both filtered together)
     dd_values = []
-    if len(values) >= 2:
+    if len(clean) >= 2:
         import numpy as np
-        arr  = np.array([v for v in values if v is not None], dtype=float)
+        arr  = np.array(clean, dtype=float)
         peak = np.maximum.accumulate(arr)
         dd   = ((arr - peak) / peak).tolist()
         dd_values = [_safe(round(v, 4)) for v in dd]
@@ -239,7 +245,7 @@ async def performance(period: str = "all"):
 
     return {
         "equity_curve": {"dates": dates, "values": values},
-        "drawdown":     {"dates": dates[:len(dd_values)], "values": dd_values},
+        "drawdown":     {"dates": dates[:len(dd_values)], "values": dd_values},  # aligned
         "metrics": {
             "sharpe":       sharpe,
             "cagr":         cagr,
@@ -279,7 +285,7 @@ async def portfolio():
             positions.append({
                 "symbol": row["symbol"],
                 "weight": _safe(round(w, 4)),
-                "value":  _safe(round(nav * w, 0)) if nav else None,
+                "value":  _safe(round(nav * w, 0)) if nav is not None else None,
                 "rebalance_date": str(row.get("rebalance_date", "")),
             })
 
@@ -313,7 +319,7 @@ async def trades():
         est   = row.get("est_price")
         fill  = row.get("fill_price")
         slip  = None
-        if est and fill and est > 0:
+        if est is not None and fill is not None and float(est) > 0:
             slip = _safe(round((float(fill) - float(est)) / float(est) * 10_000, 1))
 
         qty = float(row.get("qty", 0))
@@ -322,8 +328,8 @@ async def trades():
             "symbol":        row.get("symbol", ""),
             "side":          "BUY" if qty > 0 else "SELL",
             "qty":           _safe(abs(round(qty, 0))),
-            "est_price":     _safe(round(float(est), 2)) if est else None,
-            "fill_price":    _safe(round(float(fill), 2)) if fill else None,
+            "est_price":     _safe(round(float(est), 2)) if est is not None else None,
+            "fill_price":    _safe(round(float(fill), 2)) if fill is not None else None,
             "slippage_bps":  slip,
             "status":        row.get("status", ""),
             "order_id":      str(row.get("order_id", "")),
