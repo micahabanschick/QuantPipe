@@ -23,9 +23,8 @@ from typing import Any
 
 import polars as pl
 from fastapi import FastAPI
-from fastapi.responses import FileNotFoundError, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
 
 from config.settings import DATA_DIR, PROJECT_ROOT
 
