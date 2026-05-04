@@ -357,7 +357,14 @@ function manualRefresh() {
   pages.addEventListener('touchmove', e => {
     if (!startY) return;
     const dy = e.touches[0].clientY - startY;
-    if (dy > 10 && pages.scrollTop === 0) {
+    // Cancel if user scrolled down or moved upward — prevents accidental refresh
+    if (pages.scrollTop > 0 || dy <= 0) {
+      pulling = false;
+      startY  = 0;
+      ptr.classList.remove('pulling');
+      return;
+    }
+    if (dy > 10) {
       pulling = true;
       ptr.classList.add('pulling');
     }
@@ -401,11 +408,23 @@ const fmt = {
   },
   nextTime: iso => {
     if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + ' UTC';
+    // Pass explicit UTC timezone so device locale never shifts the displayed time
+    return new Date(iso).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', timeZone:'UTC'}) + ' UTC';
+  },
+  dateOnly: v => {
+    if (!v) return '—';
+    return String(v).substring(0, 10);   // safe date-only display, no timezone shift
   },
 };
 function pnlClass(v) { return v == null ? 'neutral' : v >= 0 ? 'positive' : 'negative'; }
+
+/* ── Sanitize helper — prevent XSS from API string interpolation ── */
+function esc(v) {
+  if (v == null) return '—';
+  return String(v)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 
 /* ── Skeleton helpers ───────────────────────────────────── */
 function skelHome() {
@@ -421,6 +440,11 @@ function skelPerf() {
 }
 function skelList() {
   return Array(5).fill('<div class="skel-card-sm skeleton"></div>').join('');
+}
+function skelPortfolio() {
+  return `<div class="skel-kpi-grid"><div class="skel-kpi skeleton"></div><div class="skel-kpi skeleton"></div></div>
+          <div style="height:250px;border-radius:14px;margin-bottom:12px" class="skeleton"></div>
+          ${Array(5).fill('<div class="skel-card-sm skeleton"></div>').join('')}`;
 }
 
 /* ── Chart.js defaults ──────────────────────────────────── */
@@ -609,7 +633,7 @@ document.querySelectorAll('.period-btn').forEach(btn => {
 async function loadPortfolio() {
   if (pageLoaded.portfolio) return;
   const el = document.getElementById('page-portfolio');
-  el.innerHTML = skelPerf();
+  el.innerHTML = skelPortfolio();
   try {
     const d = await fetchAPI('portfolio');
     pageLoaded.portfolio = true;
@@ -629,7 +653,7 @@ async function loadPortfolio() {
         <div class="card-title">Holdings — as of ${fmt.date(d.as_of)}</div>
         ${d.positions.map(p=>`
         <div class="pos-item">
-          <div><div class="pos-symbol">${p.symbol}</div><div class="pos-weight">${fmt.pct(p.weight)}</div></div>
+          <div><div class="pos-symbol">${esc(p.symbol)}</div><div class="pos-weight">${fmt.pct(p.weight)}</div></div>
           <div class="pos-value">${fmt.dollar(p.value)}</div>
         </div>`).join('')}
       </div>
@@ -672,10 +696,10 @@ async function loadTrades() {
         const slipClass = t.slippage_bps==null?'':Math.abs(t.slippage_bps)<=5?'slip-good':'slip-bad';
         return `<div class="trade-card">
           <div class="trade-header">
-            <div><span class="trade-symbol">${t.symbol}</span>
-              <span class="side-badge ${t.side==='BUY'?'side-buy':'side-sell'}" style="margin-left:8px">${t.side}</span>
+            <div><span class="trade-symbol">${esc(t.symbol)}</span>
+              <span class="side-badge ${t.side==='BUY'?'side-buy':'side-sell'}" style="margin-left:8px">${esc(t.side)}</span>
             </div>
-            <div class="trade-date">${fmt.timeAgo(t.date + 'T00:00:00Z')}</div>
+            <div class="trade-date">${fmt.dateOnly(t.date)}</div>
           </div>
           <div class="trade-row">
             <span>Qty: ${t.qty!=null?Math.abs(t.qty):'—'}</span>
@@ -712,7 +736,7 @@ async function loadHealth() {
         </div>
         ${p.elapsed_s!=null?`<div class="info-row" style="padding:4px 0"><span class="label">Duration</span><span class="value">${p.elapsed_s.toFixed(1)}s</span></div>`:''}
         ${p.next_run_utc?`<div class="info-row" style="padding:4px 0"><span class="label">Next run</span><span class="value" style="font-size:0.78rem">${fmt.nextTime(p.next_run_utc)}</span></div>`:''}
-        ${p.failures?.length?`<div style="margin-top:8px;font-size:0.75rem;color:var(--red)">⚠ ${p.failures.join(', ')}</div>`:''}
+        ${p.failures?.length?`<div style="margin-top:8px;font-size:0.75rem;color:var(--red)">⚠ ${p.failures.map(esc).join(', ')}</div>`:''}
       </div>
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <div class="kpi" style="flex:1"><div class="kpi-label">Healthy</div><div class="kpi-value positive">${d.n_healthy}</div></div>
@@ -728,7 +752,7 @@ async function loadHealth() {
           <span class="strat-icon">${si[s.status]||'⚪'}</span>
           <div style="flex:1;min-width:0">
             <div class="strat-name">${s.name}</div>
-            ${s.flags?`<div class="strat-meta">${s.flags}</div>`:''}
+            ${s.flags?`<div class="strat-meta">${esc(s.flags)}</div>`:''}
           </div>
           <div class="strat-right">
             <div class="strat-oos">${s.oos_sharpe!=null?'OOS '+fmt.num2(s.oos_sharpe):s.status}</div>
