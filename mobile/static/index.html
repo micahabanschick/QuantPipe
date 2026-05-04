@@ -412,15 +412,15 @@ const fmt = {
     return new Date(iso).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', timeZone:'UTC'}) + ' UTC';
   },
   dateOnly: v => {
-    if (!v) return '—';
+    if (!v || String(v).length < 10) return String(v || '—');
     return String(v).substring(0, 10);   // safe date-only display, no timezone shift
   },
 };
 function pnlClass(v) { return v == null ? 'neutral' : v >= 0 ? 'positive' : 'negative'; }
 
-/* ── Sanitize helper — prevent XSS from API string interpolation ── */
+/* ── Sanitize helper — escapes only; callers handle null display ── */
 function esc(v) {
-  if (v == null) return '—';
+  if (v == null) return '';
   return String(v)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -751,7 +751,7 @@ async function loadHealth() {
         <div class="strat-row">
           <span class="strat-icon">${si[s.status]||'⚪'}</span>
           <div style="flex:1;min-width:0">
-            <div class="strat-name">${s.name}</div>
+            <div class="strat-name">${esc(s.name) || '—'}</div>
             ${s.flags?`<div class="strat-meta">${esc(s.flags)}</div>`:''}
           </div>
           <div class="strat-right">
