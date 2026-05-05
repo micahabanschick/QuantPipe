@@ -39,19 +39,28 @@
 
 /* ── Reset & base ────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; background: var(--bg); color: var(--text);
+html, body {
+  height: 100%; overflow: hidden;
+  background: var(--bg); color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+  -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%;
+}
 
-/* ── Layout shell ────────────────────────────────────────────────── */
-#app { display: flex; flex-direction: column; height: 100%; }
+/* ── Layout shell — flex column fills the entire viewport ────────── */
+#app {
+  position: fixed; inset: 0;
+  display: flex; flex-direction: column;
+}
+
+/* Top bar is a normal flex child — no competing fixed positioning */
 #top-bar {
-  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  flex-shrink: 0;
   height: calc(var(--top-h) + var(--safe-t));
   padding-top: var(--safe-t);
+  padding-left: calc(16px + var(--safe-l));
+  padding-right: calc(16px + var(--safe-r));
   background: var(--surface); border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; padding-inline: 16px;
-  gap: 10px;
+  display: flex; align-items: center; gap: 10px; z-index: 10;
 }
 #top-bar .logo { font-size: 15px; font-weight: 700; color: var(--gold); letter-spacing: .03em; }
 #top-bar .spacer { flex: 1; }
@@ -60,42 +69,46 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
   display: grid; place-items: center; font-size: 16px; transition: color var(--transition); }
 #top-bar button:active { background: var(--card); }
 
+/* Offline banner slides open by changing height — stays in flow */
 #offline-banner {
-  position: fixed; top: calc(var(--top-h) + var(--safe-t)); left: 0; right: 0; z-index: 99;
+  flex-shrink: 0; overflow: hidden;
+  max-height: 0; padding: 0;
   background: var(--red); color: #fff; font-size: 13px; font-weight: 600;
-  text-align: center; padding: 8px; letter-spacing: .02em;
-  transform: translateY(-110%); transition: transform .3s;
+  display: flex; align-items: center; justify-content: center;
+  letter-spacing: .02em;
+  transition: max-height .3s ease, padding .3s ease;
 }
-#offline-banner.show { transform: translateY(0); }
+#offline-banner.show { max-height: 3rem; padding: 8px; }
 
+/* Page container — takes all remaining space between top bar and bottom nav */
 #page-wrap {
-  position: fixed; inset: 0;
-  padding-top: calc(var(--top-h) + var(--safe-t));
-  padding-bottom: calc(var(--nav-h) + var(--safe-b));
-  padding-left: var(--safe-l); padding-right: var(--safe-r);
-  overflow: hidden;
+  flex: 1; min-height: 0;   /* min-height: 0 lets flex children shrink below content size */
+  position: relative; overflow: hidden;
 }
 
-/* ── Pages ───────────────────────────────────────────────────────── */
+/* ── Pages — opacity-based show/hide so CSS transitions work ─────── */
 .page {
   position: absolute; inset: 0;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
-  padding: 16px 16px 8px;
-  display: none; opacity: 0;
-  transition: opacity .22s ease;
+  overscroll-behavior-y: contain;
+  padding: 16px;
+  padding-left: calc(16px + var(--safe-l));
+  padding-right: calc(16px + var(--safe-r));
+  padding-bottom: 24px;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s ease;
+  will-change: opacity;
 }
-.page.active { display: block; }
-.page.visible { opacity: 1; }
-@keyframes pageIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
-.page.enter { animation: pageIn .22s ease-out forwards; }
+.page.active { opacity: 1; pointer-events: auto; }
 
-/* ── Bottom nav ──────────────────────────────────────────────────── */
+/* ── Bottom nav is a normal flex child — no competing fixed pos ──── */
 #bottom-nav {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+  flex-shrink: 0;
   height: calc(var(--nav-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
+  padding-left: var(--safe-l); padding-right: var(--safe-r);
   background: var(--surface); border-top: 1px solid var(--border);
-  display: grid; grid-template-columns: repeat(5,1fr);
+  display: grid; grid-template-columns: repeat(5,1fr); z-index: 10;
 }
 .nav-btn {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -310,6 +323,8 @@ input:checked + .slider::before { transform: translateX(16px); }
 </head>
 <body>
 
+<div id="app">
+
 <!-- ── Top bar ─────────────────────────────────────────────────── -->
 <div id="top-bar">
   <span class="logo">QP</span>
@@ -468,6 +483,8 @@ input:checked + .slider::before { transform: translateX(16px); }
     <span class="icon">🛡</span><span class="label">Health</span>
   </button>
 </nav>
+
+</div><!-- /#app -->
 
 <!-- ── Bottom sheet ────────────────────────────────────────────── -->
 <div id="sheet-overlay"></div>
@@ -984,13 +1001,11 @@ function openSheet(s) {
 
   document.getElementById('bottom-sheet').classList.add('open');
   document.getElementById('sheet-overlay').classList.add('open');
-  document.body.style.overflow = 'hidden';
 }
 
 function closeSheet() {
   document.getElementById('bottom-sheet').classList.remove('open');
   document.getElementById('sheet-overlay').classList.remove('open');
-  document.body.style.overflow = '';
 }
 
 document.getElementById('sheet-overlay').addEventListener('click', closeSheet);
@@ -1002,11 +1017,11 @@ const PAGE_LOADERS = { home: loadHome, performance: () => loadPerformance(active
 
 function showPage(name) {
   if (name === activePage) { PAGE_LOADERS[name]?.(); return; }
-  document.querySelector('.page.active')?.classList.remove('active', 'visible', 'enter');
+  document.getElementById('page-' + activePage)?.classList.remove('active');
   activePage = name;
   const page = document.getElementById('page-' + name);
-  page.classList.add('active', 'enter');
-  requestAnimationFrame(() => requestAnimationFrame(() => page.classList.add('visible')));
+  page.classList.add('active');
+  page.scrollTop = 0;
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.page === name));
   document.getElementById('top-title').textContent = PAGE_TITLES[name] || 'QuantPipe';
   if (name !== 'home') closeSheet();
@@ -1021,12 +1036,6 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
 // Home icon (black square replaced with QP monogram)
 document.querySelector('[data-page="home"] .icon').textContent = 'QP';
 document.querySelector('[data-page="home"] .icon').style.cssText = 'font-size:13px;font-weight:800;color:inherit;font-family:inherit';
-
-// Mark first page visible
-requestAnimationFrame(() => {
-  const first = document.querySelector('.page.active');
-  first?.classList.add('visible');
-});
 
 // Load initial page
 loadHome();
