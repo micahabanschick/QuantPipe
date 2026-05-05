@@ -796,8 +796,8 @@ Chart.register({
       ctx.lineWidth = 1.5;
       ctx.setLineDash([5, 4]);
       ctx.beginPath();
-      ctx.moveTo(px, y.top);
-      ctx.lineTo(px, y.bottom);
+      ctx.moveTo(px, chart.chartArea.top);
+      ctx.lineTo(px, chart.chartArea.bottom);
       ctx.stroke();
       ctx.setLineDash([]);
       if (label) {
