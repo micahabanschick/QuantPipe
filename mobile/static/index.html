@@ -804,7 +804,7 @@ Chart.register({
         ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
         const tw = ctx.measureText(label).width;
         const lx = Math.min(px + 6, chart.chartArea.right - tw - 6);
-        const ly = y.top + 14;
+        const ly = chart.chartArea.top + 14;
         ctx.fillStyle = 'rgba(10,13,26,.88)';
         ctx.fillRect(lx - 3, ly - 11, tw + 6, 15);
         ctx.fillStyle = 'rgba(201,162,39,.95)';
