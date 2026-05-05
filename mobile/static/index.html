@@ -699,7 +699,7 @@ function winRate(values) {
 }
 
 function rollingSharpeSeries(dates, values, win = 63) {
-  if (!dates || !values || dates.length < win + 2) return null;
+  if (!dates || !values || dates.length < win + 1) return null;
   const clean = [];
   for (let i = 0; i < dates.length; i++) if (values[i] != null) clean.push({ d: dates[i], v: values[i] });
   if (clean.length < win + 2) return null;
@@ -1289,7 +1289,7 @@ const ptrText = document.getElementById('ptr-text');
 let _tx0 = 0, _ty0 = 0, _tCanvas = false, _tScrollTop = 0, _pulling = false;
 
 document.getElementById('page-wrap').addEventListener('touchstart', e => {
-  _tCanvas    = e.target.tagName === 'CANVAS';
+  _tCanvas    = e.target.tagName === 'CANVAS' || !!e.target.closest('.heatmap-scroll');
   _tx0        = e.touches[0].clientX;
   _ty0        = e.touches[0].clientY;
   const pg    = document.getElementById('page-' + activePage);
@@ -1313,6 +1313,7 @@ document.getElementById('page-wrap').addEventListener('touchmove', e => {
 document.getElementById('page-wrap').addEventListener('touchend', e => {
   ptrEl.style.height = '0';
   ptrSpin.classList.remove('go');
+  if (!e.changedTouches.length) { _pulling = false; return; }
   const dx = e.changedTouches[0].clientX - _tx0;
   const dy = e.changedTouches[0].clientY - _ty0;
 
