@@ -291,10 +291,37 @@ async def performance(period: str = "all"):
         n_pos = len(lw)
         gross = _safe(float(lw["weight"].sum()))
 
+    # Deployment markers from deployment_config.json
+    markers: list[dict] = []
+    try:
+        cfg_path = _GOLD / "deployment_config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            raw_dt = cfg.get("updated_at", "")
+            deploy_date = raw_dt[:10] if raw_dt else None
+            if deploy_date:
+                ver = cfg.get("version", "")
+                active = sorted(
+                    [(s["slug"], s.get("name", s["slug"]), s.get("allocation_weight", 0))
+                     for s in cfg.get("strategies", [])
+                     if s.get("active") and s.get("allocation_weight", 0) > 1e-6],
+                    key=lambda x: -x[2],
+                )
+                if active:
+                    top_name, top_w = active[0][1], active[0][2]
+                    n_others = len(active) - 1
+                    label = f"v{ver}: {top_name} ({round(top_w * 100)}%)"
+                    if n_others:
+                        label += f" +{n_others}"
+                    markers.append({"date": deploy_date, "label": label})
+    except Exception as exc:
+        log.debug("mobile/api performance markers: %s", exc)
+
     return {
         "equity_curve": {"dates": dates, "values": values},
         "benchmark":    {"dates": dates, "values": spy_values, "label": "SPY"},
         "drawdown":     {"dates": dates[:len(dd_values)], "values": dd_values},
+        "markers":      markers,
         "metrics": {
             "sharpe": sharpe, "cagr": cagr,
             "max_drawdown": max_dd, "total_return": total_r,
