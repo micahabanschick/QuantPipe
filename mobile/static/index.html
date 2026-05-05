@@ -699,13 +699,17 @@ function winRate(values) {
 }
 
 function rollingSharpeSeries(dates, values, win = 63) {
+  if (!dates || !values || dates.length < win + 2) return null;
   const clean = [];
   for (let i = 0; i < dates.length; i++) if (values[i] != null) clean.push({ d: dates[i], v: values[i] });
   if (clean.length < win + 2) return null;
   const outD = [], outV = [];
   for (let i = win; i < clean.length; i++) {
     const rets = [];
-    for (let j = i - win + 1; j <= i; j++) rets.push((clean[j].v - clean[j-1].v) / clean[j-1].v);
+    for (let j = i - win + 1; j <= i; j++) {
+      if (clean[j-1].v > 0) rets.push((clean[j].v - clean[j-1].v) / clean[j-1].v);
+    }
+    if (rets.length < 2) { outD.push(clean[i].d); outV.push(null); continue; }
     const mu = rets.reduce((a,b)=>a+b,0)/rets.length;
     const sd = Math.sqrt(rets.reduce((a,b)=>a+(b-mu)**2,0)/rets.length);
     outD.push(clean[i].d);
