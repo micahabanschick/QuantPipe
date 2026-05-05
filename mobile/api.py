@@ -302,9 +302,9 @@ async def performance(period: str = "all"):
             if deploy_date:
                 ver = cfg.get("version", "")
                 active = sorted(
-                    [(s["slug"], s.get("name", s["slug"]), s.get("allocation_weight", 0))
+                    [(s.get("slug", ""), s.get("name", s.get("slug", "")), s.get("allocation_weight", 0))
                      for s in cfg.get("strategies", [])
-                     if s.get("active") and s.get("allocation_weight", 0) > 1e-6],
+                     if s.get("slug") and s.get("active") and s.get("allocation_weight", 0) > 1e-6],
                     key=lambda x: -x[2],
                 )
                 if active:

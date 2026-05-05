@@ -781,8 +781,14 @@ Chart.register({
     const { ctx, scales: { x, y } } = chart;
     if (!x || !y) return;
     const labels = chart.data.labels || [];
+    const toDay = v => {
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      const s = String(v);
+      return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
+    };
     opts.markers.forEach(({ date, label }) => {
-      const idx = labels.findIndex(l => String(l) === date || String(l).startsWith(date));
+      const target = toDay(date);
+      const idx = labels.findIndex(l => toDay(l) === target);
       if (idx < 0) return;
       const px = x.getPixelForIndex(idx);
       ctx.save();
