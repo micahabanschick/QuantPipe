@@ -698,7 +698,7 @@ function renderHome(data, stale) {
       data: {
         labels: spark.map((_,i) => i),
         datasets: [{ data: spark, borderColor: lineColor, borderWidth: 2,
-          pointRadius: 0, tension: 0.4, fill: false }],
+          pointRadius: 0, tension: 0, fill: false }],
       },
       options: { ...CHART_DEFAULTS, animation: { duration: 300 },
         plugins: { ...CHART_DEFAULTS.plugins, legend: { display: false },
@@ -769,12 +769,12 @@ function renderPerformance(data, stale) {
     const ctx = document.getElementById('equity-chart').getContext('2d');
     const datasets = [{
       label: 'Portfolio', data: ec.values, borderColor: cssVar('--gold'),
-      borderWidth: 2, pointRadius: 0, tension: 0.3, fill: false,
+      borderWidth: 2, pointRadius: 0, tension: 0, fill: false,
     }];
     if (spyOn && (bm.values||[]).length > 1) {
       datasets.push({
         label: 'SPY', data: bm.values, borderColor: cssVar('--blue'),
-        borderWidth: 1.5, pointRadius: 0, tension: 0.3, fill: false, borderDash: [4,3],
+        borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false, borderDash: [4,3],
       });
     }
     charts['equity'] = new Chart(ctx, {
@@ -812,7 +812,7 @@ function renderPerformance(data, stale) {
       type: 'line',
       data: { labels: dd.dates, datasets: [{
         data: dd.values, borderColor: cssVar('--red'), borderWidth: 1.5,
-        fill: true, backgroundColor: grad, pointRadius: 0, tension: 0.3,
+        fill: true, backgroundColor: grad, pointRadius: 0, tension: 0,
       }]},
       options: { ...CHART_DEFAULTS, maintainAspectRatio: false,
         scales: {
