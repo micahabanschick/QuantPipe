@@ -202,6 +202,21 @@ async def summary():
     except Exception:
         pass
 
+    spy_today_pct = None
+    try:
+        from storage.parquet_store import load_bars
+        spy_bars = load_bars(["SPY"], date.today() - timedelta(days=5), date.today(), "equity")
+        if not spy_bars.is_empty():
+            pc = "adj_close" if "adj_close" in spy_bars.columns else "close"
+            spy_recent = spy_bars.sort("date").tail(2)
+            if len(spy_recent) >= 2:
+                p0 = float(spy_recent[pc][0])
+                p1 = float(spy_recent[pc][1])
+                if p0 > 0:
+                    spy_today_pct = _safe(round((p1 - p0) / p0, 4))
+    except Exception:
+        pass
+
     return {
         "nav":           nav,
         "cash":          cash,
@@ -218,7 +233,8 @@ async def summary():
             "failures":  hb.get("failures", []),
             "elapsed_s": hb.get("elapsed_s"),
         },
-        "regime": {"label": regime_label, "sectors": regime_sectors},
+        "regime":  {"label": regime_label, "sectors": regime_sectors},
+        "market":  {"spy_today_pct": spy_today_pct},
     }
 
 
