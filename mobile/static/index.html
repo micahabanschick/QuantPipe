@@ -62,7 +62,7 @@ html, body {
   background: var(--surface); border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 10px; z-index: 10;
 }
-#top-bar .logo { font-size: 15px; font-weight: 700; color: var(--gold); letter-spacing: .03em; }
+#top-logo { height: 32px; width: 32px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 #top-bar .spacer { flex: 1; }
 #top-bar button { background: none; border: none; color: var(--text-2); cursor: pointer;
   padding: 8px; border-radius: 50%; min-width: 36px; min-height: 36px;
@@ -367,7 +367,7 @@ input:checked + .slider::before { transform: translateX(16px); }
 
 <!-- ── Top bar ─────────────────────────────────────────────────── -->
 <div id="top-bar">
-  <span class="logo">QP</span>
+  <img src="/static/logo.png" id="top-logo" alt="QuantPipe">
   <span id="top-title" style="font-size:14px;font-weight:600;color:var(--text-2)">QuantPipe</span>
   <span class="spacer"></span>
   <button id="theme-btn" aria-label="Toggle theme" title="Toggle theme">☀</button>
@@ -1378,10 +1378,6 @@ document.getElementById('page-wrap').addEventListener('touchend', e => {
 }, { passive: true });
 
 /* ─── Init ───────────────────────────────────────────────────────── */
-// Home icon (black square replaced with QP monogram)
-document.querySelector('[data-page="home"] .icon').textContent = 'QP';
-document.querySelector('[data-page="home"] .icon').style.cssText = 'font-size:13px;font-weight:800;color:inherit;font-family:inherit';
-
 // Load initial page
 loadHome();
 
