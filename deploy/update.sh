@@ -23,6 +23,7 @@ sudo -u "$APP_USER" bash -c "
 echo "[+] Reloading systemd services..."
 systemctl daemon-reload
 systemctl restart quantpipe-streamlit.service
+systemctl restart quantpipe-mobile.service
 
 echo "[+] Done. Pipeline timer unchanged (next run at scheduled time)."
-systemctl status quantpipe-streamlit.service --no-pager -l
+systemctl status quantpipe-streamlit.service quantpipe-mobile.service --no-pager -l
