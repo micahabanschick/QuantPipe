@@ -386,7 +386,11 @@ async def attribution():
         from portfolio._backtest_cache import load as cache_load
 
         metas   = discover_strategies()
-        results = {m.slug: cache_load(m.slug) for m in metas if cache_load(m.slug)}
+        results: dict[str, Any] = {}
+        for m in metas:
+            r = cache_load(m.slug)
+            if r:
+                results[m.slug] = r
 
         # Load current allocation
         alloc: dict[str, float] = {}

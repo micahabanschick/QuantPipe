@@ -781,9 +781,6 @@ function renderPerformance(data, stale) {
         },
       },
     });
-    document.getElementById('equity-chart').addEventListener('dblclick', () => {
-      charts['equity']?.resetZoom();
-    });
   }
 
   // Drawdown chart
@@ -1033,6 +1030,11 @@ requestAnimationFrame(() => {
 
 // Load initial page
 loadHome();
+
+// One-time: double-tap equity chart to reset zoom
+document.getElementById('equity-chart').addEventListener('dblclick', () => {
+  charts['equity']?.resetZoom();
+});
 
 // Register service worker
 if ('serviceWorker' in navigator) {
