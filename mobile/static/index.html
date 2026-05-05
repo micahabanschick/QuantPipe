@@ -1073,9 +1073,13 @@ function renderPortfolio(data, stale) {
     document.getElementById('pos-as-of').textContent = 'Positions — ' + data.as_of;
     const asOf = new Date(data.as_of + 'T00:00:00Z');
     const days = Math.floor((Date.now() - asOf.getTime()) / 86400000);
-    const col = days > 7 ? 'var(--red)' : days > 3 ? 'var(--gold)' : 'var(--green)';
-    document.getElementById('days-rebalance').innerHTML =
-      `<span style="color:${col};font-weight:700">${days}d ago</span>`;
+    const rebalEl = document.getElementById('days-rebalance');
+    if (!isNaN(days)) {
+      const col = days > 7 ? 'var(--red)' : days > 3 ? 'var(--gold)' : 'var(--green)';
+      rebalEl.innerHTML = `<span style="color:${col};font-weight:700">${days}d ago</span>`;
+    } else {
+      rebalEl.textContent = data.as_of;
+    }
   }
 
   // Donut
