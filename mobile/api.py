@@ -169,6 +169,23 @@ def _build_equity_curve(period: str | None = None) -> tuple[list[str], list[floa
     return [str(d) for d in sorted_d], [_safe(round(nav_series[d], 2)) for d in sorted_d]
 
 
+_CURVE_CACHE: dict = {"dates": [], "values": [], "mtime": 0.0}
+
+
+def _cached_equity_curve() -> tuple[list[str], list[float | None]]:
+    """Full equity curve cached by target_weights mtime — shared by summary + performance."""
+    global _CURVE_CACHE
+    tw_path = _GOLD / "target_weights.parquet"
+    try:
+        mtime = tw_path.stat().st_mtime if tw_path.exists() else 0.0
+    except OSError:
+        mtime = 0.0
+    if not _CURVE_CACHE["dates"] or _CURVE_CACHE["mtime"] != mtime:
+        dates, values = _build_equity_curve()
+        _CURVE_CACHE = {"dates": dates, "values": values, "mtime": mtime}
+    return _CURVE_CACHE["dates"], _CURVE_CACHE["values"]
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _safe(v) -> Any:
@@ -282,43 +299,34 @@ async def service_worker():
 
 @app.get("/api/summary")
 async def summary():
-    hb    = _heartbeat()
-    th_df = _read(_GOLD / "trading_history.parquet")
-    tw_df = _read(_GOLD / "target_weights.parquet")
+    hb = _heartbeat()
 
-    nav, cash, n_positions, prev_nav = None, None, 0, None
-
-    if th_df is not None and not th_df.is_empty():
-        th = th_df.filter(pl.col("broker") == "paper").sort("date")
-        if not th.is_empty():
-            latest      = th.tail(1).to_dicts()[0]
-            nav         = _safe(latest.get("nav"))
-            cash        = _safe(latest.get("cash"))
-            n_positions = int(latest.get("n_positions", 0))
-            if len(th) >= 2:
-                prev_nav = _safe(th.slice(-2, 1).to_dicts()[0].get("nav"))
-
-    if tw_df is not None and not tw_df.is_empty():
-        latest_date = tw_df["date"].max()
-        n_positions = len(tw_df.filter(pl.col("date") == latest_date))
+    # NAV/P&L/sparkline from the full computed equity curve (matches desktop)
+    all_dates, all_values = _cached_equity_curve()
+    clean = [v for v in all_values if v is not None]
+    nav          = _safe(round(clean[-1], 2))   if clean          else None
+    prev_nav     = _safe(round(clean[-2], 2))   if len(clean) >= 2 else None
+    sparkline    = [_safe(v) for v in clean[-7:]]
+    total_return = _safe(round((clean[-1] - clean[0]) / clean[0], 4)) if len(clean) >= 2 and clean[0] > 0 else None
 
     daily_pnl = daily_pnl_pct = None
     if nav is not None and prev_nav is not None and prev_nav > 0:
         daily_pnl     = _safe(round(nav - prev_nav, 2))
         daily_pnl_pct = _safe(round((nav - prev_nav) / prev_nav, 4))
 
-    total_return = None
+    # Cash and position count from trading_history (not computed by equity curve)
+    cash, n_positions = None, 0
+    th_df = _read(_GOLD / "trading_history.parquet")
     if th_df is not None and not th_df.is_empty():
-        th = th_df.filter(pl.col("broker") == "paper").sort("date")
-        if len(th) >= 2 and nav is not None:
-            first_nav = float(th.head(1)["nav"][0])
-            if first_nav > 0:
-                total_return = _safe(round((nav - first_nav) / first_nav, 4))
+        th = th_df.filter(pl.col("broker") == "paper").filter(pl.col("nav") >= _MIN_NAV).sort("date")
+        if not th.is_empty():
+            latest = th.tail(1).to_dicts()[0]
+            cash = _safe(latest.get("cash"))
+            n_positions = int(latest.get("n_positions", 0))
 
-    sparkline = []
-    if th_df is not None and not th_df.is_empty():
-        th = th_df.filter(pl.col("broker") == "paper").sort("date").tail(7)
-        sparkline = [_safe(float(v)) for v in th["nav"].to_list()]
+    tw_df = _read(_GOLD / "target_weights.parquet")
+    if tw_df is not None and not tw_df.is_empty():
+        n_positions = len(tw_df.filter(pl.col("date") == tw_df["date"].max()))
 
     # Macro regime for home summary
     regime_label, regime_sectors = None, []
@@ -375,7 +383,17 @@ async def summary():
 @app.get("/api/performance")
 async def performance(period: str = "all"):
     tw_df = _read(_GOLD / "target_weights.parquet")
-    dates, values = _build_equity_curve(period)
+
+    # Slice full cached curve to requested period
+    all_dates, all_values = _cached_equity_curve()
+    cutoffs = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
+    if period in cutoffs:
+        cutoff = str(date.today() - timedelta(days=cutoffs[period]))
+        pairs  = [(d, v) for d, v in zip(all_dates, all_values) if d >= cutoff]
+        dates  = [p[0] for p in pairs]
+        values = [p[1] for p in pairs]
+    else:
+        dates, values = all_dates, all_values
 
     clean  = [v for v in values if v is not None]
     n_days = len(clean)
