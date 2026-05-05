@@ -33,6 +33,54 @@ log = logging.getLogger(__name__)
 
 app = FastAPI(title="QuantPipe Mobile", version="2.0.0", docs_url=None, redoc_url=None)
 
+_DEPLOY_MARKERS_CACHE: list[dict] | None = None
+_DEPLOY_MARKERS_MTIME: float | None = None
+
+
+def _get_deployment_markers() -> list[dict]:
+    """Read deployment_config.json and return chart markers; cached by file mtime."""
+    global _DEPLOY_MARKERS_CACHE, _DEPLOY_MARKERS_MTIME
+    cfg_path = _GOLD / "deployment_config.json"
+    if not cfg_path.exists():
+        return []
+    try:
+        mtime = cfg_path.stat().st_mtime
+    except OSError:
+        return []
+    if _DEPLOY_MARKERS_CACHE is not None and _DEPLOY_MARKERS_MTIME == mtime:
+        return _DEPLOY_MARKERS_CACHE
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        raw_dt = cfg.get("updated_at", "")
+        deploy_date = raw_dt[:10] if raw_dt else None
+        if not deploy_date:
+            _DEPLOY_MARKERS_CACHE, _DEPLOY_MARKERS_MTIME = [], mtime
+            return []
+        ver = cfg.get("version", "")
+        active = sorted(
+            [(s.get("slug", ""), s.get("name", s.get("slug", "")), s.get("allocation_weight", 0))
+             for s in cfg.get("strategies", [])
+             if s.get("slug") and s.get("active") and s.get("allocation_weight", 0) > 1e-6],
+            key=lambda x: -x[2],
+        )
+        if not active:
+            _DEPLOY_MARKERS_CACHE, _DEPLOY_MARKERS_MTIME = [], mtime
+            return []
+        top_name, top_w = active[0][1], active[0][2]
+        n_others = len(active) - 1
+        label = f"v{ver}: {top_name} ({round(top_w * 100)}%)"
+        if n_others:
+            label += f" +{n_others}"
+        result = [{"date": deploy_date, "label": label}]
+        _DEPLOY_MARKERS_CACHE, _DEPLOY_MARKERS_MTIME = result, mtime
+        return result
+    except (FileNotFoundError, json.JSONDecodeError, KeyError) as exc:
+        log.debug("mobile/api deployment markers: %s", exc)
+        return _DEPLOY_MARKERS_CACHE or []
+    except Exception:
+        log.warning("mobile/api deployment markers: unexpected error", exc_info=True)
+        return _DEPLOY_MARKERS_CACHE or []
+
 _STATIC = Path(__file__).parent / "static"
 _GOLD   = DATA_DIR / "gold" / "equity"
 
@@ -291,10 +339,13 @@ async def performance(period: str = "all"):
         n_pos = len(lw)
         gross = _safe(float(lw["weight"].sum()))
 
+    markers = _get_deployment_markers()
+
     return {
         "equity_curve": {"dates": dates, "values": values},
         "benchmark":    {"dates": dates, "values": spy_values, "label": "SPY"},
         "drawdown":     {"dates": dates[:len(dd_values)], "values": dd_values},
+        "markers":      markers,
         "metrics": {
             "sharpe": sharpe, "cagr": cagr,
             "max_drawdown": max_dd, "total_return": total_r,

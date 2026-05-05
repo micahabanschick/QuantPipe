@@ -665,7 +665,7 @@ function cssVar(name) { return getComputedStyle(document.documentElement).getPro
 function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
 
 function adaptivePointRadius(n) {
-  if (n <= 20)  return 4;
+  if (n <= 30)  return 4;
   if (n <= 60)  return 3;
   if (n <= 120) return 2;
   if (n <= 252) return 1.5;
@@ -771,6 +771,49 @@ function redrawCharts() {
   if (activePage === 'home')        loadHome();
   if (activePage === 'portfolio')   loadPortfolio();
 }
+
+/* ─── Deployment marker plugin ───────────────────────────────────── */
+Chart.register({
+  id: 'deployMarker',
+  afterDraw(chart) {
+    const opts = chart.config.options?.plugins?.deployMarker;
+    if (!opts?.markers?.length) return;
+    const { ctx, scales: { x, y } } = chart;
+    if (!x || !y) return;
+    const labels = chart.data.labels || [];
+    const toDay = v => {
+      if (v instanceof Date) return v.toISOString().slice(0, 10);
+      const s = String(v);
+      return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : s;
+    };
+    opts.markers.forEach(({ date, label }) => {
+      const target = toDay(date);
+      const idx = labels.findIndex(l => toDay(l) === target);
+      if (idx < 0) return;
+      const px = x.getPixelForIndex(idx);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(201,162,39,.85)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(px, chart.chartArea.top);
+      ctx.lineTo(px, chart.chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (label) {
+        ctx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+        const tw = ctx.measureText(label).width;
+        const lx = Math.min(px + 6, chart.chartArea.right - tw - 6);
+        const ly = chart.chartArea.top + 14;
+        ctx.fillStyle = 'rgba(10,13,26,.88)';
+        ctx.fillRect(lx - 3, ly - 11, tw + 6, 15);
+        ctx.fillStyle = 'rgba(201,162,39,.95)';
+        ctx.fillText(label, lx, ly);
+      }
+      ctx.restore();
+    });
+  },
+});
 
 const CHART_DEFAULTS = {
   responsive: true, maintainAspectRatio: false,
@@ -982,6 +1025,7 @@ function renderPerformance(data, stale) {
             callbacks: { label: c => ` ${c.dataset.label}: $${(c.parsed.y||0).toLocaleString('en-US',{maximumFractionDigits:0})}` } },
           zoom: { zoom: { wheel:{enabled:false}, pinch:{enabled:true}, mode:'x' },
             pan: { enabled:true, mode:'x' } },
+          deployMarker: { markers: data.markers || [] },
         },
       },
     });
