@@ -803,6 +803,7 @@ let attrShowAll=false;
 function renderAttribution(data,stale){
   const el=document.getElementById('attr-list');
   const btn=document.getElementById('attr-more');
+  attrShowAll=false;  // reset on each fresh render so stale expanded state doesn't persist
   if(!data||!data.strategies||!data.strategies.length){
     el.innerHTML='<div class="empty" style="padding:14px 0"><div class="e-msg">No attribution data</div><div class="e-sub">Run the pipeline to generate backtest cache</div></div>';
     btn.style.display='none';return;
