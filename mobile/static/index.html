@@ -72,13 +72,13 @@ html, body {
 /* Offline banner slides open by changing height — stays in flow */
 #offline-banner {
   flex-shrink: 0; overflow: hidden;
-  height: 0; max-height: 0;
+  max-height: 0; padding: 0;
   background: var(--red); color: #fff; font-size: 13px; font-weight: 600;
   display: flex; align-items: center; justify-content: center;
   letter-spacing: .02em;
-  transition: max-height .3s ease;
+  transition: max-height .3s ease, padding .3s ease;
 }
-#offline-banner.show { max-height: 36px; height: 36px; }
+#offline-banner.show { max-height: 3rem; padding: 8px; }
 
 /* Page container — takes all remaining space between top bar and bottom nav */
 #page-wrap {
@@ -89,7 +89,7 @@ html, body {
 /* ── Pages — opacity-based show/hide so CSS transitions work ─────── */
 .page {
   position: absolute; inset: 0;
-  overflow-y: scroll; -webkit-overflow-scrolling: touch;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
   padding: 16px;
   padding-left: calc(16px + var(--safe-l));
