@@ -81,8 +81,92 @@ def _get_deployment_markers() -> list[dict]:
         log.warning("mobile/api deployment markers: unexpected error", exc_info=True)
         return _DEPLOY_MARKERS_CACHE or []
 
-_STATIC = Path(__file__).parent / "static"
-_GOLD   = DATA_DIR / "gold" / "equity"
+_STATIC      = Path(__file__).parent / "static"
+_GOLD        = DATA_DIR / "gold" / "equity"
+_INITIAL_NAV = 1_000_000.0
+_MIN_NAV     = 500_000.0   # below this is a corrupt snapshot record
+
+
+def _build_equity_curve(period: str | None = None) -> tuple[list[str], list[float | None]]:
+    """Daily NAV from target_weights × prices, anchored to trading_history snapshots.
+    Mirrors reports/paper_trading_dashboard._build_equity_curve() logic.
+    """
+    tw_df = _read(_GOLD / "target_weights.parquet")
+    if tw_df is None or tw_df.is_empty():
+        return [], []
+
+    date_col = "rebalance_date" if "rebalance_date" in tw_df.columns else "date"
+    rebal_dates = sorted(tw_df[date_col].unique().to_list())
+    all_symbols = tw_df["symbol"].unique().to_list()
+
+    try:
+        from storage.parquet_store import load_bars
+        bars = load_bars(all_symbols, rebal_dates[0], date.today(), "equity")
+        if bars.is_empty():
+            return [], []
+        price_col = "adj_close" if "adj_close" in bars.columns else "close"
+        prices_by_date: dict[date, dict[str, float]] = {}
+        for row in bars.sort("date").iter_rows(named=True):
+            d = row["date"]
+            if d not in prices_by_date:
+                prices_by_date[d] = {}
+            prices_by_date[d][row["symbol"]] = float(row[price_col])
+    except Exception as exc:
+        log.warning("mobile/api _build_equity_curve prices: %s", exc)
+        return [], []
+
+    # NAV anchors from trading_history — filter corrupt low values
+    snap_nav: dict[date, float] = {}
+    th_df = _read(_GOLD / "trading_history.parquet")
+    if th_df is not None and not th_df.is_empty():
+        for row in th_df.filter(pl.col("broker") == "paper").sort("date").iter_rows(named=True):
+            v = row.get("nav")
+            if v is not None and float(v) >= _MIN_NAV:
+                snap_nav[row["date"]] = float(v)
+
+    # Weight map: rebalance_date → {symbol: weight}
+    weight_map: dict[date, dict[str, float]] = {}
+    for row in tw_df.iter_rows(named=True):
+        rd = row[date_col]
+        if rd not in weight_map:
+            weight_map[rd] = {}
+        weight_map[rd][row["symbol"]] = float(row["weight"])
+
+    # Walk every trading day, accumulate NAV
+    nav = _INITIAL_NAV
+    current_weights: dict[str, float] = {}
+    prev_d: date | None = None
+    nav_series: dict[date, float] = {}
+
+    for d in sorted(prices_by_date.keys()):
+        if d in weight_map:
+            current_weights = weight_map[d]
+            if d in snap_nav:
+                nav = snap_nav[d]
+            nav_series[d] = nav
+            prev_d = d
+            continue
+        if not current_weights or prev_d is None:
+            continue
+        p_prev = prices_by_date.get(prev_d, {})
+        p_curr = prices_by_date[d]
+        port_ret = sum(
+            w * (p_curr[sym] / p_prev[sym] - 1)
+            for sym, w in current_weights.items()
+            if sym in p_curr and sym in p_prev and p_prev[sym] > 0
+        )
+        nav *= (1.0 + port_ret)
+        nav_series[d] = nav
+        prev_d = d
+
+    # Period filter applied after building full curve
+    cutoffs = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
+    if period in cutoffs:
+        cutoff = date.today() - timedelta(days=cutoffs[period])
+        nav_series = {d: v for d, v in nav_series.items() if d >= cutoff}
+
+    sorted_d = sorted(nav_series.keys())
+    return [str(d) for d in sorted_d], [_safe(round(nav_series[d], 2)) for d in sorted_d]
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -290,22 +374,8 @@ async def summary():
 
 @app.get("/api/performance")
 async def performance(period: str = "all"):
-    th_df = _read(_GOLD / "trading_history.parquet")
     tw_df = _read(_GOLD / "target_weights.parquet")
-
-    dates, values = [], []
-
-    if th_df is not None and not th_df.is_empty():
-        th = th_df.filter(pl.col("broker") == "paper").sort("date")
-        cutoffs = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
-        if period in cutoffs:
-            th = th.filter(pl.col("date") >= date.today() - timedelta(days=cutoffs[period]))
-        if not th.is_empty():
-            pairs  = [(str(d), _safe(float(v)))
-                      for d, v in zip(th["date"].to_list(), th["nav"].to_list())
-                      if v is not None]
-            dates  = [p[0] for p in pairs]
-            values = [p[1] for p in pairs]
+    dates, values = _build_equity_curve(period)
 
     clean  = [v for v in values if v is not None]
     n_days = len(clean)
