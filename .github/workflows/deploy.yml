@@ -1,4 +1,4 @@
-name: Deploy to Server
+name: Deploy to Banschick Toolset
 
 on:
   push:
@@ -6,9 +6,14 @@ on:
 
 jobs:
   deploy:
-    name: Pull & restart Streamlit
-    runs-on: self-hosted
-
+    runs-on: ubuntu-latest
     steps:
-      - name: Pull latest code and restart dashboard
-        run: bash /opt/quantpipe/deploy/update.sh
+      - name: Deploy QuantPipe to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 87.99.133.129
+          username: root
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /opt/banschick-toolset/apps/quantpipe && git pull origin main
+            cd /opt/banschick-toolset && docker compose up -d --build quantpipe
