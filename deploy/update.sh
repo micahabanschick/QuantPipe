@@ -1,29 +1,8 @@
 #!/usr/bin/env bash
-# Pull latest code and restart services — run on server as root
-# Usage: bash /opt/quantpipe/deploy/update.sh
-set -euo pipefail
-
-APP_DIR="/opt/quantpipe"
-APP_USER="quantpipe"
-
-echo "[+] Fixing ownership (guards against files written by root)..."
-chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
-
-echo "[+] Pulling latest code..."
-sudo -u "$APP_USER" git -C "$APP_DIR" fetch origin
-sudo -u "$APP_USER" git -C "$APP_DIR" reset --hard origin/main
-
-echo "[+] Syncing dependencies..."
-sudo -u "$APP_USER" bash -c "
-    cd $APP_DIR
-    export PATH=\"\$HOME/.local/bin:\$PATH\"
-    uv sync --extra execution --extra portfolio --extra backtest
-"
-
-echo "[+] Reloading systemd services..."
-systemctl daemon-reload
-systemctl restart quantpipe-streamlit.service
-systemctl restart quantpipe-mobile.service
-
-echo "[+] Done. Pipeline timer unchanged (next run at scheduled time)."
-systemctl status quantpipe-streamlit.service quantpipe-mobile.service --no-pager -l
+# Legacy script — not used by the current Docker deployment.
+# Deployment is handled by GitHub Actions: git pull + docker compose up -d --build quantpipe
+# See: .github/workflows/deploy.yml and github.com/micahabanschick/Banschick_Toolset
+#
+# Kept for reference only.
+echo "This script is not used in the Docker deployment."
+echo "To redeploy: cd /opt/banschick-toolset && docker compose up -d --build quantpipe"

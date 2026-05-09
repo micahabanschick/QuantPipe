@@ -60,97 +60,78 @@ Use a conventional commit prefix matching the primary change:
 
 ## Server Access
 
+QuantPipe runs inside the **Banschick Toolset** Docker stack on the Hetzner server.
+Infrastructure repo: `github.com/micahabanschick/Banschick_Toolset`
+App code on server: `/opt/banschick-toolset/apps/quantpipe/` (git clone of this repo)
+
 ```bash
 # SSH
 ssh -i ~/.ssh/quantpipe_server root@87.99.133.129
 
-# Check all services
-systemctl is-active \
-  quantpipe-streamlit \
-  quantpipe-pipeline.timer \
-  quantpipe-rebalance.timer \
-  quantpipe-backup.timer \
-  quantpipe-ibgateway \
-  quantpipe-xvfb \
-  vault \
-  vault-unseal \
-  wg-quick@wg0 \
-  fail2ban \
-  actions.runner.micahabanschick-QuantPipe.quantpipe-server
+# Check container status
+docker ps --filter name=quantpipe
 
-# Restart dashboard
-systemctl restart quantpipe-streamlit
+# View logs
+docker logs quantpipe --tail 50 --follow
+docker exec quantpipe tail -f /app/logs/mobile.log   # mobile API logs
+docker exec quantpipe tail -f /app/logs/ingest.log   # nightly pipeline logs
 
-# Trigger pipeline now (outside of timer)
-systemctl start quantpipe-pipeline.service
+# Restart the container (rare — deploy handles this automatically)
+cd /opt/banschick-toolset && docker compose restart quantpipe
 
-# Trigger rebalance now (outside of timer)
-systemctl start quantpipe-rebalance.service
+# Run a one-off pipeline now
+docker exec quantpipe uv run python orchestration/run_pipeline.py
 
-# Watch logs
-journalctl -u quantpipe-streamlit  -n 30 --no-pager
-journalctl -u quantpipe-ibgateway  -n 30 --no-pager
-tail -f /var/log/quantpipe/pipeline.log
-tail -f /var/log/quantpipe/rebalance.log
-tail -f /var/log/quantpipe/backup.log
+# Open a shell inside the container
+docker exec -it quantpipe bash
 ```
 
-Dashboard URL (WireGuard VPN required): http://10.0.0.1:8501
+**Dashboards:**
+- Streamlit: `https://quantpipe.banschick.com` (Cloudflare Access — email OTP)
+- Mobile PWA: `https://mobile.quantpipe.banschick.com` (same Cloudflare policy)
 
 ---
 
 ## CI/CD
 
-Push to `main` → GitHub Actions (self-hosted runner on server) → runs `deploy/update.sh` → `git fetch && git reset --hard origin/main` + `uv sync` + restart Streamlit.
+Push to `main` → GitHub Actions SSHes into server → `git pull` in `/opt/banschick-toolset/apps/quantpipe/` → `docker compose up -d --build quantpipe`.
+
+Only the `quantpipe` container is rebuilt; all other services (Caddy, Postgres, etc.) keep running. The `quantpipe_data` Docker volume (all Parquet data) is never touched by rebuilds.
 
 Workflow file: [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
-
-Runner service: `actions.runner.micahabanschick-QuantPipe.quantpipe-server`
-Runner path: `/opt/quantpipe/actions-runner/`
 
 ---
 
 ## Server Schedule
 
-| Timer | Schedule | Service it fires |
-|---|---|---|
-| `quantpipe-pipeline.timer` | Mon–Fri 21:30 UTC | `quantpipe-pipeline.service` — ingest + signals |
-| `quantpipe-rebalance.timer` | Mon–Fri 22:30 UTC | `quantpipe-rebalance.service` — IBKR paper orders |
-| `quantpipe-backup.timer` | Daily 02:00 UTC | `quantpipe-backup.service` — B2 sync |
+All scheduling runs via **cron inside the Docker container** (not systemd timers).
 
-Systemd unit files tracked in `deploy/systemd/`. Changes to unit files must be applied manually on the server (`systemctl daemon-reload`) — the CI/CD deploy does not auto-install them.
+| Schedule | Command | Log |
+|---|---|---|
+| Mon–Fri 02:00 UTC (10pm ET) | `orchestration/ingest_daily.py` | `/app/logs/ingest.log` |
+
+The `Banschick_Toolset/scripts/backup.sh` handles volume backups separately via host cron.
 
 ---
 
 ## Mobile Dashboard (iPhone PWA)
 
-A lightweight FastAPI + Progressive Web App running on port **8503** alongside Streamlit.
-Read-only. Accessible via WireGuard VPN from iPhone.
+FastAPI + PWA running as a second process inside the `quantpipe` container (port 3002 internally).
+Served by Caddy at `https://mobile.quantpipe.banschick.com`. Protected by Cloudflare Access.
 
-**URL:** `http://10.0.0.1:8503`
+**URL:** `https://mobile.quantpipe.banschick.com`
 
 **iPhone setup:**
-1. Install WireGuard from App Store, import `quantpipe.conf` (same config as desktop)
-2. Open Safari → `http://10.0.0.1:8503`
-3. Tap Share (box with arrow) → **Add to Home Screen** → installed as native-feeling app
+1. Authenticate via Cloudflare Access (email OTP to micha.ban@gmail.com)
+2. Open Safari → `https://mobile.quantpipe.banschick.com`
+3. Tap Share → **Add to Home Screen** → installed as native-feeling app
 
 ```bash
-# Check status
-systemctl status quantpipe-mobile
+# Check mobile API is responding
+docker exec quantpipe wget -qO- http://localhost:3002/api/summary | python3 -m json.tool
 
-# Start / stop
-systemctl start quantpipe-mobile
-systemctl stop quantpipe-mobile
-
-# View logs
-tail -f /var/log/quantpipe/mobile.log
-
-# First-time install on server (after merge)
-cp /opt/quantpipe/deploy/systemd/quantpipe-mobile.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable quantpipe-mobile
-systemctl start quantpipe-mobile
-ss -tlnp | grep 8503   # verify listening
+# View mobile logs
+docker exec quantpipe tail -f /app/logs/mobile.log
 ```
 
 **Pages:** Home (NAV + P&L) · Performance (equity curve) · Portfolio (positions) · Trades · Health (strategy scores)
