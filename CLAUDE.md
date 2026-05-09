@@ -88,7 +88,7 @@ docker exec -it quantpipe bash
 
 **Dashboards:**
 - Streamlit: `https://quantpipe.banschick.com` (Cloudflare Access — email OTP)
-- Mobile PWA: `https://mobile.quantpipe.banschick.com` (same Cloudflare policy)
+- Mobile PWA: `https://quantpipe-mobile.banschick.com` (same Cloudflare policy)
 
 ---
 
@@ -117,13 +117,13 @@ The `Banschick_Toolset/scripts/backup.sh` handles volume backups separately via 
 ## Mobile Dashboard (iPhone PWA)
 
 FastAPI + PWA running as a second process inside the `quantpipe` container (port 3002 internally).
-Served by Caddy at `https://mobile.quantpipe.banschick.com`. Protected by Cloudflare Access.
+Served by Caddy at `https://quantpipe-mobile.banschick.com`. Protected by Cloudflare Access.
 
-**URL:** `https://mobile.quantpipe.banschick.com`
+**URL:** `https://quantpipe-mobile.banschick.com`
 
 **iPhone setup:**
 1. Authenticate via Cloudflare Access (email OTP to micha.ban@gmail.com)
-2. Open Safari → `https://mobile.quantpipe.banschick.com`
+2. Open Safari → `https://quantpipe-mobile.banschick.com`
 3. Tap Share → **Add to Home Screen** → installed as native-feeling app
 
 ```bash
