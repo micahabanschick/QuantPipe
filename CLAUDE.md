@@ -2,23 +2,24 @@
 
 ## Branch Workflow (automatic — no prompting needed)
 
-**Always develop on `desktop-dev`.** At the start of any session, if the current branch is not `desktop-dev`, switch to it before doing any work:
+**Branch names are machine-scoped:** use `laptop-dev` on the laptop, `desktop-dev` on the desktop. At the start of any session, confirm you are on the correct branch for this machine:
 
 ```bash
-git checkout desktop-dev
+git checkout laptop-dev   # on laptop
+git checkout desktop-dev  # on desktop
 ```
 
-**Deploy = open a PR from `desktop-dev` to `main`.** Whenever the user asks to deploy, push to the server, or says anything like "ship it", "deploy", "push to prod":
+**Deploy = open a PR from the current dev branch to `main`.** Whenever the user asks to deploy, push to the server, or says anything like "ship it", "deploy", "push to prod":
 
 ```bash
-git push origin desktop-dev
-gh pr create --base main --head desktop-dev \
+git push origin laptop-dev   # (or desktop-dev on desktop)
+gh pr create --base main --head laptop-dev \
   --title "feat|fix|docs: <one-line summary of what this deploy contains>" \
   --body "## Summary
 - <bullet per meaningful change>
 
 ## Test plan
-- [ ] Dashboard loads at http://10.0.0.1:8501
+- [ ] Dashboard loads at https://quantpipe.banschick.com
 - [ ] Pipeline runs cleanly (check ntfy or pipeline health page)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
@@ -27,13 +28,13 @@ gh pr create --base main --head desktop-dev \
 gh pr merge <number> --merge
 ```
 
-After the PR merges, GitHub Actions pulls `main` and restarts the server automatically. Stay on `desktop-dev`.
+After the PR merges, GitHub Actions pulls `main` and restarts the server automatically. Stay on the machine's dev branch.
 
-**Prerequisite:** `gh` CLI must be installed and authenticated (`gh auth status`). It is already set up on this desktop — if running on a new machine, run `gh auth login` first.
+**Prerequisite:** `gh` CLI must be installed and authenticated (`gh auth status`). Run `gh auth login` on a new machine.
 
-**Never commit directly to main.** All commits go on `desktop-dev` first.
+**Never commit directly to main.** All commits go on a dev branch first.
 
-**Never merge `desktop-dev` → `main` directly.** Always go through a PR so Sourcery can review.
+**Never merge a dev branch → `main` directly.** Always go through a PR so Sourcery can review.
 
 ### PR title convention
 
@@ -51,10 +52,11 @@ Use a conventional commit prefix matching the primary change:
 
 | Situation | Action |
 |---|---|
-| Session starts, not on `desktop-dev` | `git checkout desktop-dev` |
-| User says "commit" / makes code changes | Commit on `desktop-dev` |
-| User says "deploy" / "push" / "ship" | Push `desktop-dev` → open PR → merge PR |
-| After PR merged | Stay on `desktop-dev` — continue working |
+| Session starts on laptop, not on `laptop-dev` | `git checkout laptop-dev` |
+| Session starts on desktop, not on `desktop-dev` | `git checkout desktop-dev` |
+| User says "commit" / makes code changes | Commit on the machine's dev branch |
+| User says "deploy" / "push" / "ship" | Push dev branch → open PR → merge PR |
+| After PR merged | Stay on the machine's dev branch |
 
 ---
 

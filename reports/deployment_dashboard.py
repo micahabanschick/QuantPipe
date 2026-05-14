@@ -110,6 +110,7 @@ with tab_deploy:
     # ── Health warnings for active flagged strategies ─────────────────────
     import contextlib
     import polars as pl
+    from config.settings import DATA_DIR
     _health_path = DATA_DIR / "gold" / "equity" / "strategy_health.parquet"
     _health: dict[str, dict] = {}
     with contextlib.suppress(Exception):
