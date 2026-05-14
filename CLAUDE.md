@@ -18,7 +18,7 @@ gh pr create --base main --head desktop-dev \
 - <bullet per meaningful change>
 
 ## Test plan
-- [ ] Dashboard loads at http://10.0.0.1:8501
+- [ ] Dashboard loads at https://quantpipe.banschick.com
 - [ ] Pipeline runs cleanly (check ntfy or pipeline health page)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
