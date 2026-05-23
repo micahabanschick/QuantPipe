@@ -23,14 +23,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Install uv ────────────────────────────────────────────────────────────
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# Pin the uv installer to keep builds reproducible (and avoid trusting whatever
+# astral.sh/uv/install.sh serves at build time).
+ARG UV_INSTALLER_VERSION=0.11.14
+RUN curl -LsSf "https://astral.sh/uv/${UV_INSTALLER_VERSION}/install.sh" | sh
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
 # ── Install dependencies (cached layer — only re-runs if pyproject changes)
+# --no-install-project skips installing the project itself (no source yet),
+# so this layer only resolves+installs third-party deps and can fail loudly
+# if pyproject.toml has a real problem.
 COPY pyproject.toml ./
-RUN uv sync 2>/dev/null || true
+RUN uv sync --no-install-project
 
 # ── Copy full QuantPipe codebase ──────────────────────────────────────────
 COPY . .
@@ -58,8 +64,10 @@ COPY <<'ENTRYPOINT' /app/entrypoint.sh
 #!/bin/bash
 set -e
 
-# Export env vars so cron jobs can access them
-printenv | grep -v "no_proxy" >> /etc/environment
+# Export env vars so cron jobs can access them.
+# Truncate (not append) — otherwise restarts duplicate every var and cron
+# picks up the last (possibly stale) value of any key.
+printenv | grep -v "no_proxy" > /etc/environment
 
 # Start cron daemon in background
 cron
